@@ -69,6 +69,12 @@ export const Navbar: React.FC = () => {
             </div>
             <span className="font-bold text-xl tracking-tight text-theme-text font-theme">MediaTracker AI</span>
           </Link>
+          {aiDate && (
+            <div className="hidden lg:flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium text-theme-subtext bg-theme-surface/50 border border-theme-border/50 max-w-[300px] truncate" title={aiDate}>
+              <Calendar className="w-3 h-3 flex-shrink-0" />
+              <span className="truncate">{aiDate}</span>
+            </div>
+          )}
           
           <div className="hidden md:block">
             <div className="ml-10 flex items-center space-x-4">
@@ -88,13 +94,7 @@ export const Navbar: React.FC = () => {
                 </Link>
               ))}
 
-              {/* AI Date Display */}
-              {aiDate && (
-                <div className="hidden lg:flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium text-theme-subtext bg-theme-surface/50 border border-theme-border/50 max-w-[300px] truncate" title={aiDate}>
-                  <Calendar className="w-3 h-3 flex-shrink-0" />
-                  <span className="truncate">{aiDate}</span>
-                </div>
-              )}
+              
 
               {/* Language Dropdown */}
               <div className="relative" ref={langDropdownRef}>

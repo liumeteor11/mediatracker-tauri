@@ -1,83 +1,28 @@
-# MediaTracker AI (Rust + React + Tauri)
+# MediaTracker AI
 
-MediaTracker AI 是一个跨平台桌面应用，用于搜索、收藏与追踪电影、电视剧、书籍、漫画等媒体内容。前端采用 React + Vite，后端采用 Tauri (Rust)。内置 AI 搜索与联网查找能力，支持首屏快速返回与海报异步补全，并具备国际化和隐私保护。
+[English](README.md) | [中文](README.zh.md)
 
-## 主要功能
-- AI 搜索与推荐：支持电影、电视剧、书籍、漫画、短剧、音乐等类型的检索
-- 首屏先返回、海报异步补全：先呈现核心信息，海报在后台并发获取与填充
-- 搜索缓存与 TTL：本地缓存 2 小时，重复查询秒开
-- Trending 热门内容：同样采用首屏快速返回与异步补全策略
-- 结果异步校验：网络不可达时先返回上下文结果，后台进行校验与修正
-- 收藏与追更：支持收藏分组（喜欢/想看/看过），追踪连载更新并提醒
-- 图片加载状态：加载中/失败状态友好提示（符合 i18n）
-- 国际化 i18n：中英文切换
-- 本地 AES 加密保存 AI 配置（API Key 等）
+Cross‑platform desktop app to search, collect and track media (movies, TV, books, comics, short dramas, music). Frontend: React + Vite. Backend: Tauri (Rust). Fast first-screen results, async poster hydration, local cache, i18n, and privacy by default.
 
-## 快速安装
-### Windows 安装包
-构建完成后安装包位于：
-```
-src-tauri/target/release/bundle/
-```
-通常会生成 `exe/msi`（取决于打包目标）。双击安装包即可安装使用。
+## Features
+- AI search and trending with first-screen return
+- Async poster hydration; 2‑hour local cache
+- Offline‑friendly: return from context, verify async
+- Collections (Favorites / To Watch / Watched) & ongoing tracking
+- Image loading/failed states (i18n)
+- AES‑encrypted local storage for API keys
 
-### 手动运行（开发者）
-- Node.js 18+、Rust（含 Windows 构建工具）
-- 在项目根目录执行：
-  - 开发模式：`npm run tauri dev`（自动启动前端与 Tauri 后端）
-  - 前端开发：`npm run dev`
-  - 构建安装包：`npm run tauri build`
+## Quick Start
+- Dev (desktop): `npm run tauri dev`
+- Dev (web only): `npm run dev`
+- Build (desktop): `npm run tauri build`
 
-## 使用指南
-### 1) 首次启动与语言
-- 启动应用后，导航栏可切换语言（中文/英文）。
+## GitHub Actions Release
+- Push a tag `vX.Y.Z` or run the workflow manually to build Windows executable and publish a GitHub Release with artifacts.
 
-### 2) AI 配置
-- 进入 `AI Config` 页面，填入所使用的 AI 提供商与 API Key。
-- 可选开启联网搜索，并配置搜索引擎（Google/Serper/Yandex/DDG）。
-- 所有敏感信息本地 AES 加密存储，不会上传。
+## Privacy
+- API keys stay local (AES encrypted)
+- `.env` is ignored by Git, no secrets committed
 
-### 3) 搜索与热门
-- 搜索页可按类型过滤。输入关键词后，首屏先显示核心字段（标题、类型、评分、日期等），海报在后台并发抓取填充。
-- 热门 Trending 同样采用“首屏先返回 + 海报异步补全”，并支持刷新（默认每周更新）。
-- 在网络不可达时，模型会基于已有上下文直接返回有效 JSON，随后后台进行异步校验与修正（例如上映日期）。
-
-### 4) 收藏与追更
-- 在搜索结果卡片上可添加到收藏（喜欢/想看/看过）。
-- 对连载项目，可开启追踪并显示“有更新”红点提醒；也可手动记录个人观看进度。
-
-### 5) 图片加载状态
-- 图片加载中：卡片下方显示“图片加载中，请稍等”。
-- 图片加载失败：卡片下方显示“图片加载失败”，同时使用占位图。
-
-## 隐私与安全
-- API Key 与个人配置仅保存在本地并使用 AES 加密。
-- 请勿将 `.env` 或包含个人密钥的文件提交到仓库（已在 `.gitignore` 中忽略）。
-- 应用不会上传用户个人数据到远端服务。
-
-## 常用命令
-- `npm run tauri dev`：启动桌面开发环境
-- `npm run dev`：仅启动前端（Vite）
-- `npm run tauri build`：构建 Windows 安装包（exe/msi）
-- `npm run build`：构建前端静态资源
-
-## 常见问题
-- 构建失败（Windows）：请确保安装了 Rust、VS Build Tools（或 MSVC）、`npm` 可用。
-- 无法联网搜索：请检查 AI Provider Web Search 配置与对应的 API Key/CX 等。
-- 图片不显示：先显示加载提示，若失败显示错误文案与占位图；稍后异步补全的海报会自动更新。
-
-## 技术栈与结构
-- 前端：React 19 + Vite 6 + Tailwind（自定义主题）
-- 状态管理：Zustand
-- 动效：Framer Motion
-- 国际化：react-i18next
-- 桌面后端：Tauri (Rust)
-- 关键文件：
-  - `src/services/aiService.ts`：AI 搜索、缓存与提示词策略
-  - `src/pages/SearchPage.tsx`：搜索与热门页面逻辑（海报异步补全、结果校验）
-  - `src/components/MediaCard.tsx`：媒体卡片展示与图片加载状态
-  - `src-tauri/`：Tauri 配置与 Rust 后端
-
-## 许可证
-本项目用于学习与个人使用，若需开源许可证或商业使用，请在发布前补充相应条款。
-
+## License
+For personal and learning use. Add your preferred license before public distribution.
