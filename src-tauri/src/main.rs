@@ -61,7 +61,11 @@ async fn google_search(client: &Client, query: &str, api_key: &str, cx: &str, se
         url.push_str("&searchType=image");
     }
     
-    let resp = client.get(&url).send().await?.json::<Value>().await?;
+    let fut = client.get(&url).send();
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(12), fut)
+        .await??
+        .json::<Value>()
+        .await?;
     
     let mut results = Vec::new();
     if let Some(items) = resp["items"].as_array() {
@@ -103,13 +107,14 @@ async fn serper_search(client: &Client, query: &str, api_key: &str, search_type:
         "https://google.serper.dev/search"
     };
 
-    let resp = client
+    let fut = client
         .post(url)
         .header("X-API-KEY", api_key)
         .header("Content-Type", "application/json")
         .json(&serde_json::json!({ "q": query }))
-        .send()
-        .await?
+        .send();
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(12), fut)
+        .await??
         .json::<Value>()
         .await?;
         
@@ -172,7 +177,8 @@ async fn yandex_search(client: &Client, query: &str, user: &str, api_key: &str) 
         urlencoding::encode(query)
     );
 
-    let resp = client.get(&url).send().await?;
+    let fut = client.get(&url).send();
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(12), fut).await??;
     if !resp.status().is_success() {
         let text = resp.text().await.unwrap_or_default();
         return Err(format!("Yandex API Error: {}", text).into());
@@ -383,8 +389,8 @@ fn main() {
                 .tcp_nodelay(true)
                 .user_agent("MediaTracker/1.0")
                 .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .timeout(std::time::Duration::from_secs(60))
+                .connect_timeout(std::time::Duration::from_secs(7))
+                .timeout(std::time::Duration::from_secs(20))
                 .build()
                 .unwrap_or_else(|_| Client::new());
 
@@ -394,8 +400,8 @@ fn main() {
                 .user_agent("MediaTracker/1.0")
                 .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)))
                 .no_proxy() // <--- CRITICAL: Bypass system proxy
-                .connect_timeout(std::time::Duration::from_secs(5)) // Fast fail
-                .timeout(std::time::Duration::from_secs(60))
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .timeout(std::time::Duration::from_secs(20))
                 .build()
                 .unwrap_or_else(|_| Client::new());
             

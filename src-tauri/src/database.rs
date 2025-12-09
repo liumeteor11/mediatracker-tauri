@@ -59,6 +59,7 @@ impl Database {
         self.save()
     }
     
+    #[allow(dead_code)]
     pub fn update_item(&self, item: MediaItem) -> Result<(), String> {
         self.add_item(item)
     }

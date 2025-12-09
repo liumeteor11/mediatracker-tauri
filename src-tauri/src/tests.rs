@@ -22,6 +22,7 @@ fn test_media_item_serialization() {
         user_progress: None,
         notification_enabled: None,
         last_checked_at: None,
+        has_new_update: None,
         user_review: None,
         custom_poster_url: None,
         last_edited_at: None,

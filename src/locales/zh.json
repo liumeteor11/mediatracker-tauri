@@ -207,7 +207,9 @@
     "action_done": "已看",
     "action_favorite_title": "收藏",
     "action_towatch_title": "想看",
-    "action_watched_title": "看过"
+    "action_watched_title": "看过",
+    "image_loading": "图片加载中，请稍等",
+    "image_failed": "图片加载失败"
   },
   "media_type": {
     "Movie": "电影",

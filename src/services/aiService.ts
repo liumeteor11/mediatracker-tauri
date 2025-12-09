@@ -12,6 +12,18 @@ declare global {
   }
 }
 
+const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit & { timeoutMs?: number } = {}) => {
+  const ms = init.timeoutMs ?? 12000;
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort('timeout'), ms);
+  try {
+    const res = await fetch(input, { ...init, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(id);
+  }
+};
+
 // Simple Semaphore to limit concurrent API calls
 class Semaphore {
     private max: number;
@@ -76,8 +88,7 @@ const fetchPosterFromOMDB = async (title: string, year: string): Promise<string 
   return undefined;
 };
 
-// Helper for client-side search in Web Mode
-const performClientSideSearch = async (query: string, force: boolean = false): Promise<string> => {
+export const performClientSideSearch = async (query: string, force: boolean = false): Promise<string> => {
     const { 
         enableSearch, 
         searchProvider, 
@@ -109,7 +120,7 @@ const performClientSideSearch = async (query: string, force: boolean = false): P
 
         if (needDuckDuckGo) {
             try {
-                const ddgRes = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`);
+                const ddgRes = await fetchWithTimeout(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`, { timeoutMs: 8000 });
                 if (ddgRes.ok) {
                     const ddg = await ddgRes.json();
                     const items: any[] = [];
@@ -156,7 +167,7 @@ const performClientSideSearch = async (query: string, force: boolean = false): P
             const apiKey = getDecryptedGoogleKey();
             if (apiKey && googleSearchCx) {
             const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(query)}`;
-            const res = await fetch(url);
+            const res = await fetchWithTimeout(url, { timeoutMs: 12000 });
             if (res.ok) {
                 const data = await res.json();
                 if (data.items) {
@@ -175,14 +186,14 @@ const performClientSideSearch = async (query: string, force: boolean = false): P
     if (searchProvider === 'serper') {
         const apiKey = getDecryptedSerperKey();
         if (apiKey) {
-            const response = await fetch('https://google.serper.dev/search', {
+            const response = await fetchWithTimeout('https://google.serper.dev/search', {
                 method: 'POST',
                 headers: {
                     'X-API-KEY': apiKey,
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ q: query })
-            });
+            , timeoutMs: 12000 });
 
             if (response.ok) {
                 const data = await response.json();
@@ -201,7 +212,7 @@ const performClientSideSearch = async (query: string, force: boolean = false): P
     // DuckDuckGo (Web Mode, no key)
     if (searchProvider === 'duckduckgo') {
         try {
-            const ddgRes = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`);
+            const ddgRes = await fetchWithTimeout(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`, { timeoutMs: 8000 });
             if (ddgRes.ok) {
                 const ddg = await ddgRes.json();
                 const items: any[] = [];
@@ -338,7 +349,7 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
 
         let currentMessages = [...messages];
         let turnCount = 0;
-        const MAX_TURNS = 5;
+        const MAX_TURNS = 2;
 
         while (turnCount < MAX_TURNS) {
             let completion;
@@ -434,6 +445,23 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
 export const searchMedia = async (query: string, type?: MediaType | 'All'): Promise<MediaItem[]> => {
   if (!query.trim()) return [];
 
+  const langKey = i18n.language.split('-')[0];
+  const cacheKey = `media_tracker_search_${langKey}_${type || 'All'}_${query.trim().toLowerCase()}`;
+  const cacheTsKey = `${cacheKey}_ts`;
+  try {
+    const cachedData = localStorage.getItem(cacheKey);
+    const cachedTs = localStorage.getItem(cacheTsKey);
+    if (cachedData && cachedTs) {
+      const now = Date.now();
+      const last = parseInt(cachedTs, 10);
+      const ttl = 2 * 60 * 60 * 1000;
+      if (now - last < ttl) {
+        const parsed = JSON.parse(cachedData);
+        if (Array.isArray(parsed)) return parsed as MediaItem[];
+      }
+    }
+  } catch {}
+
   const isChinese = i18n.language.startsWith('zh');
 
   let searchContext = "";
@@ -443,7 +471,7 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
   let userPrompt = "";
 
   if (provider === 'moonshot') {
-      searchContext = ""; // Let the AI fetch context via tool
+      searchContext = "";
       if (isChinese) {
           userPrompt = `搜索符合以下查询的媒体作品: "${query}"。`;
           if (type && type !== 'All') {
@@ -451,7 +479,7 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
           } else {
               userPrompt += ` (包括书籍、电影、电视剧、漫画、短剧)`;
           }
-          userPrompt += `\n[重要] 必须使用提供的联网搜索工具 (web_search) 来获取最新信息。请搜索关键词: "${query} 上映日期 详细信息"。\n仅从搜索结果中选择并返回有效JSON数组。请仔细检查搜索结果中的 metadata/pagemap 信息以获取准确的上映日期。如果没有匹配项，请返回空数组。确保上映日期准确。`;
+          userPrompt += `\n[优先] 请优先使用提供的联网搜索工具 (web_search) 获取最新信息；如网络不可用，请基于已有知识或上下文直接返回有效 JSON。请搜索关键词: "${query} 上映日期 详细信息"。仅从搜索结果中选择并返回有效 JSON 数组。请仔细检查搜索结果中的 metadata/pagemap 信息以获取准确的上映日期。如果没有匹配项，请返回空数组。确保上映日期准确。`;
       } else {
           userPrompt = `Search for media works matching the query: "${query}".`;
           if (type && type !== 'All') {
@@ -459,7 +487,7 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
           } else {
               userPrompt += ` (books, movies, TV series, comics, short dramas)`;
           }
-          userPrompt += `\n[IMPORTANT] You MUST use the provided web search tool (web_search) to get the latest information. Search query: "${query} release date premiere info".\nReturn ONLY a valid JSON array. Check the metadata/pagemap in search results for accurate dates. If nothing matches, return an empty array. Ensure release dates are accurate.`;
+          userPrompt += `\n[PREFER] Prefer using the provided web search tool (web_search) to get the latest information; if unavailable, use your internal knowledge or context and return a valid JSON array. Search query: "${query} release date premiere info". Return ONLY a valid JSON array. Check metadata/pagemap for accurate dates. If nothing matches, return an empty array.`;
       }
   } else {
       // Standard prompt for other providers
@@ -527,42 +555,10 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
       }
   }
 
-  // Enhance with IDs and Posters
-  // Strategy: 
-  // 1. Map rawData to MediaItems with placeholders.
-  // 2. Fetch posters in parallel, but with a strict timeout to ensure the UI isn't blocked for too long.
-  // 3. If a poster search times out, we fallback to the placeholder, allowing the text to show up.
-  
-  const results = await Promise.all(rawData.map(async (item) => {
+  const results = rawData.map((item) => {
     const id = uuidv4();
     const placeholder = getPlaceholder(item.type || 'Media');
-    
-    let posterUrl = prefetchedImages.get(item.title.toLowerCase());
-
-    if (!posterUrl) {
-        try {
-            // Race between fetch and timeout
-            const posterPromise = fetchPosterFromSearch(item.title, item.releaseDate ? item.releaseDate.split('-')[0] : '', item.type);
-            
-            // Helper to timeout a promise
-            const timeoutPromise = new Promise<string | undefined>((resolve) => {
-                setTimeout(() => resolve(undefined), 5000); // 5s max for poster search
-            });
-            
-            posterUrl = await Promise.race([posterPromise, timeoutPromise]);
-            
-            if (!posterUrl) {
-                 // Try OMDB if Search timed out or failed (OMDB is usually fast/cached)
-                 // Give OMDB a short chance too
-                 const omdbPromise = fetchPosterFromOMDB(item.title, item.releaseDate);
-                 const omdbTimeout = new Promise<string | undefined>((resolve) => setTimeout(() => resolve(undefined), 1000));
-                 posterUrl = await Promise.race([omdbPromise, omdbTimeout]);
-            }
-        } catch (e) {
-            // ignore errors
-        }
-    }
-
+    const posterUrl = prefetchedImages.get(item.title.toLowerCase()) || undefined;
     return {
       ...item,
       id,
@@ -571,11 +567,15 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
       status: 'To Watch',
       addedAt: new Date().toISOString()
     } as MediaItem;
-  }));
+  });
 
   if (results.length === 0) {
       return await createFallbackItemsFromContext(searchContext);
   }
+  try {
+    localStorage.setItem(cacheKey, JSON.stringify(results));
+    localStorage.setItem(cacheTsKey, Date.now().toString());
+  } catch {}
   return results;
 };
 
@@ -735,7 +735,7 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                 const apiKey = getDecryptedGoogleKey();
                 if (apiKey && googleSearchCx) {
                     const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(query)}`;
-                    const res = await fetch(url);
+                    const res = await fetchWithTimeout(url, { timeoutMs: 10000 });
                     if (res.ok) {
                         const data = await res.json();
                         if (data.items) {
@@ -752,14 +752,14 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                  const apiKey = getDecryptedSerperKey();
                  if (apiKey) {
                      try {
-                        const response = await fetch('https://google.serper.dev/images', {
+                        const response = await fetchWithTimeout('https://google.serper.dev/images', {
                             method: 'POST',
                             headers: {
                                 'X-API-KEY': apiKey,
                                 'Content-Type': 'application/json'
                             },
                             body: JSON.stringify({ q: query, num: 10 })
-                        });
+                        , timeoutMs: 12000 });
                         
                         if (response.status === 403) {
                              console.error("Serper API 403 Forbidden: Invalid API Key or Quota Exceeded.");
@@ -808,7 +808,7 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
 };
 
 // Helper to clean title and extract year from search result
-const processSearchResult = (title: string, snippet: string): { title: string, year: string, type: MediaType } => {
+export const processSearchResult = (title: string, snippet: string): { title: string, year: string, type: MediaType } => {
     let cleanTitle = title
         .replace(/ - .*$/, '')
         .replace(/ \| .*$/, '')
@@ -855,11 +855,9 @@ const createFallbackItemsFromContext = async (searchContext: string, limit: numb
         
         const pick = Array.from(uniqueMap.values()).slice(0, limit);
         
-        return await Promise.all(pick.map(async (r: any) => {
+        return pick.map((r: any) => {
             const { title, year, type } = processSearchResult(r.title || '', r.snippet || '');
             const id = uuidv4();
-            const poster = await fetchPosterFromSearch(title, year, type);
-            
             return {
                 id,
                 title,
@@ -871,12 +869,12 @@ const createFallbackItemsFromContext = async (searchContext: string, limit: numb
                 isOngoing: type === 'TV Series',
                 latestUpdateInfo: '',
                 rating: '',
-                posterUrl: poster || getPlaceholder(type),
+                posterUrl: getPlaceholder(type),
                 userRating: 0,
                 status: 'To Watch',
                 addedAt: new Date().toISOString()
             } as MediaItem;
-        }));
+        });
     } catch (e) {
         console.warn("Fallback creation failed", e);
         return [];
@@ -944,17 +942,16 @@ export const getTrendingMedia = async (): Promise<MediaItem[]> => {
 
   if (trendingPrompt && trendingPrompt.trim()) {
       userPrompt = trendingPrompt;
-      // Enforce tool usage for custom prompts
       userPrompt += isChinese 
-        ? `\n\n[系统提示] 当前日期: ${today}。为了确保推荐内容的实时性和准确性，请务必使用提供的联网搜索工具 (web_search) 来获取最新信息，而不是仅依赖内部知识。`
-        : `\n\n[System Note] Today's Date: ${today}. To ensure recommendations are real-time and accurate, you MUST use the provided 'web_search' tool to fetch the latest information, rather than relying solely on internal knowledge.`;
+        ? `\n\n[系统提示] 当前日期: ${today}。请优先使用提供的联网搜索工具 (web_search) 获取最新信息；若不可用，可先基于已有知识快速返回，再进行校验。`
+        : `\n\n[System Note] Today's Date: ${today}. Prefer using the provided 'web_search' tool to fetch the latest information; if unavailable, return quickly based on internal knowledge and verify later.`;
   } else if (provider === 'moonshot') {
      // For Moonshot, we use our manual "web_search" tool
      searchContext = "";
      if (isChinese) {
          userPrompt = `今天是 ${today}。请推荐4部在最近2个月内更新或上映的热门电影、电视剧或动漫。
          
-         [重要] 必须使用提供的联网搜索工具 (web_search) 来获取最新信息。请搜索关键词: "最新热门电影电视剧 ${monthStr}"。
+         [优先] 请优先使用提供的联网搜索工具 (web_search) 获取最新信息；若不可用，可先基于已有知识返回，再进行校验。请搜索关键词: "最新热门电影电视剧 ${monthStr}"。
          
          要求：
          1. 必须是 **最近2个月内** (例如 ${monthStr} 或上个月) 有更新或上映的作品。
@@ -966,7 +963,7 @@ export const getTrendingMedia = async (): Promise<MediaItem[]> => {
      } else {
          userPrompt = `Today is ${today}. Recommend 4 trending movies, TV series, or dramas that have been updated or released within the last 2 months.
          
-         [IMPORTANT] You MUST use the provided web search tool (web_search) to get the latest information. Search query: "trending movies tv series ${monthStr}".
+         [PREFER] Prefer using the provided web search tool (web_search) to get the latest information. If unavailable, return quickly based on internal knowledge and verify later. Search query: "trending movies tv series ${monthStr}".
          
          Requirements:
          1. Must be updated or released within the **last 2 months**.
@@ -1071,43 +1068,18 @@ export const getTrendingMedia = async (): Promise<MediaItem[]> => {
   // 2. Fetch posters in parallel, but with a strict timeout to ensure the UI isn't blocked for too long.
   // 3. If a poster search times out, we fallback to the placeholder, allowing the text to show up.
   
-  const results = await Promise.all(rawData.map(async (item) => {
+  const results = rawData.map((item) => {
     const id = uuidv4();
     const placeholder = getPlaceholder(item.type || 'Media');
-    
-    let posterUrl = undefined;
-
-    try {
-        // Race between fetch and timeout
-        const posterPromise = fetchPosterFromSearch(item.title, item.releaseDate ? item.releaseDate.split('-')[0] : '', item.type);
-        
-        // Helper to timeout a promise
-        const timeoutPromise = new Promise<string | undefined>((resolve) => {
-            setTimeout(() => resolve(undefined), 5000); // 5s max for poster search
-        });
-        
-        posterUrl = await Promise.race([posterPromise, timeoutPromise]);
-        
-        if (!posterUrl) {
-             // Try OMDB if Search timed out or failed (OMDB is usually fast/cached)
-             // Give OMDB a short chance too
-             const omdbPromise = fetchPosterFromOMDB(item.title, item.releaseDate);
-             const omdbTimeout = new Promise<string | undefined>((resolve) => setTimeout(() => resolve(undefined), 1000));
-             posterUrl = await Promise.race([omdbPromise, omdbTimeout]);
-        }
-    } catch (e) {
-        // ignore errors
-    }
-
     return {
       ...item,
       id,
-      posterUrl: posterUrl || placeholder,
+      posterUrl: placeholder,
       userRating: 0,
       status: 'To Watch',
       addedAt: new Date().toISOString()
     } as MediaItem;
-  }));
+  });
 
   if (results.length === 0) {
       return await createFallbackItemsFromContext(searchContext);

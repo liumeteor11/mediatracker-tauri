@@ -35,6 +35,8 @@ export const MediaCard: React.FC<MediaCardProps> = ({
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const { t } = useTranslation();
+  const [imgLoading, setImgLoading] = useState(true);
+  const [imgFailed, setImgFailed] = useState(false);
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.matchMedia('(max-width: 768px)').matches);
@@ -60,10 +62,14 @@ export const MediaCard: React.FC<MediaCardProps> = ({
 
   useEffect(() => {
     setImgSrc(item.customPosterUrl || item.posterUrl || 'https://placehold.co/600x400/1a1a1a/FFF?text=No+Image');
+    setImgLoading(true);
+    setImgFailed(false);
   }, [item.customPosterUrl, item.posterUrl]);
 
   const handleImageError = () => {
       setImgSrc('https://placehold.co/600x400/1a1a1a/FFF?text=Image+Error');
+      setImgFailed(true);
+      setImgLoading(false);
   };
 
   return (
@@ -121,6 +127,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
                 src={imgSrc}
                 alt={item.title}
                 onError={handleImageError}
+                onLoad={() => setImgLoading(false)}
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                 loading="lazy"
@@ -141,6 +148,12 @@ export const MediaCard: React.FC<MediaCardProps> = ({
 
               {/* Content Overlay */}
               <div className="absolute bottom-0 left-0 right-0 p-4 transform transition-transform duration-300 group-hover:translate-y-[-10px]">
+                {(imgLoading && !imgFailed) && (
+                  <p className="text-xs text-yellow-300 mb-1">{t('media_card.image_loading')}</p>
+                )}
+                {imgFailed && (
+                  <p className="text-xs text-red-400 mb-1">{t('media_card.image_failed')}</p>
+                )}
                 <div className="flex items-center gap-2 mb-2">
                   <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-theme-accent text-theme-bg rounded-sm">
                     {t('media_type.' + item.type)}

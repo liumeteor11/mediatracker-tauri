@@ -202,7 +202,9 @@
     "action_done": "Done",
     "action_favorite_title": "Favorite",
     "action_towatch_title": "To Watch",
-    "action_watched_title": "Watched"
+    "action_watched_title": "Watched",
+    "image_loading": "Image loading, please wait",
+    "image_failed": "Image failed to load"
   },
   "media_type": {
     "Movie": "Movie",

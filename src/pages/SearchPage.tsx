@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Search, Loader2, TrendingUp, AlertCircle, RefreshCw, Edit, X, Save, RotateCcw } from 'lucide-react';
-import { searchMedia, getTrendingMedia } from '../services/aiService';
+import { searchMedia, getTrendingMedia, fetchPosterFromSearch, performClientSideSearch, processSearchResult } from '../services/aiService';
 import { MediaItem, CollectionCategory, MediaType } from '../types/types';
 import { MediaCard } from '../components/MediaCard';
 import { useCollectionStore } from '../store/useCollectionStore';
@@ -60,6 +60,7 @@ export const SearchPage: React.FC = () => {
                     if (Array.isArray(parsedData) && parsedData.length > 0) {
                          setResults(parsedData);
                          setIsTrending(true);
+                         hydratePosters(parsedData);
                          setLoading(false);
                          return;
                     }
@@ -79,6 +80,7 @@ export const SearchPage: React.FC = () => {
         setIsTrending(true);
         localStorage.setItem('media_tracker_trending_data', JSON.stringify(trending));
         localStorage.setItem('media_tracker_trending_ts', Date.now().toString());
+        hydratePosters(trending);
         if (forceRefresh) {
              toast.success(t('search_page.trending_updated'));
         }
@@ -90,6 +92,7 @@ export const SearchPage: React.FC = () => {
                 if (Array.isArray(parsedData) && parsedData.length > 0) {
                     setResults(parsedData);
                     setIsTrending(true);
+                    hydratePosters(parsedData);
                     if (forceRefresh) toast.error(t('search_page.trending_refresh_failed'));
                 } else {
                     if (forceRefresh) setError(t('search_page.trending_refresh_failed'));
@@ -120,6 +123,8 @@ export const SearchPage: React.FC = () => {
     try {
       const data = await searchMedia(query, selectedType);
       setResults(data);
+      hydratePosters(data);
+      verifyResults(data, query);
       if (data.length === 0) {
         setError(t('search_page.no_results_found'));
       }
@@ -129,6 +134,44 @@ export const SearchPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const verifyResults = async (items: MediaItem[], q: string) => {
+    try {
+      const ctx = await performClientSideSearch(q, true);
+      if (!ctx) return;
+      const arr = JSON.parse(ctx);
+      if (!Array.isArray(arr)) return;
+      const yearMap = new Map<string, string>();
+      for (const r of arr) {
+        const p = processSearchResult(r.title || '', r.snippet || '');
+        yearMap.set(p.title.toLowerCase(), p.year);
+      }
+      setResults(prev => prev.map(it => {
+        const y = yearMap.get(it.title.toLowerCase());
+        if (y && (!it.releaseDate || it.releaseDate.length < 4 || it.releaseDate !== y)) {
+          return { ...it, releaseDate: y };
+        }
+        return it;
+      }));
+    } catch {}
+  };
+
+  const hydratePosters = async (items: MediaItem[]) => {
+    const queue = items.filter(i => !i.customPosterUrl && (!i.posterUrl || i.posterUrl.includes('placehold.co')));
+    const worker = async () => {
+      while (queue.length > 0) {
+        const item = queue.shift()!;
+        const year = item.releaseDate ? item.releaseDate.split('-')[0] : '';
+        try {
+          const url = await fetchPosterFromSearch(item.title, year, item.type);
+          if (url) {
+            setResults(prev => prev.map(r => r.id === item.id ? { ...r, posterUrl: url } : r));
+          }
+        } catch {}
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
   };
 
   const onAddToCollection = (item: MediaItem, category: CollectionCategory) => {
