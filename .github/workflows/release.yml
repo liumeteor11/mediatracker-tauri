@@ -1,4 +1,4 @@
-name: Release (Windows)
+name: Release (Multi‑platform)
 
 on:
   push:
@@ -13,7 +13,11 @@ on:
 jobs:
   release-by-tag:
     if: startsWith(github.ref, 'refs/tags/')
-    runs-on: windows-latest
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-latest, windows-latest, macos-latest]
     permissions:
       contents: write
     steps:
@@ -22,8 +26,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '18'
-      - name: Install dependencies
+      - name: Install Node deps
         run: npm ci
+      - name: Install Linux deps
+        if: matrix.platform == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev webkit2gtk-4.1 libayatana-appindicator3-dev librsvg2-dev
       - name: Build and publish release
         uses: tauri-apps/tauri-action@v2
         env:
@@ -31,13 +38,18 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: MediaTracker AI ${{ github.ref_name }}
-          releaseBody: Automated Windows build via GitHub Actions
+          releaseBody: Automated multi‑platform build via GitHub Actions
           draft: false
           prerelease: false
+          allowUpdates: true
 
   release-manual:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: windows-latest
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-latest, windows-latest, macos-latest]
     permissions:
       contents: write
     steps:
@@ -46,8 +58,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '18'
-      - name: Install dependencies
+      - name: Install Node deps
         run: npm ci
+      - name: Install Linux deps
+        if: matrix.platform == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev webkit2gtk-4.1 libayatana-appindicator3-dev librsvg2-dev
       - name: Build and publish release
         uses: tauri-apps/tauri-action@v2
         env:
@@ -55,7 +70,7 @@ jobs:
         with:
           tagName: ${{ inputs.version }}
           releaseName: MediaTracker AI ${{ inputs.version }}
-          releaseBody: Automated Windows build via GitHub Actions
+          releaseBody: Automated multi‑platform build via GitHub Actions
           draft: false
           prerelease: false
-
+          allowUpdates: true
