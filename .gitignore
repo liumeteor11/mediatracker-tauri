@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+*.tmp
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/.cargo/
+src-tauri/.tauri/
+
+# IDE
+.vscode/
+.idea/
+
+# Env
+.env
+.env.*

@@ -1,0 +1,138 @@
+@import "tailwindcss";
+
+@layer base {
+  /* Theme Definitions */
+  :root {
+    /* Default (Fallback) */
+    --bg-primary: #ffffff;
+    --bg-secondary: #f3f4f6;
+    --text-primary: #111827;
+    --text-secondary: #4b5563;
+    --accent-primary: #4f46e5;
+    --accent-secondary: #4338ca;
+    --border-color: #e5e7eb;
+    --font-theme: 'system-ui', 'sans-serif';
+    --shadow-color: rgba(0, 0, 0, 0.1);
+  }
+
+  [data-theme="doraemon"] {
+    --bg-primary: #E0F7FA;
+    --bg-secondary: #FFFFFF;
+    --text-primary: #1296DB;
+    --text-secondary: #57606f;
+    --accent-primary: #FF4D4F;
+    --accent-secondary: #FAAD14;
+    --border-color: #B3E5FC;
+    --font-theme: 'Quicksand', 'Varela Round', 'sans-serif'; /* Rounded */
+    --shadow-color: rgba(18, 150, 219, 0.2);
+  }
+
+  [data-theme="cyberpunk"] {
+    --bg-primary: #121212;
+    --bg-secondary: #1E1E1E;
+    --text-primary: #E0E0E0;
+    --text-secondary: #A0A0A0;
+    --accent-primary: #FF00FF; /* Neon Pink */
+    --accent-secondary: #00FFFF; /* Cyan */
+    --border-color: #333333;
+    --font-theme: 'Orbitron', 'Courier New', 'monospace';
+    --shadow-color: rgba(255, 0, 255, 0.4);
+  }
+
+  [data-theme="scandinavian"] {
+    --bg-primary: #FFFFFF;
+    --bg-secondary: #F9F9F9;
+    --text-primary: #2C3E50;
+    --text-secondary: #7F8C8D;
+    --accent-primary: #D4A373; /* Light Wood/Tan */
+    --accent-secondary: #A98467;
+    --border-color: #E8E8E8;
+    --font-theme: 'Helvetica Neue', 'Arial', 'sans-serif';
+    --shadow-color: rgba(0, 0, 0, 0.05);
+  }
+
+  [data-theme="gradient"] {
+    --bg-primary: #f0f2f5; /* Fallback for transparency/mesh */
+    --bg-secondary: rgba(255, 255, 255, 0.6);
+    --text-primary: #2d3436;
+    --text-secondary: #636e72;
+    --accent-primary: #6c5ce7;
+    --accent-secondary: #a29bfe;
+    --border-color: rgba(255, 255, 255, 0.5);
+    --font-theme: 'Montserrat', 'sans-serif';
+    --shadow-color: rgba(108, 92, 231, 0.2);
+  }
+
+  /* Special Backgrounds */
+  [data-theme="gradient"] body {
+    background: radial-gradient(at 0% 0%, hsla(253,16%,7%,1) 0, transparent 50%), 
+                radial-gradient(at 50% 0%, hsla(225,39%,30%,1) 0, transparent 50%), 
+                radial-gradient(at 100% 0%, hsla(339,49%,30%,1) 0, transparent 50%);
+    background-size: cover;
+    background-attachment: fixed;
+    /* Override bg-primary for gradient theme body to be transparent/mesh */
+    --bg-primary: transparent; 
+    --text-primary: #ffffff;
+    --text-secondary: #dfe6e9;
+    --bg-secondary: rgba(255, 255, 255, 0.1); /* Glassmorphism */
+    --border-color: rgba(255, 255, 255, 0.2);
+  }
+  
+  /* Cyberpunk Grid Background */
+  [data-theme="cyberpunk"] body {
+    background-image: linear-gradient(rgba(18, 18, 18, 0.9), rgba(18, 18, 18, 0.9)),
+                      linear-gradient(0deg, transparent 24%, rgba(0, 255, 255, .05) 25%, rgba(0, 255, 255, .05) 26%, transparent 27%, transparent 74%, rgba(0, 255, 255, .05) 75%, rgba(0, 255, 255, .05) 76%, transparent 77%, transparent), 
+                      linear-gradient(90deg, transparent 24%, rgba(0, 255, 255, .05) 25%, rgba(0, 255, 255, .05) 26%, transparent 27%, transparent 74%, rgba(0, 255, 255, .05) 75%, rgba(0, 255, 255, .05) 76%, transparent 77%, transparent);
+    background-size: 50px 50px;
+  }
+
+  body {
+    @apply transition-colors duration-500 ease-in-out;
+    font-family: var(--font-theme);
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+  }
+}
+
+@layer components {
+  /* Cinema Curtain Effect */
+  .cinema-border {
+    @apply relative p-[2px] overflow-hidden rounded-xl;
+    background: linear-gradient(90deg, #121212 0%, #333 50%, #121212 100%);
+  }
+
+  /* 3D Card Flip Classes */
+  .perspective-1000 {
+    perspective: 1000px;
+  }
+  
+  .transform-style-3d {
+    transform-style: preserve-3d;
+  }
+  
+  .backface-hidden {
+    backface-visibility: hidden;
+  }
+  
+  .rotate-y-180 {
+    transform: rotateY(180deg);
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .text-shadow-gold {
+    text-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
+  }
+
+  .text-shadow-neon {
+    text-shadow: 0 0 5px var(--accent-primary), 0 0 10px var(--accent-secondary);
+  }
+}
