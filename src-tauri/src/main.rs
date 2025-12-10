@@ -497,23 +497,23 @@ async fn test_proxy(config: ProxyTestConfig, state: State<'_, AppState>) -> Resu
 // --- Database Commands ---
 
 #[command]
-fn get_collection(db: State<Database>) -> Result<Vec<MediaItem>, String> {
-    db.get_all()
+fn get_collection(username: String, db: State<Database>) -> Result<Vec<MediaItem>, String> {
+    db.get_all_for_user(&username)
 }
 
 #[command]
-fn save_item(item: MediaItem, db: State<Database>) -> Result<(), String> {
-    db.add_item(item)
+fn save_item(username: String, item: MediaItem, db: State<Database>) -> Result<(), String> {
+    db.add_item_for_user(&username, item)
 }
 
 #[command]
-fn remove_item(id: String, db: State<Database>) -> Result<(), String> {
-    db.remove_item(&id)
+fn remove_item(username: String, id: String, db: State<Database>) -> Result<(), String> {
+    db.remove_item_for_user(&username, &id)
 }
 
 #[command]
-fn import_collection(items: Vec<MediaItem>, db: State<Database>) -> Result<(), String> {
-    db.import(items)
+fn import_collection(username: String, items: Vec<MediaItem>, db: State<Database>) -> Result<(), String> {
+    db.import_for_user(&username, items)
 }
 
 fn main() {
@@ -609,4 +609,5 @@ fn login_user(username: String, password: String, db: State<Database>) -> Result
 }
 // Password hashing (Argon2)
 use argon2::{Argon2, PasswordHasher};
-use argon2::password_hash::{PasswordHash, PasswordVerifier, SaltString, rand_core::OsRng};
+use argon2::password_hash::{PasswordHash, PasswordVerifier, SaltString};
+use rand_core::OsRng;

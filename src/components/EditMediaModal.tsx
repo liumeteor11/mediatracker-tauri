@@ -46,6 +46,7 @@ export const EditMediaModal: React.FC<EditMediaModalProps> = ({ item, onClose, o
   const [isSaving, setIsSaving] = useState(false);
   const [viewMode, setViewMode] = useState<'edit' | 'split' | 'preview'>('edit');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   // Image Upload & Crop State
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -147,10 +148,7 @@ export const EditMediaModal: React.FC<EditMediaModalProps> = ({ item, onClose, o
   };
 
   const handleDelete = () => {
-    if (window.confirm(t('edit_modal.delete_confirm'))) {
-      onDelete();
-      onClose();
-    }
+    setConfirmDelete(true);
   };
 
   // Formatting Helpers
@@ -429,6 +427,32 @@ export const EditMediaModal: React.FC<EditMediaModalProps> = ({ item, onClose, o
           </div>
         </div>
       </div>
+      {confirmDelete && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="max-w-sm w-full rounded-2xl shadow-2xl border p-6 relative z-10 transition-colors duration-300 bg-theme-surface border-theme-border">
+            <div className="text-center mb-4">
+              <h3 className="text-lg font-bold text-theme-text">{t('media_card.delete')}</h3>
+              <p className="mt-2 text-sm text-theme-subtext">{t('edit_modal.delete_confirm')}</p>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                className="px-4 py-2 rounded-lg font-medium transition-colors bg-theme-surface text-theme-text border border-theme-border hover:bg-theme-bg"
+                onClick={() => setConfirmDelete(false)}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                className="px-4 py-2 rounded-lg font-medium transition-colors bg-theme-accent-warm text-theme-bg hover:bg-theme-accent-warm-2"
+                onClick={() => { onDelete(); setConfirmDelete(false); onClose(); }}
+              >
+                {t('media_card.delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

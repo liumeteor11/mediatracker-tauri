@@ -34,6 +34,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
   const [isExpanded, setIsExpanded] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const { t } = useTranslation();
   const [imgLoading, setImgLoading] = useState(true);
   const [imgFailed, setImgFailed] = useState(false);
@@ -320,14 +321,9 @@ export const MediaCard: React.FC<MediaCardProps> = ({
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    // Use setTimeout to prevent event propagation issues with window.confirm blocking
-                    setTimeout(() => {
-                      if (window.confirm(t('edit_modal.delete_confirm'))) {
-                        removeFromCollection(item.id);
-                      }
-                    }, 0);
+                    setShowDeleteConfirm(true);
                   }}
-                  className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg font-medium transition-colors bg-red-500 text-white hover:bg-red-600 border-2 border-red-600 focus:outline-none focus:ring-2 focus:ring-red-600"
+                  className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg font-medium transition-colors bg-theme-accent-warm text-theme-bg hover:bg-theme-accent-warm-2 border-2 border-theme-accent-warm focus:outline-none focus:ring-2 focus:ring-theme-accent"
                 >
                   <Trash2 className="w-4 h-4" />
                   {t('media_card.delete')}
@@ -374,6 +370,33 @@ export const MediaCard: React.FC<MediaCardProps> = ({
           onClose={() => setIsEditModalOpen(false)} 
           onDelete={() => removeFromCollection(item.id)}
         />
+      )}
+
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="max-w-sm w-full rounded-2xl shadow-2xl border p-6 relative z-10 transition-colors duration-300 bg-theme-surface border-theme-border">
+            <div className="text-center mb-4">
+              <h3 className="text-lg font-bold text-theme-text">{t('media_card.delete')}</h3>
+              <p className="mt-2 text-sm text-theme-subtext">{t('edit_modal.delete_confirm')}</p>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                className="px-4 py-2 rounded-lg font-medium transition-colors bg-theme-surface text-theme-text border border-theme-border hover:bg-theme-bg"
+                onClick={() => setShowDeleteConfirm(false)}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                className="px-4 py-2 rounded-lg font-medium transition-colors bg-theme-accent-warm text-theme-bg hover:bg-theme-accent-warm-2"
+                onClick={() => { removeFromCollection(item.id); setShowDeleteConfirm(false); }}
+              >
+                {t('media_card.delete')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

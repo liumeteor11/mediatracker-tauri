@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { MediaItem, CollectionCategory } from '../types/types';
 import { fetchCover } from '../services/coverService';
 import { invoke } from '@tauri-apps/api/core';
+import { useAuthStore } from './useAuthStore';
+const isTauri = typeof window !== 'undefined' && (('__TAURI__' in window) || ('__TAURI_INTERNALS__' in window));
 
 interface CollectionState {
   collection: MediaItem[];
@@ -14,6 +16,8 @@ interface CollectionState {
   moveCategory: (id: string, category: CollectionCategory) => void;
   importCollection: (items: MediaItem[]) => void;
   getStats: () => { total: number; watched: number; toWatch: number; favorites: number };
+  refreshForUser: () => Promise<void>;
+  clear: () => void;
 }
 
 export const useCollectionStore = create<CollectionState>((set, get) => ({
@@ -25,8 +29,9 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
     if (get().initialized) return;
     set({ isLoading: true });
     try {
-        if (window.__TAURI__) {
-            const items = await invoke<MediaItem[]>('get_collection');
+        if (isTauri) {
+            const username = useAuthStore.getState().user?.username || 'guest';
+            const items = await invoke<MediaItem[]>('get_collection', { username });
             set({ collection: items, initialized: true, isLoading: false });
         } else {
             // Fallback to localStorage for Web Mode
@@ -54,6 +59,15 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
     }
   },
 
+  refreshForUser: async () => {
+    set({ initialized: false });
+    await get().initialize();
+  },
+
+  clear: () => {
+    set({ collection: [], initialized: false });
+  },
+
   importCollection: (items) => {
       // Optimistic update
       set((state) => {
@@ -62,8 +76,9 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
         const updatedCollection = [...newItems, ...state.collection];
         
         // Persist
-        if (window.__TAURI__) {
-            invoke('import_collection', { items: newItems }).catch(console.error);
+        if (isTauri) {
+            const username = useAuthStore.getState().user?.username || 'guest';
+            invoke('import_collection', { username, items: newItems }).catch(console.error);
         } else {
             localStorage.setItem('media-tracker-collection', JSON.stringify({ state: { collection: updatedCollection }, version: 0 }));
         }
@@ -87,8 +102,9 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
         }
 
         // Persist
-        if (window.__TAURI__) {
-            invoke('save_item', { item: newItem }).catch(console.error);
+        if (isTauri) {
+            const username = useAuthStore.getState().user?.username || 'guest';
+            invoke('save_item', { username, item: newItem }).catch(console.error);
         } else {
             localStorage.setItem('media-tracker-collection', JSON.stringify({ state: { collection: updatedCollection }, version: 0 }));
         }
@@ -112,8 +128,9 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
   removeFromCollection: (id) => set((state) => {
     const updatedCollection = state.collection.filter((item) => item.id !== id);
     
-    if (window.__TAURI__) {
-        invoke('remove_item', { id }).catch(console.error);
+    if (isTauri) {
+        const username = useAuthStore.getState().user?.username || 'guest';
+        invoke('remove_item', { username, id }).catch(console.error);
     } else {
         localStorage.setItem('media-tracker-collection', JSON.stringify({ state: { collection: updatedCollection }, version: 0 }));
     }
@@ -131,8 +148,9 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
       return item;
     });
 
-    if (window.__TAURI__ && updatedItem) {
-        invoke('save_item', { item: updatedItem }).catch(console.error);
+    if (isTauri && updatedItem) {
+        const username = useAuthStore.getState().user?.username || 'guest';
+        invoke('save_item', { username, item: updatedItem }).catch(console.error);
     } else {
         localStorage.setItem('media-tracker-collection', JSON.stringify({ state: { collection: updatedCollection }, version: 0 }));
     }
@@ -150,8 +168,9 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
         return item;
     });
 
-    if (window.__TAURI__ && updatedItem) {
-        invoke('save_item', { item: updatedItem }).catch(console.error);
+    if (isTauri && updatedItem) {
+        const username = useAuthStore.getState().user?.username || 'guest';
+        invoke('save_item', { username, item: updatedItem }).catch(console.error);
     } else {
         localStorage.setItem('media-tracker-collection', JSON.stringify({ state: { collection: updatedCollection }, version: 0 }));
     }
@@ -169,3 +188,16 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
     };
   }
 }));
+
+// Auto-refresh collection when auth user changes
+useAuthStore.subscribe((state, prev) => {
+  const newUser = state.user?.username || null;
+  const oldUser = prev.user?.username || null;
+  if (newUser !== oldUser) {
+    if (!newUser) {
+      useCollectionStore.getState().clear();
+    } else {
+      useCollectionStore.getState().refreshForUser();
+    }
+  }
+});

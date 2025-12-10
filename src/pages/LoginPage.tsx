@@ -108,10 +108,6 @@ export const LoginPage: React.FC = () => {
           >
             {loginForm.formState.isSubmitting ? t('login.signing_in') : t('login.sign_in_btn')}
           </button>
-
-          <p className="text-xs text-center mt-4 text-theme-subtext">
-            {t('login.demo_note')}
-          </p>
           <div className="mt-4 text-center">
             <button type="button" className="text-theme-accent hover:underline" onClick={() => setMode('register')}>
               {t('login.switch_to_register')}

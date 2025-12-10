@@ -43,35 +43,42 @@ impl Database {
         Ok(data.items.clone())
     }
 
-    pub fn add_item(&self, item: MediaItem) -> Result<(), String> {
+    pub fn get_all_for_user(&self, username: &str) -> Result<Vec<MediaItem>, String> {
+        let data = self.cache.lock().map_err(|e| e.to_string())?;
+        Ok(data.items_by_user.get(username).cloned().unwrap_or_default())
+    }
+
+    pub fn add_item_for_user(&self, username: &str, item: MediaItem) -> Result<(), String> {
         let mut data = self.cache.lock().map_err(|e| e.to_string())?;
-        // Remove existing if any (update logic)
-        data.items.retain(|i| i.id != item.id);
-        data.items.push(item);
-        drop(data); // unlock before save
+        let list = data.items_by_user.entry(username.to_string()).or_default();
+        list.retain(|i| i.id != item.id);
+        list.push(item);
+        drop(data);
         self.save()
     }
 
-    pub fn remove_item(&self, id: &str) -> Result<(), String> {
+    pub fn remove_item_for_user(&self, username: &str, id: &str) -> Result<(), String> {
         let mut data = self.cache.lock().map_err(|e| e.to_string())?;
-        data.items.retain(|i| i.id != id);
+        if let Some(list) = data.items_by_user.get_mut(username) {
+            list.retain(|i| i.id != id);
+        }
         drop(data);
         self.save()
     }
     
     #[allow(dead_code)]
     pub fn update_item(&self, item: MediaItem) -> Result<(), String> {
-        self.add_item(item)
+        Err("update_item deprecated; use per-user methods".to_string())
     }
     
     // Bulk import
-    pub fn import(&self, items: Vec<MediaItem>) -> Result<(), String> {
+    pub fn import_for_user(&self, username: &str, items: Vec<MediaItem>) -> Result<(), String> {
          let mut data = self.cache.lock().map_err(|e| e.to_string())?;
-         // Merge logic: Add if ID doesn't exist
-         let existing_ids: Vec<String> = data.items.iter().map(|i| i.id.clone()).collect();
+         let list = data.items_by_user.entry(username.to_string()).or_default();
+         let existing_ids: Vec<String> = list.iter().map(|i| i.id.clone()).collect();
          for item in items {
              if !existing_ids.contains(&item.id) {
-                 data.items.push(item);
+                 list.push(item);
              }
          }
          drop(data);

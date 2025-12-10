@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { User } from '../types/types';
 import { invoke } from '@tauri-apps/api/core';
+const isTauri = typeof window !== 'undefined' && (('__TAURI__' in window) || ('__TAURI_INTERNALS__' in window));
 
 interface AuthState {
   user: User | null;
@@ -15,20 +16,18 @@ export const useAuthStore = create<AuthState>()(
     (set) => ({
       user: null,
       login: async (username, password) => {
-        if (window.__TAURI__) {
-          const result = await invoke<{ username: string }>('login_user', { username, password: password || '' });
-          set({ user: { username: result.username, lastBackup: new Date().toISOString() } });
-        } else {
-          set({ user: { username, lastBackup: new Date().toISOString() } });
+        if (!isTauri) {
+          throw new Error('Login not available in web preview');
         }
+        const result = await invoke<{ username: string }>('login_user', { username, password: password || '' });
+        set({ user: { username: result.username, lastBackup: new Date().toISOString() } });
       },
       register: async (username, password) => {
-        if (window.__TAURI__) {
-          const result = await invoke<{ username: string }>('register_user', { username, password });
-          set({ user: { username: result.username, lastBackup: new Date().toISOString() } });
-        } else {
-          set({ user: { username, lastBackup: new Date().toISOString() } });
+        if (!isTauri) {
+          throw new Error('Register not available in web preview');
         }
+        const result = await invoke<{ username: string }>('register_user', { username, password });
+        set({ user: { username: result.username, lastBackup: new Date().toISOString() } });
       },
       logout: () => set({ user: null }),
     }),

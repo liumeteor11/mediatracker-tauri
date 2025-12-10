@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum MediaType {
@@ -63,6 +64,8 @@ pub struct CollectionData {
     pub items: Vec<MediaItem>,
     #[serde(default)]
     pub users: Vec<UserRecord>,
+    #[serde(default)]
+    pub items_by_user: HashMap<String, Vec<MediaItem>>, 
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
