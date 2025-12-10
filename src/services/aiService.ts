@@ -390,14 +390,26 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
                 }
             }
 
-            const message = completion.choices[0].message;
+            const normalizeAssistantMessage = (c: any) => {
+                try {
+                    if (c && Array.isArray(c.choices) && c.choices.length > 0) {
+                        return c.choices[0].message ?? c.choices[0].delta ?? c.choices[0];
+                    }
+                    if (c?.message) return c.message;
+                    if (typeof c?.output_text === 'string') return { content: c.output_text };
+                    if (typeof c?.content === 'string') return { content: c.content };
+                } catch {}
+                throw new Error('Invalid AI response: missing choices/message');
+            };
+            const message = normalizeAssistantMessage(completion);
 
             // If the model wants to call a tool
-            if (message.tool_calls && message.tool_calls.length > 0) {
+            const toolCalls = message.tool_calls || (message.function_call ? [{ type: 'function', id: 'fn', function: message.function_call }] : []);
+            if (toolCalls && toolCalls.length > 0) {
                 currentMessages.push(message); // Add assistant's tool call message
 
                 // Execute tool calls
-                for (const toolCall of message.tool_calls) {
+                for (const toolCall of toolCalls) {
                     if (toolCall.type === 'function' && toolCall.function.name === '$web_search') {
                         // For Kimi's $web_search, we simply echo the arguments back to the model
                         currentMessages.push({
@@ -438,7 +450,12 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
                 turnCount++;
             } else {
                 // No tool calls, return final response
-                return message.content || "";
+                const content = typeof message.content === 'string' 
+                    ? message.content 
+                    : Array.isArray(message.content) 
+                        ? message.content.map((p: any) => (typeof p === 'string' ? p : p?.text || '')).join('') 
+                        : '';
+                return content || "";
             }
         }
         
