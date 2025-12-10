@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri::Manager;
-use crate::models::{MediaItem, CollectionData};
+use crate::models::{MediaItem, CollectionData, UserRecord};
 use std::sync::Mutex;
 
 pub struct Database {
@@ -76,5 +76,21 @@ impl Database {
          }
          drop(data);
          self.save()
+    }
+
+    // --- Auth helpers ---
+    pub fn find_user(&self, username: &str) -> Option<UserRecord> {
+        let data = self.cache.lock().ok()?;
+        data.users.iter().find(|u| u.username == username).cloned()
+    }
+
+    pub fn add_user(&self, user: UserRecord) -> Result<(), String> {
+        let mut data = self.cache.lock().map_err(|e| e.to_string())?;
+        if data.users.iter().any(|u| u.username == user.username) {
+            return Err("User already exists".to_string());
+        }
+        data.users.push(user);
+        drop(data);
+        self.save()
     }
 }

@@ -126,7 +126,14 @@ export const SearchPage: React.FC = () => {
       hydratePosters(data);
       verifyResults(data, query);
       if (data.length === 0) {
-        setError(t('search_page.no_results_found'));
+        const cfg = useAIStore.getState();
+        const hasKey = !!cfg.getDecryptedApiKey();
+        const isDdg = cfg.searchProvider === 'duckduckgo';
+        if (!hasKey && !isDdg) {
+          setError(t('search_page.network_unavailable'));
+        } else {
+          setError(t('search_page.no_results_found'));
+        }
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -218,7 +225,7 @@ export const SearchPage: React.FC = () => {
 
       {/* Search Header */}
       <div className="text-center mb-12 space-y-6 relative z-10">
-        <h1 className="text-4xl md:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-theme-accent to-theme-accent-hover">
+        <h1 className="text-4xl md:text-6xl heading-strong text-theme-accent-warm">
           {t('search_page.title')}
         </h1>
         <p className="text-lg max-w-2xl mx-auto text-theme-subtext">
@@ -235,13 +242,13 @@ export const SearchPage: React.FC = () => {
             className="relative w-full pl-12 pr-32 py-4 rounded-full border-2 focus:outline-none focus:ring-2 shadow-xl text-lg transition-all bg-theme-surface border-theme-border text-theme-text focus:border-theme-accent focus:ring-theme-accent/20 placeholder-theme-subtext"
           />
           <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-6 h-6 text-theme-subtext" />
-          <button 
-            type="submit"
-            disabled={loading || !query.trim()}
-            className="absolute right-2 top-2 bottom-2 px-6 rounded-full font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 bg-theme-accent text-theme-bg hover:bg-theme-accent-hover hover:shadow-lg"
-          >
-            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : t('search_page.search_btn')}
-          </button>
+            <button 
+              type="submit"
+              disabled={loading || !query.trim()}
+              className="absolute right-2 top-2 bottom-2 px-6 rounded-full font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 bg-theme-accent text-theme-bg hover:bg-theme-accent-hover hover:shadow-lg border-2 border-theme-accent focus:outline-none focus:ring-2 focus:ring-theme-accent"
+            >
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : t('search_page.search_btn')}
+            </button>
         </form>
 
         <div className="flex flex-wrap justify-center gap-2 mt-6 max-w-2xl mx-auto">
@@ -250,9 +257,9 @@ export const SearchPage: React.FC = () => {
               key={filter.value}
               onClick={() => setSelectedType(filter.value as MediaType | 'All')}
               className={clsx(
-                "px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 border",
+                "px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 border focus:outline-none focus:ring-2 focus:ring-theme-accent",
                 selectedType === filter.value
-                  ? "bg-theme-accent text-theme-bg border-theme-accent shadow-md"
+                  ? "bg-theme-accent text-theme-bg border-theme-accent border-2 shadow-lg"
                   : "bg-theme-surface text-theme-subtext border-theme-border hover:border-theme-accent/50 hover:text-theme-text"
               )}
             >
@@ -275,7 +282,7 @@ export const SearchPage: React.FC = () => {
                     <div className="flex items-center gap-2">
                         <button
                             onClick={openPromptModal}
-                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-theme-surface text-theme-text border border-theme-border hover:bg-theme-bg"
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-theme-surface text-theme-text border-2 border-theme-accent hover:bg-theme-bg focus:outline-none focus:ring-2 focus:ring-theme-accent"
                             title={t('search_page.edit_prompt')}
                         >
                             <Edit className="w-4 h-4" />
@@ -285,7 +292,7 @@ export const SearchPage: React.FC = () => {
                         <button
                             onClick={() => loadTrending(true)}
                             disabled={loading}
-                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-theme-surface text-theme-accent hover:bg-theme-bg disabled:opacity-50"
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-theme-surface text-theme-accent hover:bg-theme-bg disabled:opacity-50 border-2 border-theme-accent focus:outline-none focus:ring-2 focus:ring-theme-accent"
                             title={t('search_page.refresh_tooltip')}
                         >
                             <RefreshCw className={clsx("w-4 h-4", loading && "animate-spin")} />

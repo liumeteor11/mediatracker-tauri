@@ -22,6 +22,8 @@ export default {
             subtext: 'var(--text-secondary)',
             accent: 'var(--accent-primary)',
             'accent-hover': 'var(--accent-secondary)',
+            'accent-warm': 'var(--accent-warm-primary)',
+            'accent-warm-2': 'var(--accent-warm-secondary)',
             border: 'var(--border-color)',
             shadow: 'var(--shadow-color)',
         }

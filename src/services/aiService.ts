@@ -146,12 +146,15 @@ export const performClientSideSearch = async (query: string, force: boolean = fa
         if (window.__TAURI__) {
             try {
                 // Map config to Rust struct naming conventions
+                const { useSystemProxy, getProxyUrl } = useAIStore.getState();
                 const rustConfig = {
                     provider: searchProvider,
                     api_key: searchConfig.apiKey,
                     cx: googleSearchCx,
                     user: yandexSearchLogin,
-                    search_type: "text"
+                    search_type: "text",
+                    proxy_url: getProxyUrl(),
+                    use_system_proxy: useSystemProxy
                 };
                 
                 const resultStr = await invoke<string>("web_search", { query, config: rustConfig });
@@ -281,15 +284,19 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
     // Abstract the "completion" call
     const createCompletion = async (msgs: any[], tools: any[]) => {
         if (isTauri) {
+             const { useSystemProxy, getProxyUrl } = useAIStore.getState();
              const rustConfig = {
                 model,
                 baseURL: finalBaseURL,
-                apiKey
+                apiKey,
+                proxy_url: getProxyUrl(),
+                use_system_proxy: useSystemProxy
             };
             // Call Rust
             const resultJson = await invoke<string>("ai_chat", { 
                 messages: msgs, 
                 temperature, 
+                tools, 
                 config: rustConfig 
             });
             
@@ -1021,7 +1028,15 @@ export const getTrendingMedia = async (): Promise<MediaItem[]> => {
   ];
 
   const text = await callAI(messages, 0.1, { forceSearch: true }); 
-  if (!text) return [];
+  if (!text) {
+    try {
+      if (searchContext) {
+        const fb = await createFallbackItemsFromContext(searchContext);
+        if (fb.length > 0) return fb;
+      }
+    } catch {}
+    return [];
+  }
 
   // Improved JSON extraction
   let jsonStr = "";

@@ -11,9 +11,12 @@ use serde_json::Value;
 use reqwest::Client;
 use std::error::Error;
 use database::Database;
-use models::MediaItem;
+use models::{MediaItem, UserPublic, UserRecord};
 use quick_xml::events::Event;
 use quick_xml::Reader;
+use std::time::Duration;
+#[cfg(target_os = "windows")]
+use winreg::{enums::HKEY_CURRENT_USER, RegKey};
 
 struct AppState {
     proxy_client: Client,  // For Google/Serper/Images (Needs Proxy)
@@ -27,6 +30,8 @@ struct SearchConfig {
     cx: Option<String>,
     user: Option<String>,
     search_type: Option<String>, // "text" or "image"
+    proxy_url: Option<String>,
+    use_system_proxy: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -36,6 +41,15 @@ struct AIChatConfig {
     base_url: Option<String>,
     #[serde(rename = "apiKey")]
     api_key: Option<String>,
+    proxy_url: Option<String>,
+    use_system_proxy: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ProxyTestConfig {
+    url: Option<String>,
+    proxy_url: Option<String>,
+    use_system_proxy: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -47,6 +61,90 @@ struct SearchResultItem {
     metadata: Option<Value>, // Extra metadata (e.g. pagemap from Google)
 }
 
+fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) -> Option<Client> {
+    if let Some(url) = proxy_url {
+        if !url.is_empty() {
+            let builder = Client::builder()
+                .tcp_nodelay(true)
+                .user_agent("MediaTracker/1.0")
+                .connect_timeout(Duration::from_secs(7))
+                .timeout(Duration::from_secs(20))
+                .proxy(reqwest::Proxy::all(url).ok()?);
+            return builder.build().ok();
+        }
+    }
+    if use_system_proxy.unwrap_or(false) {
+        let http = std::env::var("HTTP_PROXY").ok().or_else(|| std::env::var("http_proxy").ok());
+        let https = std::env::var("HTTPS_PROXY").ok().or_else(|| std::env::var("https_proxy").ok());
+        let all = std::env::var("ALL_PROXY").ok().or_else(|| std::env::var("all_proxy").ok());
+
+        let mut builder = Client::builder()
+            .tcp_nodelay(true)
+            .user_agent("MediaTracker/1.0")
+            .connect_timeout(Duration::from_secs(7))
+            .timeout(Duration::from_secs(20));
+        let mut any = false;
+        if let Some(a) = all {
+            if !a.is_empty() {
+                if let Ok(p) = reqwest::Proxy::all(a) { builder = builder.proxy(p); any = true; }
+            }
+        } else {
+            if let Some(h) = http { if !h.is_empty() { if let Ok(p) = reqwest::Proxy::http(h) { builder = builder.proxy(p); any = true; } } }
+            if let Some(s) = https { if !s.is_empty() { if let Ok(p) = reqwest::Proxy::https(s) { builder = builder.proxy(p); any = true; } } }
+        }
+        if any {
+            if let Ok(c) = builder.build() { return Some(c); }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(internet_settings) = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings") {
+                let enabled: Result<u32, _> = internet_settings.get_value("ProxyEnable");
+                if enabled.ok().unwrap_or(0) != 0 {
+                    if let Ok(server) = internet_settings.get_value::<String, _>("ProxyServer") {
+                        let mut http_u: Option<String> = None;
+                        let mut https_u: Option<String> = None;
+                        let mut socks_u: Option<String> = None;
+                        if server.contains('=') {
+                            for part in server.split(';') {
+                                let mut kv = part.splitn(2, '=');
+                                let k = kv.next().unwrap_or("").to_lowercase();
+                                let v = kv.next().unwrap_or("");
+                                let url = if v.starts_with("http://") || v.starts_with("https://") || v.starts_with("socks5://") { v.to_string() } else {
+                                    match k.as_str() { "socks" => format!("socks5://{}", v), _ => format!("http://{}", v) }
+                                };
+                                match k.as_str() {
+                                    "http" => http_u = Some(url),
+                                    "https" => https_u = Some(url),
+                                    "socks" => socks_u = Some(url),
+                                    _ => {}
+                                }
+                            }
+                        } else {
+                            let v = server;
+                            let url = if v.starts_with("http://") || v.starts_with("https://") || v.starts_with("socks5://") { v } else { format!("http://{}", v) };
+                            http_u = Some(url.clone());
+                            https_u = Some(url);
+                        }
+                        let mut builder = Client::builder()
+                            .tcp_nodelay(true)
+                            .user_agent("MediaTracker/1.0")
+                            .connect_timeout(Duration::from_secs(7))
+                            .timeout(Duration::from_secs(20));
+                        let mut have = false;
+                        if let Some(s) = socks_u { if let Ok(p) = reqwest::Proxy::all(s) { builder = builder.proxy(p); have = true; } }
+                        else {
+                            if let Some(h) = http_u { if let Ok(p) = reqwest::Proxy::http(h) { builder = builder.proxy(p); have = true; } }
+                            if let Some(hs) = https_u { if let Ok(p) = reqwest::Proxy::https(hs) { builder = builder.proxy(p); have = true; } }
+                        }
+                        if have { if let Ok(c) = builder.build() { return Some(c); } }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
 // --- Search Logic (Same as before) ---
 
 async fn google_search(client: &Client, query: &str, api_key: &str, cx: &str, search_type: Option<&str>) -> Result<Vec<SearchResultItem>, Box<dyn Error>> {
@@ -249,8 +347,9 @@ async fn yandex_search(client: &Client, query: &str, user: &str, api_key: &str) 
 async fn web_search(query: String, config: SearchConfig, state: State<'_, AppState>) -> Result<String, String> {
     println!("Rust web_search called. Query: {}, Provider: {}, Type: {:?}", query, config.provider, config.search_type);
     
-    // Use proxy_client for web search
-    let client = &state.proxy_client;
+    // Choose HTTP client
+    let local_client = client_with_proxy(config.proxy_url.clone(), config.use_system_proxy.clone());
+    let client = local_client.as_ref().unwrap_or(&state.proxy_client);
     let search_type = config.search_type.as_deref();
     
     let result = match config.provider.as_str() {
@@ -291,7 +390,7 @@ async fn web_search(query: String, config: SearchConfig, state: State<'_, AppSta
 }
 
 #[command]
-async fn ai_chat(messages: Vec<Value>, temperature: f32, config: AIChatConfig, state: State<'_, AppState>) -> Result<String, String> {
+async fn ai_chat(messages: Vec<Value>, temperature: f32, tools: Option<Value>, config: AIChatConfig, state: State<'_, AppState>) -> Result<String, String> {
     let start = std::time::Instant::now();
     let api_key = config.api_key.ok_or("Missing API Key")?;
     let base_url = config.base_url.unwrap_or("https://api.moonshot.cn/v1".to_string());
@@ -308,7 +407,11 @@ async fn ai_chat(messages: Vec<Value>, temperature: f32, config: AIChatConfig, s
         || base_url.contains("localhost")
         || base_url.contains("127.0.0.1");
         
-    let client = if use_direct {
+    // Optional override via proxy_url
+    let local_client = client_with_proxy(config.proxy_url.clone(), config.use_system_proxy.clone());
+    let client = if let Some(c) = local_client.as_ref() {
+        c
+    } else if use_direct {
         &state.direct_client
     } else {
         &state.proxy_client
@@ -318,11 +421,15 @@ async fn ai_chat(messages: Vec<Value>, temperature: f32, config: AIChatConfig, s
 
     let model = config.model.unwrap_or("moonshot-v1-8k".to_string());
     
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "model": model,
         "messages": messages,
         "temperature": temperature,
     });
+    if let Some(t) = tools {
+        body["tools"] = t;
+        body["tool_choice"] = serde_json::Value::String("auto".to_string());
+    }
 
     let url = if base_url.ends_with('/') {
         format!("{}chat/completions", base_url)
@@ -353,6 +460,38 @@ async fn ai_chat(messages: Vec<Value>, temperature: f32, config: AIChatConfig, s
     println!("AI Request Complete, Total Duration: {:?}", start.elapsed());
     
     Ok(json_resp.to_string())
+}
+
+#[command]
+async fn test_proxy(config: ProxyTestConfig, state: State<'_, AppState>) -> Result<String, String> {
+    let url = config
+        .url
+        .unwrap_or_else(|| "https://www.google.com/generate_204".to_string());
+
+    let start = std::time::Instant::now();
+
+    // Build optional client with explicit proxy
+    let local_client = client_with_proxy(config.proxy_url.clone(), config.use_system_proxy.clone());
+
+    let client = local_client.as_ref().unwrap_or(&state.proxy_client);
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Proxy request failed: {}", e))?;
+
+    let elapsed = start.elapsed().as_millis() as u64;
+    let ok = resp.status().is_success();
+    let status = resp.status().as_u16();
+
+    let body = serde_json::json!({
+        "ok": ok,
+        "status": status,
+        "latency_ms": elapsed,
+        "url": url,
+    });
+    Ok(body.to_string())
 }
 
 // --- Database Commands ---
@@ -407,16 +546,67 @@ fn main() {
             
             app.manage(AppState { proxy_client, direct_client });
             
+            if std::env::var("TAURI_OPEN_DEVTOOLS").unwrap_or_default() == "true" {
+                if let Some(w) = app.get_webview_window("main") {
+                    w.open_devtools();
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             web_search, 
             ai_chat,
+            test_proxy,
             get_collection,
             save_item,
             remove_item,
-            import_collection
+            import_collection,
+            register_user,
+            login_user
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[command]
+fn register_user(username: String, password: String, db: State<Database>) -> Result<UserPublic, String> {
+    let u = username.trim();
+    if u.len() < 3 { return Err("Username too short".to_string()); }
+    if password.len() < 6 { return Err("Password too short".to_string()); }
+    if db.find_user(u).is_some() {
+        return Err("USER_EXISTS".to_string());
+    }
+
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::default();
+    let hash = argon2
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|e| e.to_string())?
+        .to_string();
+
+    let created_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs() as i64;
+
+    let record = UserRecord { username: u.to_string(), password_hash: hash, created_at };
+    db.add_user(record)?;
+    Ok(UserPublic { username: u.to_string() })
+}
+
+#[command]
+fn login_user(username: String, password: String, db: State<Database>) -> Result<UserPublic, String> {
+    let u = username.trim();
+    let record = db.find_user(u).ok_or_else(|| "INVALID_CREDENTIALS".to_string())?;
+
+    let parsed = PasswordHash::new(&record.password_hash).map_err(|e| e.to_string())?;
+    let argon2 = Argon2::default();
+    match argon2.verify_password(password.as_bytes(), &parsed) {
+        Ok(_) => Ok(UserPublic { username: u.to_string() }),
+        Err(_) => Err("INVALID_CREDENTIALS".to_string()),
+    }
+}
+// Password hashing (Argon2)
+use argon2::{Argon2, PasswordHasher};
+use argon2::password_hash::{PasswordHash, PasswordVerifier, SaltString, rand_core::OsRng};

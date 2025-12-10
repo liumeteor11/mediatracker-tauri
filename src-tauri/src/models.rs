@@ -59,5 +59,21 @@ pub struct MediaItem {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct CollectionData {
+    #[serde(default)]
     pub items: Vec<MediaItem>,
+    #[serde(default)]
+    pub users: Vec<UserRecord>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct UserRecord {
+    pub username: String,
+    pub password_hash: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UserPublic {
+    pub username: String,
 }

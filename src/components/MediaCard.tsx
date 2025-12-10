@@ -155,15 +155,9 @@ export const MediaCard: React.FC<MediaCardProps> = ({
                   <p className="text-xs text-red-400 mb-1">{t('media_card.image_failed')}</p>
                 )}
                 <div className="flex items-center gap-2 mb-2">
-                  <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-theme-accent text-theme-bg rounded-sm">
-                    {t('media_type.' + item.type)}
+                  <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-theme-accent text-theme-bg rounded-sm ring-1 ring-theme-accent/50 shadow-md">
+                    {item.type}
                   </span>
-                  {item.rating && (
-                    <div className="flex items-center gap-1 text-theme-accent">
-                      <Star className="w-3 h-3 fill-current" />
-                      <span className="text-xs font-bold">{item.rating.split('/')[0]}</span>
-                    </div>
-                  )}
                 </div>
                 <h3 className="text-lg font-bold text-white leading-tight line-clamp-1 mb-1 font-sans text-shadow-gold">
                   {item.title}
@@ -316,7 +310,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
                     e.stopPropagation();
                     setIsEditModalOpen(true);
                   }}
-                  className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg font-medium transition-colors bg-theme-accent text-theme-bg hover:bg-theme-accent-hover"
+                  className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg font-medium transition-colors bg-theme-accent text-theme-bg hover:bg-theme-accent-hover border-2 border-theme-accent focus:outline-none focus:ring-2 focus:ring-theme-accent"
                 >
                   <Edit className="w-4 h-4" />
                   {t('media_card.edit')}
@@ -333,7 +327,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
                       }
                     }, 0);
                   }}
-                  className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg font-medium transition-colors bg-red-500 text-white hover:bg-red-600"
+                  className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg font-medium transition-colors bg-red-500 text-white hover:bg-red-600 border-2 border-red-600 focus:outline-none focus:ring-2 focus:ring-red-600"
                 >
                   <Trash2 className="w-4 h-4" />
                   {t('media_card.delete')}
@@ -342,17 +336,17 @@ export const MediaCard: React.FC<MediaCardProps> = ({
             ) : (
               showActions && onAction && (
                 <div className="mt-4 grid grid-cols-3 gap-2">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onAction(item, CollectionCategory.FAVORITES); }}
-                    className="flex flex-col items-center justify-center p-2 rounded-lg transition-colors hover:bg-theme-bg text-theme-subtext hover:text-red-500"
-                    title={t('media_card.action_favorite_title')}
-                  >
-                    <Heart className="w-5 h-5 mb-1" />
-                    <span className="text-[10px]">{t('media_card.action_like')}</span>
-                  </button>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); onAction(item, CollectionCategory.FAVORITES); }}
+                  className="flex flex-col items-center justify-center p-2 rounded-lg transition-colors hover:bg-theme-bg text-theme-subtext hover:text-red-500 border-2 border-theme-border focus:outline-none focus:ring-2 focus:ring-theme-accent"
+                  title={t('media_card.action_favorite_title')}
+                >
+                  <Heart className="w-5 h-5 mb-1" />
+                  <span className="text-[10px]">{t('media_card.action_like')}</span>
+                </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); onAction(item, CollectionCategory.TO_WATCH); }}
-                    className="flex flex-col items-center justify-center p-2 rounded-lg transition-colors hover:bg-theme-bg text-theme-subtext hover:text-blue-500"
+                    className="flex flex-col items-center justify-center p-2 rounded-lg transition-colors hover:bg-theme-bg text-theme-subtext hover:text-blue-500 border-2 border-theme-border focus:outline-none focus:ring-2 focus:ring-theme-accent"
                     title={t('media_card.action_towatch_title')}
                   >
                     <Bookmark className="w-5 h-5 mb-1" />
@@ -360,7 +354,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
                   </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); onAction(item, CollectionCategory.WATCHED); }}
-                    className="flex flex-col items-center justify-center p-2 rounded-lg transition-colors hover:bg-theme-bg text-theme-subtext hover:text-green-500"
+                    className="flex flex-col items-center justify-center p-2 rounded-lg transition-colors hover:bg-theme-bg text-theme-subtext hover:text-green-500 border-2 border-theme-border focus:outline-none focus:ring-2 focus:ring-theme-accent"
                     title={t('media_card.action_watched_title')}
                   >
                     <Check className="w-5 h-5 mb-1" />

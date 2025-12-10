@@ -83,9 +83,9 @@ export const Navbar: React.FC = () => {
                   key={path}
                   to={path}
                   className={clsx(
-                    "flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors",
+                    "flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-theme-accent",
                     location.pathname === path
-                      ? "bg-theme-accent text-theme-bg"
+                      ? "bg-theme-accent text-theme-bg border-2 border-theme-accent"
                       : "text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50"
                   )}
                 >
@@ -100,7 +100,7 @@ export const Navbar: React.FC = () => {
               <div className="relative" ref={langDropdownRef}>
                 <button
                   onClick={() => setIsLangOpen(!isLangOpen)}
-                  className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50"
+                  className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50 focus:outline-none focus:ring-2 focus:ring-theme-accent"
                 >
                   <Globe className="w-4 h-4" />
                   <span className="capitalize">{languages.find(l => l.code === i18n.language.split('-')[0])?.name || t('common.language')}</span>
@@ -116,7 +116,7 @@ export const Navbar: React.FC = () => {
                         className={clsx(
                           "w-full text-left px-4 py-2 text-sm transition-colors",
                           i18n.language.startsWith(l.code)
-                            ? "bg-theme-accent text-theme-bg"
+                            ? "bg-theme-accent text-theme-bg border-2 border-theme-accent"
                             : "text-theme-text hover:bg-theme-bg"
                         )}
                       >
@@ -131,7 +131,7 @@ export const Navbar: React.FC = () => {
               <div className="relative" ref={themeDropdownRef}>
                 <button
                   onClick={() => setIsThemeOpen(!isThemeOpen)}
-                  className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50"
+                  className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50 focus:outline-none focus:ring-2 focus:ring-theme-accent"
                 >
                   <Palette className="w-4 h-4" />
                   <span className="capitalize">{themes.find(t => t.id === theme)?.name || t('common.theme')}</span>
@@ -150,7 +150,7 @@ export const Navbar: React.FC = () => {
                         className={clsx(
                           "w-full text-left px-4 py-2 text-sm transition-colors",
                           theme === t.id
-                            ? "bg-theme-accent text-theme-bg"
+                            ? "bg-theme-accent text-theme-bg border-2 border-theme-accent"
                             : "text-theme-text hover:bg-theme-bg"
                         )}
                       >
@@ -171,7 +171,7 @@ export const Navbar: React.FC = () => {
               ) : (
                 <Link
                   to="/login"
-                  className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all shadow-sm bg-theme-accent text-theme-bg hover:bg-theme-accent-hover"
+                  className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all shadow-sm bg-theme-accent text-theme-bg hover:bg-theme-accent-hover border-2 border-theme-accent focus:outline-none focus:ring-2 focus:ring-theme-accent"
                 >
                   <LogIn className="w-4 h-4" />
                   {t('nav.sign_in')}
@@ -200,9 +200,9 @@ export const Navbar: React.FC = () => {
                   to={path}
                   onClick={() => setIsOpen(false)}
                   className={clsx(
-                    "flex items-center gap-2 px-3 py-2 rounded-md text-base font-medium",
+                    "flex items-center gap-2 px-3 py-2 rounded-md text-base font-medium focus:outline-none focus:ring-2 focus:ring-theme-accent",
                     location.pathname === path
-                      ? "bg-theme-accent text-theme-bg"
+                      ? "bg-theme-accent text-theme-bg border-2 border-theme-accent"
                       : "text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50"
                   )}
                 >
@@ -224,7 +224,7 @@ export const Navbar: React.FC = () => {
                       className={clsx(
                         "flex items-center justify-center px-3 py-2 rounded-md text-sm font-medium border transition-colors",
                         theme === t.id
-                          ? "bg-theme-accent text-theme-bg border-transparent"
+                          ? "bg-theme-accent text-theme-bg border-2 border-theme-accent"
                           : "bg-theme-bg text-theme-text border-theme-border hover:border-theme-accent"
                       )}
                     >
@@ -245,7 +245,7 @@ export const Navbar: React.FC = () => {
                 <Link
                   to="/login"
                   onClick={() => setIsOpen(false)}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-base font-medium bg-theme-accent text-theme-bg hover:bg-theme-accent-hover"
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-base font-medium bg-theme-accent text-theme-bg hover:bg-theme-accent-hover border-2 border-theme-accent focus:outline-none focus:ring-2 focus:ring-theme-accent"
                 >
                   <LogIn className="w-4 h-4" />
                   {t('nav.sign_in')}

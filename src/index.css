@@ -10,6 +10,8 @@
     --text-secondary: #4b5563;
     --accent-primary: #4f46e5;
     --accent-secondary: #4338ca;
+    --accent-warm-primary: #ef4444; /* red */
+    --accent-warm-secondary: #f59e0b; /* orange */
     --border-color: #e5e7eb;
     --font-theme: 'system-ui', 'sans-serif';
     --shadow-color: rgba(0, 0, 0, 0.1);
@@ -22,6 +24,8 @@
     --text-secondary: #57606f;
     --accent-primary: #FF4D4F;
     --accent-secondary: #FAAD14;
+    --accent-warm-primary: #FF4D4F;
+    --accent-warm-secondary: #FAAD14;
     --border-color: #B3E5FC;
     --font-theme: 'Quicksand', 'Varela Round', 'sans-serif'; /* Rounded */
     --shadow-color: rgba(18, 150, 219, 0.2);
@@ -34,6 +38,8 @@
     --text-secondary: #A0A0A0;
     --accent-primary: #FF00FF; /* Neon Pink */
     --accent-secondary: #00FFFF; /* Cyan */
+    --accent-warm-primary: #FF2D55; /* Neon Red */
+    --accent-warm-secondary: #FF9500; /* Neon Orange */
     --border-color: #333333;
     --font-theme: 'Orbitron', 'Courier New', 'monospace';
     --shadow-color: rgba(255, 0, 255, 0.4);
@@ -46,6 +52,8 @@
     --text-secondary: #7F8C8D;
     --accent-primary: #D4A373; /* Light Wood/Tan */
     --accent-secondary: #A98467;
+    --accent-warm-primary: #E67E22; /* Warm Orange */
+    --accent-warm-secondary: #D35400; /* Deep Orange */
     --border-color: #E8E8E8;
     --font-theme: 'Helvetica Neue', 'Arial', 'sans-serif';
     --shadow-color: rgba(0, 0, 0, 0.05);
@@ -58,6 +66,8 @@
     --text-secondary: #636e72;
     --accent-primary: #6c5ce7;
     --accent-secondary: #a29bfe;
+    --accent-warm-primary: #ff7f50; /* Coral */
+    --accent-warm-secondary: #ff9f1a; /* Orange */
     --border-color: rgba(255, 255, 255, 0.5);
     --font-theme: 'Montserrat', 'sans-serif';
     --shadow-color: rgba(108, 92, 231, 0.2);
@@ -95,6 +105,19 @@
 }
 
 @layer components {
+  .heading-accent {
+    @apply font-extrabold tracking-tight;
+    background-image: linear-gradient(to right, var(--accent-primary), var(--accent-secondary));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: 0 2px 8px var(--shadow-color);
+  }
+  .heading-strong {
+    @apply font-extrabold tracking-tight;
+    color: var(--accent-warm-primary);
+    text-shadow: 0 2px 8px var(--shadow-color);
+  }
   /* Cinema Curtain Effect */
   .cinema-border {
     @apply relative p-[2px] overflow-hidden rounded-xl;

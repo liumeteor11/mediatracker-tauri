@@ -57,7 +57,8 @@ export const AIConfigPanel: React.FC = () => {
   const { 
     provider, apiKey, model, baseUrl, temperature, maxTokens, systemPrompt,
     enableSearch, searchProvider, googleSearchCx, yandexSearchLogin,
-    setProvider, setConfig, getDecryptedApiKey, getDecryptedGoogleKey, getDecryptedSerperKey, getDecryptedYandexKey
+    useSystemProxy, proxyProtocol, proxyHost, proxyPort, proxyUsername,
+    setProvider, setConfig, getDecryptedApiKey, getDecryptedGoogleKey, getDecryptedSerperKey, getDecryptedYandexKey, getProxyUrl
   } = useAIStore();
 
   const [localKey, setLocalKey] = useState(getDecryptedApiKey());
@@ -69,6 +70,12 @@ export const AIConfigPanel: React.FC = () => {
   const [showGoogleKey, setShowGoogleKey] = useState(false);
   const [showSerperKey, setShowSerperKey] = useState(false);
   const [showYandexKey, setShowYandexKey] = useState(false);
+  const [localUseSystemProxy, setLocalUseSystemProxy] = useState(useSystemProxy);
+  const [localProxyProtocol, setLocalProxyProtocol] = useState<'http' | 'socks5'>(proxyProtocol || 'http');
+  const [localProxyHost, setLocalProxyHost] = useState(proxyHost || '');
+  const [localProxyPort, setLocalProxyPort] = useState(proxyPort || '');
+  const [localProxyUsername, setLocalProxyUsername] = useState(proxyUsername || '');
+  const [localProxyPassword, setLocalProxyPassword] = useState('');
 
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{status: 'success' | 'error' | null, latency: number | null, message: string}>({
@@ -77,6 +84,37 @@ export const AIConfigPanel: React.FC = () => {
     message: ''
   });
   const [isManualInput, setIsManualInput] = useState(false);
+  const [isProxyHelpOpen, setIsProxyHelpOpen] = useState(false);
+
+  const handleTestProxy = async () => {
+    setIsTesting(true);
+    setTestResult({ status: null, latency: null, message: '' });
+    const start = performance.now();
+    try {
+      const url = 'https://www.google.com/generate_204';
+      const result = await invoke<string>('test_proxy', {
+        config: {
+          url,
+          proxy_url: getProxyUrl(),
+          use_system_proxy: localUseSystemProxy
+        }
+      });
+      const parsed = JSON.parse(result || '{}');
+      const ok = !!parsed.ok;
+      const latency = typeof parsed.latency_ms === 'number' ? parsed.latency_ms : Math.round(performance.now() - start);
+      setTestResult({ status: ok ? 'success' : 'error', latency, message: `HTTP ${parsed.status}` });
+      if (ok) {
+        toast.success(t('ai_config.proxy_test_success'));
+      } else {
+        toast.error(`${t('ai_config.proxy_test_failed')} HTTP ${parsed.status}`);
+      }
+    } catch (e: any) {
+      setTestResult({ status: 'error', latency: null, message: e?.message || 'Proxy test failed' });
+      toast.error(`${t('ai_config.proxy_test_failed')} ${e?.message || ''}`);
+    } finally {
+      setIsTesting(false);
+    }
+  };
 
   // Update local keys and reset manual input when provider changes or store updates
   useEffect(() => {
@@ -117,7 +155,13 @@ export const AIConfigPanel: React.FC = () => {
         googleSearchCx,
         serperApiKey: localSerperKey,
         yandexSearchApiKey: localYandexKey,
-        yandexSearchLogin
+        yandexSearchLogin,
+        useSystemProxy: localUseSystemProxy,
+        proxyProtocol: localProxyProtocol,
+        proxyHost: localProxyHost,
+        proxyPort: localProxyPort,
+        proxyUsername: localProxyUsername,
+        proxyPassword: localProxyPassword
     });
     toast.success(t('ai_config.save_success'));
   };
@@ -169,6 +213,27 @@ export const AIConfigPanel: React.FC = () => {
             message: 'Connection successful'
         });
         toast.success(t('ai_config.connection_verified'));
+        setConfig({
+          apiKey: localKey,
+          model,
+          baseUrl,
+          temperature,
+          maxTokens,
+          enableSearch,
+          searchProvider,
+          googleSearchApiKey: localGoogleKey,
+          googleSearchCx,
+          serperApiKey: localSerperKey,
+          yandexSearchApiKey: localYandexKey,
+          yandexSearchLogin,
+          useSystemProxy: localUseSystemProxy,
+          proxyProtocol: localProxyProtocol,
+          proxyHost: localProxyHost,
+          proxyPort: localProxyPort,
+          proxyUsername: localProxyUsername,
+          proxyPassword: localProxyPassword
+        });
+        toast.success(t('ai_config.auto_saved_after_test'));
 
     } catch (error: any) {
         setTestResult({
@@ -346,13 +411,13 @@ export const AIConfigPanel: React.FC = () => {
                 onChange={(e) => setConfig({ enableSearch: e.target.checked })} 
                 className="sr-only peer" 
               />
-              <div className="w-11 h-6 bg-theme-border peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-theme-accent"></div>
+              <div className="w-11 h-6 bg-theme-border peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-theme-accent rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-theme-accent-warm peer-checked:to-theme-accent-warm-2"></div>
               <span className="ms-3 text-sm font-medium text-theme-text">{t('ai_config.enable_web_search')}</span>
             </label>
         </div>
 
         {enableSearch && (
-            <div className="bg-theme-bg/50 p-4 rounded-lg border border-theme-border space-y-4">
+          <div className="bg-theme-bg/50 p-4 rounded-lg border border-theme-border space-y-4">
                 {/* Search Provider Selection */}
                 <div>
                     <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.search_engine')}</label>
@@ -484,7 +549,98 @@ export const AIConfigPanel: React.FC = () => {
                         </p>
                     </div>
                 )}
+
+            {/* Proxy Settings */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-theme-text">{t('ai_config.use_system_proxy')}</label>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={localUseSystemProxy} 
+                    onChange={(e) => setLocalUseSystemProxy(e.target.checked)} 
+                    className="sr-only peer" 
+                  />
+                  <div className="w-11 h-6 bg-theme-border rounded-full peer peer-focus:ring-2 peer-focus:ring-theme-accent peer-checked:bg-gradient-to-r peer-checked:from-theme-accent-warm peer-checked:to-theme-accent-warm-2 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                </label>
+              </div>
+              <div className="flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={handleTestProxy}
+                  disabled={isTesting}
+                  className="px-3 py-2 rounded-lg text-sm font-medium border-2 border-theme-accent bg-theme-surface hover:bg-theme-bg text-theme-text disabled:opacity-50"
+                >
+                  {isTesting ? t('ai_config.testing_proxy') : t('ai_config.test_proxy')}
+                </button>
+              </div>
+              {!localUseSystemProxy && (
+                <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.proxy_protocol')}</label>
+                    <select 
+                      value={localProxyProtocol}
+                      onChange={(e) => setLocalProxyProtocol(e.target.value as 'http' | 'socks5')}
+                      className="w-full px-4 py-2 rounded-lg border bg-theme-bg border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent outline-none"
+                    >
+                      <option value="http">HTTP</option>
+                      <option value="socks5">SOCKS5</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.proxy_host')}</label>
+                    <input 
+                      type="text" 
+                      value={localProxyHost}
+                      onChange={(e) => setLocalProxyHost(e.target.value)}
+                      className="w-full px-4 py-2 rounded-lg border bg-theme-bg border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent outline-none"
+                      placeholder="127.0.0.1"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.proxy_port')}</label>
+                    <input 
+                      type="text" 
+                      value={localProxyPort}
+                      onChange={(e) => setLocalProxyPort(e.target.value)}
+                      className="w-full px-4 py-2 rounded-lg border bg-theme-bg border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent outline-none"
+                      placeholder="7890"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.proxy_username')}</label>
+                    <input 
+                      type="text" 
+                      value={localProxyUsername}
+                      onChange={(e) => setLocalProxyUsername(e.target.value)}
+                      className="w-full px-4 py-2 rounded-lg border bg-theme-bg border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent outline-none"
+                      placeholder=""
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.proxy_password')}</label>
+                    <input 
+                      type="password" 
+                      value={localProxyPassword}
+                      onChange={(e) => setLocalProxyPassword(e.target.value)}
+                      className="w-full px-4 py-2 rounded-lg border bg-theme-bg border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent outline-none"
+                      placeholder=""
+                    />
+                  </div>
+                  <div className="md:col-span-2 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setIsProxyHelpOpen(true)}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border-2 border-theme-accent bg-theme-surface hover:bg-theme-bg text-theme-text"
+                    >
+                      <Info className="w-4 h-4" />
+                      {t('ai_config.proxy_help_btn')}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
+          </div>
         )}
       </div>
 
@@ -497,7 +653,7 @@ export const AIConfigPanel: React.FC = () => {
                     "px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors w-full md:w-auto justify-center",
                     isTesting 
                         ? "bg-theme-surface border border-theme-border text-theme-subtext cursor-wait"
-                        : "bg-theme-surface border border-theme-border hover:bg-theme-bg text-theme-text"
+                        : "bg-theme-surface border-2 border-theme-accent hover:bg-theme-bg text-theme-text"
                 )}
             >
                 <Activity className={clsx("w-4 h-4", isTesting && "animate-spin")} />
@@ -523,7 +679,7 @@ export const AIConfigPanel: React.FC = () => {
 
         <button 
             onClick={handleSave}
-            className="px-6 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors bg-theme-accent text-theme-bg hover:bg-theme-accent-hover shadow-lg shadow-theme-accent/20 w-full md:w-auto justify-center"
+            className="px-6 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors bg-theme-accent text-theme-bg hover:bg-theme-accent-hover shadow-lg w-full md:w-auto justify-center border-2 border-theme-accent"
         >
             <Save className="w-4 h-4" />
             {t('ai_config.save_configuration')}
@@ -548,6 +704,37 @@ export const AIConfigPanel: React.FC = () => {
             {t('ai_config.view_api_docs')}
         </a>
       </div>
+      {isProxyHelpOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-theme-surface border border-theme-border rounded-xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between p-4 border-b border-theme-border">
+              <div className="flex items-center gap-2">
+                <Info className="w-5 h-5 text-theme-accent" />
+                <h3 className="text-lg font-bold text-theme-text">{t('ai_config.proxy_help_title')}</h3>
+              </div>
+              <button onClick={() => setIsProxyHelpOpen(false)} className="p-1 hover:bg-theme-bg rounded-full transition-colors">
+                <EyeOff className="w-5 h-5 text-theme-subtext" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3 bg-theme-bg/60 rounded-lg border-2 border-theme-accent">
+              <p className="text-sm text-theme-subtext">{t('ai_config.proxy_help_intro')}</p>
+              <ul className="list-disc list-inside space-y-2 text-sm text-theme-text marker:text-theme-accent">
+                <li>{t('ai_config.proxy_help_item_sys_proxy')}</li>
+                <li>{t('ai_config.proxy_help_item_custom_proxy')}</li>
+                <li>{t('ai_config.proxy_help_item_protocol')}</li>
+                <li>{t('ai_config.proxy_help_item_auth')}</li>
+                <li>{t('ai_config.proxy_help_item_examples')}</li>
+                <li>{t('ai_config.proxy_help_item_test')}</li>
+              </ul>
+            </div>
+            <div className="p-4 border-t border-theme-border flex justify-end">
+              <button onClick={() => setIsProxyHelpOpen(false)} className="px-4 py-2 rounded-lg text-sm font-medium bg-theme-accent text-theme-bg hover:bg-theme-accent-hover border-2 border-theme-accent">
+                {t('ai_config.proxy_help_close')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

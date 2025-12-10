@@ -28,6 +28,14 @@ interface AIConfigState {
   yandexSearchLogin: string;
   trendingPrompt: string;
   
+  // Proxy Configuration
+  useSystemProxy: boolean;
+  proxyProtocol: 'http' | 'socks5';
+  proxyHost: string;
+  proxyPort: string;
+  proxyUsername: string;
+  proxyPassword: string;
+  
   // Cache for trending media to allow "partial" updates
   trendingCache: any[];
   setTrendingCache: (items: any[]) => void;
@@ -38,6 +46,7 @@ interface AIConfigState {
   getDecryptedGoogleKey: () => string;
   getDecryptedSerperKey: () => string;
   getDecryptedYandexKey: () => string;
+  getProxyUrl: () => string;
 }
 
 const encrypt = (text: string) => {
@@ -79,7 +88,7 @@ Each object must have the following fields:
 - rating: string (e.g. "8.5/10")
 
 Ensure data is accurate.`,
-    enableSearch: false,
+    enableSearch: true,
       searchProvider: 'google',
       googleSearchApiKey: '',
       googleSearchCx: '',
@@ -87,6 +96,12 @@ Ensure data is accurate.`,
       yandexSearchApiKey: '',
       yandexSearchLogin: '',
       trendingPrompt: '',
+      useSystemProxy: true,
+      proxyProtocol: 'http',
+      proxyHost: '',
+      proxyPort: '',
+      proxyUsername: '',
+      proxyPassword: '',
       trendingCache: [],
       
       setTrendingCache: (items) => set({ trendingCache: items }),
@@ -137,6 +152,7 @@ Ensure data is accurate.`,
         if (config.googleSearchApiKey) updates.googleSearchApiKey = encrypt(config.googleSearchApiKey);
         if (config.serperApiKey) updates.serperApiKey = encrypt(config.serperApiKey);
         if (config.yandexSearchApiKey) updates.yandexSearchApiKey = encrypt(config.yandexSearchApiKey);
+        if (config.proxyPassword) updates.proxyPassword = encrypt(config.proxyPassword);
         
         set((state) => ({ ...state, ...updates }));
       },
@@ -144,6 +160,17 @@ Ensure data is accurate.`,
       getDecryptedGoogleKey: () => decrypt(get().googleSearchApiKey),
       getDecryptedSerperKey: () => decrypt(get().serperApiKey),
       getDecryptedYandexKey: () => decrypt(get().yandexSearchApiKey),
+      // Helper getters
+      // Note: username stored in plain (non-sensitive), password encrypted
+      getProxyUrl: (): string => {
+        const s = get();
+        if (!s.proxyHost || !s.proxyPort) return '';
+        const proto = s.proxyProtocol || 'http';
+        const user = s.proxyUsername?.trim();
+        const pass = decrypt(s.proxyPassword);
+        const auth = user ? `${encodeURIComponent(user)}${pass ? ':' + encodeURIComponent(pass) : ''}@` : '';
+        return `${proto}://${auth}${s.proxyHost}:${s.proxyPort}`;
+      }
     }),
     {
       name: 'ai-config-storage',
@@ -161,7 +188,13 @@ Ensure data is accurate.`,
         googleSearchCx: state.googleSearchCx,
         serperApiKey: state.serperApiKey,
         yandexSearchApiKey: state.yandexSearchApiKey,
-        yandexSearchLogin: state.yandexSearchLogin
+        yandexSearchLogin: state.yandexSearchLogin,
+        useSystemProxy: state.useSystemProxy,
+        proxyProtocol: state.proxyProtocol,
+        proxyHost: state.proxyHost,
+        proxyPort: state.proxyPort,
+        proxyUsername: state.proxyUsername,
+        proxyPassword: state.proxyPassword
       }),
     }
   )
