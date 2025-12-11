@@ -118,7 +118,7 @@ export const performClientSideSearch = async (query: string, force: boolean = fa
             (searchProvider === 'google' && (!searchConfig.apiKey || !googleSearchCx)) ||
             (searchProvider === 'serper' && !searchConfig.apiKey);
 
-        if (needDuckDuckGo) {
+        if (!window.__TAURI__ && needDuckDuckGo) {
             try {
                 const ddgRes = await fetchWithTimeout(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`, { timeoutMs: 8000 });
                 if (ddgRes.ok) {
@@ -161,7 +161,7 @@ export const performClientSideSearch = async (query: string, force: boolean = fa
                 return resultStr; // Rust returns JSON string directly
             } catch (tauriError) {
                 console.error("Tauri search failed:", tauriError);
-                return "";
+                return "[]";
             }
         }
         
@@ -265,19 +265,26 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
         apiKey = process.env.MOONSHOT_API_KEY;
     }
 
-    const isTauri = !!window.__TAURI__;
+    const isTauri = typeof window !== 'undefined' && (
+        ('__TAURI__' in window) || ('__TAURI_INTERNALS__' in window) ||
+        (typeof window.location !== 'undefined' && (
+            window.location.protocol === 'tauri:' ||
+            (typeof window.location.origin === 'string' && window.location.origin.startsWith('http://tauri.localhost'))
+        ))
+    );
 
     // Web Mode (Direct API Call) OR Tauri Mode (Custom Client)
     if (!apiKey) {
         return "";
     }
 
-    let finalBaseURL = baseURL || "https://api.moonshot.cn/v1";
+    let finalBaseURL = (baseURL || "https://api.moonshot.cn/v1").trim().replace(/[\s)]+$/g, "");
 
-    // Proxy handling for Web Mode to avoid CORS
-    if (!isTauri && finalBaseURL.includes('api.moonshot.cn')) {
+    // Proxy handling for Web Mode to avoid CORS (only in local dev)
+    const isLocalDev = typeof window !== 'undefined' && /^https?:\/\/(localhost|127\.|0\.0\.0\.0)/.test(window.location.origin || '');
+    if (!isTauri && isLocalDev && finalBaseURL.includes('api.moonshot.cn')) {
         finalBaseURL = `${window.location.origin}/api/moonshot/v1`;
-    } else if (!isTauri && finalBaseURL.startsWith('/')) {
+    } else if (!isTauri && isLocalDev && finalBaseURL.startsWith('/')) {
         finalBaseURL = `${window.location.origin}${finalBaseURL}`;
     }
 
@@ -285,7 +292,7 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
     const createCompletion = async (msgs: any[], tools: any[]) => {
         if (isTauri) {
              const { useSystemProxy, getProxyUrl } = useAIStore.getState();
-             const rustConfig = {
+            const rustConfig = {
                 model,
                 baseURL: finalBaseURL,
                 apiKey,
@@ -390,21 +397,33 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
                 }
             }
 
-            const normalizeAssistantMessage = (c: any) => {
+            const normalizeAssistantMessage = (c: any): any => {
                 try {
-                    if (c && Array.isArray(c.choices) && c.choices.length > 0) {
-                        return c.choices[0].message ?? c.choices[0].delta ?? c.choices[0];
+                    if (!c) return { content: "" };
+                    if (typeof c === 'string') return { content: c };
+                    // OpenAI/Moonshot style
+                    if (Array.isArray(c.choices)) {
+                        if (c.choices.length > 0) {
+                            return c.choices[0].message ?? c.choices[0].delta ?? c.choices[0];
+                        }
+                        return { content: "" };
                     }
+                    // Common wrappers
+                    if (c.result) return normalizeAssistantMessage(c.result);
+                    if (c.data) return normalizeAssistantMessage(c.data);
                     if (c?.message) return c.message;
                     if (typeof c?.output_text === 'string') return { content: c.output_text };
                     if (typeof c?.content === 'string') return { content: c.content };
-                } catch {}
-                throw new Error('Invalid AI response: missing choices/message');
+                    if (Array.isArray(c?.content)) return { content: c.content.map((p: any) => (typeof p === 'string' ? p : p?.text || '')).join('') };
+                    return { content: "" };
+                } catch {
+                    return { content: "" };
+                }
             };
             const message = normalizeAssistantMessage(completion);
 
             // If the model wants to call a tool
-            const toolCalls = message.tool_calls || (message.function_call ? [{ type: 'function', id: 'fn', function: message.function_call }] : []);
+            const toolCalls = (message && (message.tool_calls || (message.function_call ? [{ type: 'function', id: 'fn', function: message.function_call }] : []))) || [];
             if (toolCalls && toolCalls.length > 0) {
                 currentMessages.push(message); // Add assistant's tool call message
 
@@ -450,9 +469,9 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
                 turnCount++;
             } else {
                 // No tool calls, return final response
-                const content = typeof message.content === 'string' 
+                const content = message && typeof message.content === 'string' 
                     ? message.content 
-                    : Array.isArray(message.content) 
+                    : Array.isArray(message?.content) 
                         ? message.content.map((p: any) => (typeof p === 'string' ? p : p?.text || '')).join('') 
                         : '';
                 return content || "";
@@ -865,7 +884,10 @@ export const processSearchResult = (title: string, snippet: string): { title: st
 
 const createFallbackItemsFromContext = async (searchContext: string, limit: number = 10): Promise<MediaItem[]> => {
     try {
-        const arr = JSON.parse(searchContext);
+        if (!searchContext || typeof searchContext !== 'string') return [];
+        const trimmed = searchContext.trim();
+        if (!trimmed || !(trimmed.startsWith('[') || trimmed.startsWith('{'))) return [];
+        const arr = JSON.parse(trimmed);
         if (!Array.isArray(arr) || arr.length === 0) return [];
         
         // Deduplicate by title roughly
@@ -900,7 +922,7 @@ const createFallbackItemsFromContext = async (searchContext: string, limit: numb
             } as MediaItem;
         });
     } catch (e) {
-        console.warn("Fallback creation failed", e);
+        console.debug("Fallback creation failed", e);
         return [];
     }
 };

@@ -143,10 +143,11 @@ export const AIConfigPanel: React.FC = () => {
         }
     }
 
+    const sanitizedBaseUrl = (baseUrl || '').trim().replace(/[\s)]+$/g, '');
     setConfig({
         apiKey: localKey,
         model,
-        baseUrl,
+        baseUrl: sanitizedBaseUrl,
         temperature,
         maxTokens,
         enableSearch,
@@ -176,7 +177,7 @@ export const AIConfigPanel: React.FC = () => {
         if (window.__TAURI__) {
              const rustConfig = {
                  apiKey: localKey,
-                 baseURL: baseUrl,
+                 baseURL: (baseUrl || '').trim().replace(/[\s)]+$/g, ''),
                  model: model
              };
              
@@ -187,12 +188,13 @@ export const AIConfigPanel: React.FC = () => {
              });
         } else {
              // Web Mode Direct Call
-             const response = await fetch(`${baseUrl}/chat/completions`, {
-                 method: 'POST',
-                 headers: {
-                     'Content-Type': 'application/json',
-                     'Authorization': `Bearer ${localKey}`
-                 },
+            const sanitized = (baseUrl || '').trim().replace(/[\s)]+$/g, '');
+            const response = await fetch(`${sanitized}/chat/completions`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localKey}`
+                },
                  body: JSON.stringify({
                      model: model,
                      messages: [{ role: 'user', content: 'Hi' }],

@@ -343,6 +343,51 @@ async fn yandex_search(client: &Client, query: &str, user: &str, api_key: &str) 
     Ok(results)
 }
 
+async fn duckduckgo_search(client: &Client, query: &str) -> Result<Vec<SearchResultItem>, Box<dyn Error>> {
+    let url = format!(
+        "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
+        urlencoding::encode(query)
+    );
+    let fut = client.get(&url).send();
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(8), fut)
+        .await??
+        .json::<Value>()
+        .await?;
+
+    let mut results = Vec::new();
+    if let (Some(abstract_text), Some(abstract_url)) = (
+        resp["AbstractText"].as_str(),
+        resp["AbstractURL"].as_str(),
+    ) {
+        let title = resp["Heading"].as_str().unwrap_or(abstract_text).to_string();
+        results.push(SearchResultItem {
+            title,
+            snippet: abstract_text.to_string(),
+            link: abstract_url.to_string(),
+            image: None,
+            metadata: None,
+        });
+    }
+
+    if let Some(related) = resp["RelatedTopics"].as_array() {
+        for rt in related.iter().take(5) {
+            let t = rt["Text"].as_str().unwrap_or("");
+            let u = rt["FirstURL"].as_str().unwrap_or("");
+            if !t.is_empty() && !u.is_empty() {
+                results.push(SearchResultItem {
+                    title: t.to_string(),
+                    snippet: t.to_string(),
+                    link: u.to_string(),
+                    image: None,
+                    metadata: None,
+                });
+            }
+        }
+    }
+
+    Ok(results)
+}
+
 #[command]
 async fn web_search(query: String, config: SearchConfig, state: State<'_, AppState>) -> Result<String, String> {
     println!("Rust web_search called. Query: {}, Provider: {}, Type: {:?}", query, config.provider, config.search_type);
@@ -377,6 +422,7 @@ async fn web_search(query: String, config: SearchConfig, state: State<'_, AppSta
                 return Err("Missing Yandex API Key or User".to_string());
             }
         },
+        "duckduckgo" => duckduckgo_search(client, &query).await,
         _ => Err("Unsupported search provider".into()),
     };
 
@@ -393,7 +439,9 @@ async fn web_search(query: String, config: SearchConfig, state: State<'_, AppSta
 async fn ai_chat(messages: Vec<Value>, temperature: f32, tools: Option<Value>, config: AIChatConfig, state: State<'_, AppState>) -> Result<String, String> {
     let start = std::time::Instant::now();
     let api_key = config.api_key.ok_or("Missing API Key")?;
-    let base_url = config.base_url.unwrap_or("https://api.moonshot.cn/v1".to_string());
+    let raw_base = config.base_url.unwrap_or("https://api.moonshot.cn/v1".to_string());
+    let mut base_url = raw_base.trim().trim_end_matches(')').trim_matches('"').trim_matches('\'').to_string();
+    if base_url.is_empty() { base_url = "https://api.moonshot.cn/v1".to_string(); }
     
     // INTELLIGENT CLIENT SELECTION
     // If the URL contains "api.moonshot.cn" or other domestic domains, use direct_client.
@@ -440,26 +488,36 @@ async fn ai_chat(messages: Vec<Value>, temperature: f32, tools: Option<Value>, c
     println!("AI Request Start: {} (Client: {})", url, client_type);
 
     // Force IPv4 if possible to avoid IPv6 timeouts on some networks
-    let resp = client.post(&url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+    let max_retries = 3;
+    for attempt in 0..max_retries {
+        let resp = client.post(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {}", e))?;
 
-    println!("AI Request Sent (Headers Received), Duration: {:?}", start.elapsed());
+        println!("AI Request Sent (Headers Received), Duration: {:?}", start.elapsed());
 
-    if !resp.status().is_success() {
-        let error_text = resp.text().await.unwrap_or_default();
-        return Err(format!("API Error: {}", error_text));
+        if resp.status().is_success() {
+            let json_resp: Value = resp.json().await.map_err(|e| format!("Failed to parse JSON: {}", e))?;
+            println!("AI Request Complete, Total Duration: {:?}", start.elapsed());
+            return Ok(json_resp.to_string());
+        } else {
+            let status = resp.status().as_u16();
+            let error_text = resp.text().await.unwrap_or_default();
+            if status == 429 && attempt < max_retries - 1 {
+                let delay_ms = 2000u64 * (1u64 << attempt); // 2000, 4000, 8000
+                println!("Rate limited (429). Backing off for {} ms before retry {}...", delay_ms, attempt + 2);
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                continue;
+            }
+            return Err(format!("API Error ({}): {}", status, error_text));
+        }
     }
 
-    let json_resp: Value = resp.json().await.map_err(|e| format!("Failed to parse JSON: {}", e))?;
-    
-    println!("AI Request Complete, Total Duration: {:?}", start.elapsed());
-    
-    Ok(json_resp.to_string())
+    Err("API Error: exceeded retries".to_string())
 }
 
 #[command]
