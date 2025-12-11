@@ -3,6 +3,7 @@ import { MediaType, MediaItem } from "../types/types";
 import { v4 as uuidv4 } from 'uuid';
 import { useAIStore } from "../store/useAIStore";
 import i18n from '../i18n';
+import type { AIProvider } from '../store/useAIStore';
 import { invoke } from "@tauri-apps/api/core";
 
 // Define Window interface to include Tauri API check
@@ -269,6 +270,17 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
         .replace(/[()]/g, "")
         .replace(/^"+|"+$/g, "")
         .replace(/^'+|'+$/g, "");
+
+    const ensureV1IfNeeded = (prov: AIProvider, url: string) => {
+        const hasV1 = url.endsWith('/v1') || url.includes('/v1/');
+        const isGoogleOpenAI = url.includes('/openai/');
+        if (isGoogleOpenAI) return url;
+        if ((prov === 'openai' || prov === 'deepseek' || prov === 'mistral' || prov === 'moonshot') && !hasV1) {
+            return url.endsWith('/') ? `${url}v1` : `${url}/v1`;
+        }
+        return url;
+    };
+    finalBaseURL = ensureV1IfNeeded(provider as AIProvider, finalBaseURL);
 
     // Proxy handling for Web Mode to avoid CORS (only in local dev)
     const isLocalDev = typeof window !== 'undefined' && /^https?:\/\/(localhost|127\.|0\.0\.0\.0)/.test(window.location.origin || '');

@@ -442,6 +442,12 @@ async fn ai_chat(messages: Vec<Value>, temperature: f32, tools: Option<Value>, c
     let raw_base = config.base_url.unwrap_or("https://api.moonshot.cn/v1".to_string());
     let mut base_url = raw_base.trim().trim_end_matches(')').trim_matches('"').trim_matches('\'').to_string();
     if base_url.is_empty() { base_url = "https://api.moonshot.cn/v1".to_string(); }
+    let is_google_openai = base_url.contains("/openai/");
+    let has_v1 = base_url.ends_with("/v1") || base_url.contains("/v1/");
+    let need_v1 = (base_url.contains("openai.com") || base_url.contains("deepseek.com") || base_url.contains("mistral.ai") || base_url.contains("moonshot.cn")) && !is_google_openai && !has_v1;
+    if need_v1 {
+        if base_url.ends_with('/') { base_url.push_str("v1"); } else { base_url.push_str("/v1"); }
+    }
     
     // INTELLIGENT CLIENT SELECTION
     // If the URL contains "api.moonshot.cn" or other domestic domains, use direct_client.

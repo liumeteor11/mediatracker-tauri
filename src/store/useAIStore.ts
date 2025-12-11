@@ -126,7 +126,7 @@ Ensure data is accurate.`,
             defaultModel = 'gpt-4o';
             break;
           case 'deepseek':
-            defaultBaseUrl = 'https://api.deepseek.com';
+            defaultBaseUrl = 'https://api.deepseek.com/v1';
             defaultModel = 'deepseek-chat';
             break;
           case 'qwen':
@@ -214,6 +214,21 @@ Ensure data is accurate.`,
             persistedState.baseUrl = sanitizeBaseUrl(persistedState.baseUrl || '');
             if (persistedState.searchProvider === 'duckduckgo') {
               persistedState.searchProvider = 'google';
+            }
+            const prov = persistedState.provider;
+            const url: string = persistedState.baseUrl || '';
+            const ensureV1 = (u: string) => u.endsWith('/v1') || u.includes('/v1/') ? u : (u.endsWith('/') ? `${u}v1` : `${u}/v1`);
+            if (prov === 'deepseek' && url && !url.includes('/openai/')) {
+              persistedState.baseUrl = ensureV1(url);
+            }
+            if (prov === 'openai' && url && !url.includes('/openai/')) {
+              persistedState.baseUrl = ensureV1(url);
+            }
+            if (prov === 'mistral' && url && !url.includes('/openai/')) {
+              persistedState.baseUrl = ensureV1(url);
+            }
+            if (prov === 'moonshot' && url && !url.includes('/openai/')) {
+              persistedState.baseUrl = ensureV1(url);
             }
           }
         } catch {}
