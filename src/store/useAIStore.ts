@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import CryptoJS from 'crypto-js';
 
 // Simple encryption key (In a real app, this should not be hardcoded or should be user-provided)
@@ -8,7 +8,7 @@ const SECRET_KEY = import.meta.env.VITE_SECRET_KEY || 'media-tracker-ai-config-s
 
 
 export type AIProvider = 'moonshot' | 'openai' | 'deepseek' | 'qwen' | 'google' | 'mistral' | 'custom';
-export type SearchProvider = 'google' | 'serper' | 'duckduckgo' | 'yandex';
+export type SearchProvider = 'google' | 'serper' | 'yandex';
 
 interface AIConfigState {
   provider: AIProvider;
@@ -27,6 +27,9 @@ interface AIConfigState {
   yandexSearchApiKey: string;
   yandexSearchLogin: string;
   trendingPrompt: string;
+  lastSearchDurationMs: number | null;
+  lastSearchAt: string | null;
+  lastSearchQuery: string | null;
   
   // Proxy Configuration
   useSystemProxy: boolean;
@@ -96,6 +99,9 @@ Ensure data is accurate.`,
       yandexSearchApiKey: '',
       yandexSearchLogin: '',
       trendingPrompt: '',
+      lastSearchDurationMs: null,
+      lastSearchAt: null,
+      lastSearchQuery: null,
       useSystemProxy: true,
       proxyProtocol: 'http',
       proxyHost: '',
@@ -146,6 +152,10 @@ Ensure data is accurate.`,
       setConfig: (config) => {
         const state = get();
         const updates: any = { ...config };
+        const sanitizeBaseUrl = (url: string) => {
+          if (!url) return '';
+          return url.trim().replace(/[\s)]+$/g, '').replace(/^"+|"+$/g, '').replace(/^'+|'+$/g, '');
+        };
         
         // Encrypt keys if they are being updated
         if (config.apiKey) updates.apiKey = encrypt(config.apiKey);
@@ -154,6 +164,9 @@ Ensure data is accurate.`,
         if (config.yandexSearchApiKey) updates.yandexSearchApiKey = encrypt(config.yandexSearchApiKey);
         if (config.proxyPassword) updates.proxyPassword = encrypt(config.proxyPassword);
         
+        if (typeof config.baseUrl !== 'undefined') {
+          updates.baseUrl = sanitizeBaseUrl(config.baseUrl || '');
+        }
         set((state) => ({ ...state, ...updates }));
       },
       getDecryptedApiKey: () => decrypt(get().apiKey),
@@ -174,6 +187,38 @@ Ensure data is accurate.`,
     }),
     {
       name: 'ai-config-storage',
+      version: 3,
+      storage: createJSONStorage(() => {
+        try {
+          if (typeof window !== 'undefined' && window.localStorage) {
+            const k = '__ai_store_test__';
+            window.localStorage.setItem(k, '1');
+            window.localStorage.removeItem(k);
+            return window.localStorage;
+          }
+        } catch {}
+        const mem: Record<string, string> = {};
+        return {
+          getItem: (name: string) => (name in mem ? mem[name] : null),
+          setItem: (name: string, value: string) => { mem[name] = value; },
+          removeItem: (name: string) => { delete mem[name]; }
+        } as any;
+      }),
+      migrate: (persistedState: any, version: number) => {
+        try {
+          if (persistedState && typeof persistedState === 'object') {
+            const sanitizeBaseUrl = (url: string) => {
+              if (!url) return '';
+              return url.trim().replace(/[\s)]+$/g, '').replace(/^"+|"+$/g, '').replace(/^'+|'+$/g, '');
+            };
+            persistedState.baseUrl = sanitizeBaseUrl(persistedState.baseUrl || '');
+            if (persistedState.searchProvider === 'duckduckgo') {
+              persistedState.searchProvider = 'google';
+            }
+          }
+        } catch {}
+        return persistedState;
+      },
       partialize: (state) => ({ 
         provider: state.provider,
         apiKey: state.apiKey, 
@@ -189,6 +234,9 @@ Ensure data is accurate.`,
         serperApiKey: state.serperApiKey,
         yandexSearchApiKey: state.yandexSearchApiKey,
         yandexSearchLogin: state.yandexSearchLogin,
+        lastSearchDurationMs: state.lastSearchDurationMs,
+        lastSearchAt: state.lastSearchAt,
+        lastSearchQuery: state.lastSearchQuery,
         useSystemProxy: state.useSystemProxy,
         proxyProtocol: state.proxyProtocol,
         proxyHost: state.proxyHost,

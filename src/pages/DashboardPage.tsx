@@ -7,6 +7,7 @@ import { CollectionCategory, MediaType } from '../types/types';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 import { Bell, RefreshCw } from 'lucide-react';
+import { useAIStore } from '../store/useAIStore';
 import { toast } from 'react-toastify';
 import { checkUpdates } from '../services/aiService';
 
@@ -20,6 +21,9 @@ export const DashboardPage: React.FC = () => {
   const { t } = useTranslation();
   const stats = getStats();
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+  const lastSearchDurationMs = useAIStore(s => s.lastSearchDurationMs);
+  const lastSearchAt = useAIStore(s => s.lastSearchAt);
+  const lastSearchQuery = useAIStore(s => s.lastSearchQuery);
 
   // ... (keep existing charts logic)
 
@@ -140,6 +144,21 @@ export const DashboardPage: React.FC = () => {
         </div>
       </div>
 
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div className="p-6 rounded-xl shadow-sm border bg-theme-surface border-theme-border">
+          <h3 className="text-sm font-medium text-theme-subtext">{t('dashboard.last_search') || '最近搜索'}</h3>
+          {lastSearchDurationMs != null ? (
+            <div className="mt-2 text-sm text-theme-text space-y-1">
+              <div>{(t('dashboard.last_search_query') || '查询') + ': '}{lastSearchQuery || '-'}</div>
+              <div>{(t('dashboard.last_search_duration') || '总耗时') + ': '}{lastSearchDurationMs}ms</div>
+              <div>{(t('dashboard.last_search_at') || '时间') + ': '}{lastSearchAt || '-'}</div>
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-theme-subtext">{t('dashboard.no_recent_search') || '暂无最近搜索'}</p>
+          )}
+        </div>
+      </div>
+
       {/* AI Configuration Panel */}
       <div className="mb-8">
         <AIConfigPanel />
@@ -147,10 +166,10 @@ export const DashboardPage: React.FC = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Status Distribution */}
-        <div className="p-6 rounded-xl shadow-sm border h-[400px] bg-theme-surface border-theme-border">
+        <div className="p-6 rounded-xl shadow-sm border h-[400px] bg-theme-surface border-theme-border min-w-0">
             <h3 className="text-lg font-bold mb-6 text-theme-text">{t('dashboard.collection_status')}</h3>
             {pieData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={240}>
                     <PieChart>
                         <Pie
                             data={pieData}
@@ -185,10 +204,10 @@ export const DashboardPage: React.FC = () => {
         </div>
 
         {/* Type Distribution */}
-        <div className="p-6 rounded-xl shadow-sm border h-[400px] bg-theme-surface border-theme-border">
+        <div className="p-6 rounded-xl shadow-sm border h-[400px] bg-theme-surface border-theme-border min-w-0">
              <h3 className="text-lg font-bold mb-6 text-theme-text">{t('dashboard.media_types')}</h3>
              {typeData.length > 0 ? (
-                 <ResponsiveContainer width="100%" height="100%">
+                 <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={240}>
                     <BarChart data={typeData}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartStyles.grid} />
                         <XAxis 

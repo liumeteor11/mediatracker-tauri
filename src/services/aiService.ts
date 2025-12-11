@@ -112,35 +112,22 @@ export const performClientSideSearch = async (query: string, force: boolean = fa
     };
 
     try {
-        // If provider is DuckDuckGo OR required keys missing, use client-side DuckDuckGo (no key)
-        const needDuckDuckGo = 
-            searchProvider === 'duckduckgo' ||
-            (searchProvider === 'google' && (!searchConfig.apiKey || !googleSearchCx)) ||
-            (searchProvider === 'serper' && !searchConfig.apiKey);
-
-        if (!window.__TAURI__ && needDuckDuckGo) {
-            try {
-                const ddgRes = await fetchWithTimeout(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`, { timeoutMs: 8000 });
-                if (ddgRes.ok) {
-                    const ddg = await ddgRes.json();
-                    const items: any[] = [];
-                    // Build minimal items from related topics and abstract
-                    if (Array.isArray(ddg.RelatedTopics)) {
-                        for (const t of ddg.RelatedTopics.slice(0, 5)) {
-                            if (t.Text && t.FirstURL) {
-                                items.push({ title: t.Text, snippet: t.Text, link: t.FirstURL });
-                            }
-                        }
-                    }
-                    if (ddg.AbstractText && ddg.AbstractURL) {
-                        items.unshift({ title: ddg.Heading || ddg.AbstractText, snippet: ddg.AbstractText, link: ddg.AbstractURL });
-                    }
-                    return JSON.stringify(items.slice(0, 5));
-                }
-            } catch (e) {
-                console.warn('DuckDuckGo search failed', e);
-            }
+        const isChinese = i18n.language.startsWith('zh');
+        const shortOrNumeric = query.trim().length < 3 || /^[0-9\s]+$/.test(query.trim());
+        let q = query;
+        if (shortOrNumeric) {
+            q = isChinese 
+                ? `${query} 电影 OR 电视剧 OR 小说 OR 漫画 OR 专辑 -新闻 -评测 -发布会 -价格 -手机 -iPhone -Apple -三星 -华为`
+                : `${query} movie OR tv series OR novel OR comic OR album -news -review -price -iphone -apple -samsung -huawei`;
         }
+        const isMediaCandidate = (title: string, snippet: string): boolean => {
+            const text = `${title} ${snippet}`.toLowerCase();
+            const positives = isChinese 
+                ? ['电影','电视剧','短剧','漫画','小说','书籍','专辑','音乐','原声','ost']
+                : ['movie','film','tv series','season','episode','novel','book','comic','manga','album','music','soundtrack','ost'];
+            const negatives = ['iphone','apple','samsung','huawei','vs','review','price','spec','launch','press','event','news','新闻','发布会','评测','开箱','手机','参数','报价','rumor','快讯'];
+            return positives.some(k => text.includes(k)) && !negatives.some(k => text.includes(k));
+        };
 
         // Tauri Mode
         if (window.__TAURI__) {
@@ -169,17 +156,18 @@ export const performClientSideSearch = async (query: string, force: boolean = fa
         if (searchProvider === 'google') {
             const apiKey = getDecryptedGoogleKey();
             if (apiKey && googleSearchCx) {
-            const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(query)}`;
+            const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(q)}`;
             const res = await fetchWithTimeout(url, { timeoutMs: 12000 });
             if (res.ok) {
                 const data = await res.json();
                 if (data.items) {
-                    return JSON.stringify(data.items.map((item: any) => ({
+                    const mapped = data.items.map((item: any) => ({
                         title: item.title,
                         snippet: item.snippet,
                         link: item.link,
                         image: item.pagemap?.cse_image?.[0]?.src
-                    })).slice(0, 5));
+                    })).filter((it: any) => isMediaCandidate(it.title, it.snippet)).slice(0, 5);
+                    if (mapped.length > 0) return JSON.stringify(mapped);
                 }
             }
         }
@@ -195,46 +183,38 @@ export const performClientSideSearch = async (query: string, force: boolean = fa
                     'X-API-KEY': apiKey,
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ q: query })
+                body: JSON.stringify({ q })
             , timeoutMs: 12000 });
 
             if (response.ok) {
                 const data = await response.json();
                 if (data.organic) {
-                        return JSON.stringify(data.organic.map((item: any) => ({
+                        const mapped = data.organic.map((item: any) => ({
                             title: item.title,
                             snippet: item.snippet,
                             link: item.link,
                             image: undefined // Serper organic usually doesn't have image
-                        })).slice(0, 5));
+                        })).filter((it: any) => isMediaCandidate(it.title, it.snippet)).slice(0, 5);
+                        if (mapped.length > 0) return JSON.stringify(mapped);
                 }
             }
         }
     }
 
-    // DuckDuckGo (Web Mode, no key)
-    if (searchProvider === 'duckduckgo') {
-        try {
-            const ddgRes = await fetchWithTimeout(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`, { timeoutMs: 8000 });
-            if (ddgRes.ok) {
-                const ddg = await ddgRes.json();
-                const items: any[] = [];
-                if (Array.isArray(ddg.RelatedTopics)) {
-                    for (const t of ddg.RelatedTopics.slice(0, 5)) {
-                        if (t.Text && t.FirstURL) {
-                            items.push({ title: t.Text, snippet: t.Text, link: t.FirstURL });
-                        }
-                    }
-                }
-                if (ddg.AbstractText && ddg.AbstractURL) {
-                    items.unshift({ title: ddg.Heading || ddg.AbstractText, snippet: ddg.AbstractText, link: ddg.AbstractURL });
-                }
-                return JSON.stringify(items.slice(0, 5));
-            }
-        } catch (e) {
-            console.warn('DuckDuckGo search failed', e);
+    try {
+        const res = await fetchWithTimeout(`https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(q)}&utf8=&format=json&origin=*`, { timeoutMs: 8000 });
+        if (res.ok) {
+            const data = await res.json();
+            const items = Array.isArray(data?.query?.search) ? data.query.search.slice(0, 5).map((s: any) => ({
+                title: s.title,
+                snippet: (s.snippet || '').replace(/<[^>]+>/g, ''),
+                link: `https://zh.wikipedia.org/wiki/${encodeURIComponent(s.title)}`,
+                image: undefined
+            })).filter((it: any) => isMediaCandidate(it.title, it.snippet)) : [];
+            if (items.length > 0) return JSON.stringify(items);
         }
-    }
+    } catch {}
+    
         
     } catch (e) {
         console.warn("Search failed", e);
@@ -261,8 +241,13 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
     let apiKey = state.getDecryptedApiKey();
 
     // Fallback to env var if not set in store (Development convenience)
-    if (!apiKey && process.env.MOONSHOT_API_KEY && process.env.MOONSHOT_API_KEY !== 'undefined') {
-        apiKey = process.env.MOONSHOT_API_KEY;
+    if (!apiKey) {
+        try {
+            const envKey = (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.VITE_MOONSHOT_API_KEY) ? (import.meta as any).env.VITE_MOONSHOT_API_KEY : undefined;
+            if (envKey && envKey !== 'undefined') {
+                apiKey = String(envKey);
+            }
+        } catch {}
     }
 
     const isTauri = typeof window !== 'undefined' && (
@@ -278,7 +263,12 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
         return "";
     }
 
-    let finalBaseURL = (baseURL || "https://api.moonshot.cn/v1").trim().replace(/[\s)]+$/g, "");
+    let finalBaseURL = (baseURL || "https://api.moonshot.cn/v1")
+        .trim()
+        .replace(/[\s)]+$/g, "")
+        .replace(/[()]/g, "")
+        .replace(/^"+|"+$/g, "")
+        .replace(/^'+|'+$/g, "");
 
     // Proxy handling for Web Mode to avoid CORS (only in local dev)
     const isLocalDev = typeof window !== 'undefined' && /^https?:\/\/(localhost|127\.|0\.0\.0\.0)/.test(window.location.origin || '');
@@ -508,13 +498,15 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
   const isChinese = i18n.language.startsWith('zh');
 
   let searchContext = "";
+  try {
+    searchContext = await performClientSideSearch(query, true);
+  } catch {}
   
   const { systemPrompt, provider } = useAIStore.getState();
   
   let userPrompt = "";
 
   if (provider === 'moonshot') {
-      searchContext = "";
       if (isChinese) {
           userPrompt = `搜索符合以下查询的媒体作品: "${query}"。`;
           if (type && type !== 'All') {
@@ -522,7 +514,8 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
           } else {
               userPrompt += ` (包括书籍、电影、电视剧、漫画、短剧)`;
           }
-          userPrompt += `\n[优先] 请优先使用提供的联网搜索工具 (web_search) 获取最新信息；如网络不可用，请基于已有知识或上下文直接返回有效 JSON。请搜索关键词: "${query} 上映日期 详细信息"。仅从搜索结果中选择并返回有效 JSON 数组。请仔细检查搜索结果中的 metadata/pagemap 信息以获取准确的上映日期。如果没有匹配项，请返回空数组。确保上映日期准确。`;
+          userPrompt += `\n[限制] 仅返回作品（小说、电影、电视剧、短剧、漫画、音乐专辑）。严禁返回新闻、产品评测、对比、参数、价格、手机/电子产品相关条目。`;
+          userPrompt += `\n[优先] 使用联网搜索工具 (web_search) 获取最新信息；如网络不可用，请基于以下候选搜索结果或已有知识返回有效 JSON：\n${searchContext}\n仅从可靠信息中选择并返回有效 JSON 数组。检查 metadata/pagemap 获取准确上映日期；若无匹配请返回空数组。`;
       } else {
           userPrompt = `Search for media works matching the query: "${query}".`;
           if (type && type !== 'All') {
@@ -530,7 +523,8 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
           } else {
               userPrompt += ` (books, movies, TV series, comics, short dramas)`;
           }
-          userPrompt += `\n[PREFER] Prefer using the provided web search tool (web_search) to get the latest information; if unavailable, use your internal knowledge or context and return a valid JSON array. Search query: "${query} release date premiere info". Return ONLY a valid JSON array. Check metadata/pagemap for accurate dates. If nothing matches, return an empty array.`;
+          userPrompt += `\n[Constraint] Only return works (novels, movies, TV series, short dramas, comics, music albums). Do NOT include news, product reviews, comparisons, specs, prices, or phone/electronics items.`;
+          userPrompt += `\n[PREFER] Use the web search tool; if unavailable, rely on the following candidate search results or internal knowledge to return a valid JSON array:\n${searchContext}\nReturn ONLY a valid JSON array. Check metadata/pagemap for accurate dates. If nothing matches, return an empty array.`;
       }
   } else {
       // Standard prompt for other providers
@@ -612,14 +606,18 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
     } as MediaItem;
   });
 
-  if (results.length === 0) {
+  const allowedTypes = new Set(["Book","Movie","TV Series","Comic","Short Drama","Music"]);
+  const negatives = ['iphone','apple','samsung','huawei','vs','review','price','spec','launch','press','event','news','新闻','发布会','评测','开箱','手机','参数','报价','rumor','快讯'];
+  const filtered = results.filter(r => allowedTypes.has(r.type) && !negatives.some(k => (r.title + ' ' + (r.description || '')).toLowerCase().includes(k)));
+
+  if (filtered.length === 0) {
       return await createFallbackItemsFromContext(searchContext);
   }
   try {
-    localStorage.setItem(cacheKey, JSON.stringify(results));
+    localStorage.setItem(cacheKey, JSON.stringify(filtered));
     localStorage.setItem(cacheTsKey, Date.now().toString());
   } catch {}
-  return results;
+  return filtered;
 };
 
 export const checkUpdates = async (items: MediaItem[]): Promise<{ id: string; latestUpdateInfo: string; isOngoing: boolean }[]> => {
@@ -711,8 +709,7 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
 
     if (!enableSearch) return undefined;
     
-    // Yandex and DuckDuckGo do not support image fetching in this implementation
-    if (searchProvider === 'yandex' || searchProvider === 'duckduckgo') {
+    if (searchProvider === 'yandex') {
         return undefined;
     }
 
@@ -861,7 +858,7 @@ export const processSearchResult = (title: string, snippet: string): { title: st
 
     // Extract year (prioritize title, then snippet)
     let year = new Date().getFullYear().toString();
-    const yearMatch = title.match(/\b(202[3-6])\b/) || snippet.match(/\b(202[3-6])\b/);
+    const yearMatch = title.match(/\b(19\d{2}|20\d{2})\b/) || snippet.match(/\b(19\d{2}|20\d{2})\b/);
     if (yearMatch) {
         year = yearMatch[1];
         // Remove year from title if present in parentheses to clean it up

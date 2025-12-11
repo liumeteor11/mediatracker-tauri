@@ -119,17 +119,18 @@ export const SearchPage: React.FC = () => {
     setLoading(true);
     setError(null);
     setIsTrending(false);
+    const startTs = performance.now();
     
     try {
       const data = await searchMedia(query, selectedType);
       setResults(data);
-      hydratePosters(data);
-      verifyResults(data, query);
+      await Promise.all([hydratePosters(data), verifyResults(data, query)]);
+      const duration = Math.round(performance.now() - startTs);
+      useAIStore.getState().setConfig({ lastSearchDurationMs: duration, lastSearchAt: new Date().toISOString(), lastSearchQuery: query });
       if (data.length === 0) {
         const cfg = useAIStore.getState();
         const hasKey = !!cfg.getDecryptedApiKey();
-        const isDdg = cfg.searchProvider === 'duckduckgo';
-        if (!hasKey && !isDdg) {
+        if (!hasKey) {
           setError(t('search_page.network_unavailable'));
         } else {
           setError(t('search_page.no_results_found'));

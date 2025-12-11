@@ -51,7 +51,6 @@ export const AIConfigPanel: React.FC = () => {
     { value: 'google', label: t('ai_config.search_provider_google') },
     { value: 'serper', label: t('ai_config.search_provider_serper') },
     { value: 'yandex', label: t('ai_config.search_provider_yandex') },
-    { value: 'duckduckgo', label: t('ai_config.search_provider_ddg') },
   ];
 
   const { 
@@ -542,15 +541,7 @@ export const AIConfigPanel: React.FC = () => {
                     </div>
                 )}
 
-                {/* DuckDuckGo Configuration */}
-                {searchProvider === 'duckduckgo' && (
-                    <div className="text-sm text-theme-subtext bg-theme-surface p-3 rounded-lg border border-theme-border">
-                        <p className="flex items-center gap-2">
-                            <Info className="w-4 h-4 text-theme-accent" />
-                            {t('ai_config.ddg_info')}
-                        </p>
-                    </div>
-                )}
+                
 
             {/* Proxy Settings */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
