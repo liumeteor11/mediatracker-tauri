@@ -1,76 +1,42 @@
-name: Release (Multi‑platform)
+name: Release
 
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Tag version (e.g., v1.0.0)'
-        required: false
+
+permissions:
+  contents: write
 
 jobs:
-  release-by-tag:
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ${{ matrix.platform }}
+  build:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-latest, windows-latest, macos-latest]
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-      - name: Install Node deps
-        run: npm ci
-      - name: Install Linux deps
-        if: matrix.platform == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev webkit2gtk-4.1 libayatana-appindicator3-dev librsvg2-dev
-      - name: Build and publish release
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: MediaTracker AI ${{ github.ref_name }}
-          releaseBody: Automated multi‑platform build via GitHub Actions
-          draft: false
-          prerelease: false
-          allowUpdates: true
-
-  release-manual:
-    if: github.event_name == 'workflow_dispatch'
+        platform: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [ubuntu-latest, windows-latest, macos-latest]
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          node-version: '18'
-      - name: Install Node deps
-        run: npm ci
-      - name: Install Linux deps
+          node-version: '20'
+          cache: 'npm'
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev webkit2gtk-4.1 libayatana-appindicator3-dev librsvg2-dev
-      - name: Build and publish release
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev libayatana-appindicator3-dev
+      - name: Install frontend deps
+        run: npm ci
+      - name: Build and Release
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ inputs.version }}
-          releaseName: MediaTracker AI ${{ inputs.version }}
-          releaseBody: Automated multi‑platform build via GitHub Actions
-          draft: false
+          tagName: v__VERSION__
+          releaseName: mediatracker-rust v__VERSION__
+          releaseBody: Automated release
+          releaseDraft: false
           prerelease: false
-          allowUpdates: true
