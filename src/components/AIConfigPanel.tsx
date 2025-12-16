@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useAIStore, AIProvider, SearchProvider } from '../store/useAIStore';
+import { callAI, testSearchConnection, testOmdbConnection } from '../services/aiService';
 import { Save, Activity, CheckCircle, AlertCircle, Eye, EyeOff, Info, List, Globe, Search } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
@@ -57,18 +58,22 @@ export const AIConfigPanel: React.FC = () => {
     provider, apiKey, model, baseUrl, temperature, maxTokens, systemPrompt,
     enableSearch, searchProvider, googleSearchCx, yandexSearchLogin,
     useSystemProxy, proxyProtocol, proxyHost, proxyPort, proxyUsername,
-    setProvider, setConfig, getDecryptedApiKey, getDecryptedGoogleKey, getDecryptedSerperKey, getDecryptedYandexKey, getProxyUrl
+    setProvider, setConfig, getDecryptedApiKey, getDecryptedGoogleKey, getDecryptedSerperKey, getDecryptedYandexKey, getDecryptedOmdbKey, getDecryptedBingKey, getProxyUrl
   } = useAIStore();
 
   const [localKey, setLocalKey] = useState(getDecryptedApiKey());
   const [localGoogleKey, setLocalGoogleKey] = useState(getDecryptedGoogleKey());
   const [localSerperKey, setLocalSerperKey] = useState(getDecryptedSerperKey());
   const [localYandexKey, setLocalYandexKey] = useState(getDecryptedYandexKey());
+  const [localOmdbKey, setLocalOmdbKey] = useState(getDecryptedOmdbKey());
+  const [localBingKey, setLocalBingKey] = useState(getDecryptedBingKey());
   
   const [showKey, setShowKey] = useState(false);
   const [showGoogleKey, setShowGoogleKey] = useState(false);
   const [showSerperKey, setShowSerperKey] = useState(false);
   const [showYandexKey, setShowYandexKey] = useState(false);
+  const [showOmdbKey, setShowOmdbKey] = useState(false);
+  const [showBingKey, setShowBingKey] = useState(false);
   const [localUseSystemProxy, setLocalUseSystemProxy] = useState(useSystemProxy);
   const [localProxyProtocol, setLocalProxyProtocol] = useState<'http' | 'socks5'>(proxyProtocol || 'http');
   const [localProxyHost, setLocalProxyHost] = useState(proxyHost || '');
@@ -84,6 +89,56 @@ export const AIConfigPanel: React.FC = () => {
   });
   const [isManualInput, setIsManualInput] = useState(false);
   const [isProxyHelpOpen, setIsProxyHelpOpen] = useState(false);
+  const [isSearchTesting, setIsSearchTesting] = useState(false);
+  const [isOmdbTesting, setIsOmdbTesting] = useState(false);
+
+  const handleTestSearch = async () => {
+    if (searchProvider === 'google' && !localGoogleKey) return toast.error(t('ai_config.api_key_required'));
+    if (searchProvider === 'serper' && !localSerperKey) return toast.error(t('ai_config.api_key_required'));
+  if (searchProvider === 'yandex' && (!localYandexKey || !yandexSearchLogin)) return toast.error(t('ai_config.api_key_required'));
+    
+    setIsSearchTesting(true);
+    try {
+      const config = {
+         googleSearchApiKey: localGoogleKey,
+         googleSearchCx,
+         serperApiKey: localSerperKey,
+         yandexSearchApiKey: localYandexKey,
+         yandexSearchLogin
+      };
+      const result = await testSearchConnection(searchProvider, config);
+      if (result.ok) {
+        toast.success(`${t('ai_config.connection_verified')} (${result.count} results)`);
+        // Auto-save the key if validation succeeds
+        setConfig({
+            googleSearchApiKey: localGoogleKey,
+            googleSearchCx,
+            serperApiKey: localSerperKey,
+            yandexSearchApiKey: localYandexKey,
+            yandexSearchLogin
+        });
+      } else {
+        toast.error(`${t('ai_config.connection_failed_prefix')}${result.error}`);
+      }
+    } finally {
+      setIsSearchTesting(false);
+    }
+  };
+
+  const handleTestOmdb = async () => {
+    if (!localOmdbKey) return toast.error(t('ai_config.api_key_required'));
+    setIsOmdbTesting(true);
+    try {
+      const result = await testOmdbConnection(localOmdbKey);
+      if (result.ok) {
+        toast.success(t('ai_config.connection_verified'));
+      } else {
+        toast.error(`${t('ai_config.connection_failed_prefix')}${result.error}`);
+      }
+    } finally {
+      setIsOmdbTesting(false);
+    }
+  };
 
   const handleTestProxy = async () => {
     setIsTesting(true);
@@ -121,8 +176,9 @@ export const AIConfigPanel: React.FC = () => {
     setLocalGoogleKey(getDecryptedGoogleKey());
     setLocalSerperKey(getDecryptedSerperKey());
     setLocalYandexKey(getDecryptedYandexKey());
+    setLocalOmdbKey(getDecryptedOmdbKey());
     setIsManualInput(false);
-  }, [provider, getDecryptedApiKey, getDecryptedGoogleKey, getDecryptedSerperKey, getDecryptedYandexKey]);
+  }, [provider, getDecryptedApiKey, getDecryptedGoogleKey, getDecryptedSerperKey, getDecryptedYandexKey, getDecryptedOmdbKey, getDecryptedBingKey]);
 
   const handleSave = () => {
     if (!localKey) {
@@ -143,26 +199,28 @@ export const AIConfigPanel: React.FC = () => {
     }
 
     const sanitizedBaseUrl = (baseUrl || '').trim().replace(/[\s)]+$/g, '');
-    setConfig({
-        apiKey: localKey,
-        model,
-        baseUrl: sanitizedBaseUrl,
-        temperature,
-        maxTokens,
-        enableSearch,
-        searchProvider,
-        googleSearchApiKey: localGoogleKey,
-        googleSearchCx,
-        serperApiKey: localSerperKey,
-        yandexSearchApiKey: localYandexKey,
-        yandexSearchLogin,
-        useSystemProxy: localUseSystemProxy,
-        proxyProtocol: localProxyProtocol,
-        proxyHost: localProxyHost,
-        proxyPort: localProxyPort,
-        proxyUsername: localProxyUsername,
-        proxyPassword: localProxyPassword
-    });
+        setConfig({
+            apiKey: localKey,
+            model,
+            baseUrl: sanitizedBaseUrl,
+            temperature,
+            maxTokens,
+            enableSearch,
+            searchProvider,
+            googleSearchApiKey: localGoogleKey,
+            googleSearchCx,
+            serperApiKey: localSerperKey,
+            yandexSearchApiKey: localYandexKey,
+            yandexSearchLogin,
+            omdbApiKey: localOmdbKey,
+            bingApiKey: localBingKey,
+            useSystemProxy: localUseSystemProxy,
+            proxyProtocol: localProxyProtocol,
+            proxyHost: localProxyHost,
+            proxyPort: localProxyPort,
+            proxyUsername: localProxyUsername,
+            proxyPassword: localProxyPassword
+        });
     toast.success(t('ai_config.save_success'));
   };
 
@@ -172,39 +230,13 @@ export const AIConfigPanel: React.FC = () => {
     const startTime = performance.now();
 
     try {
-        // Tauri Mode
-        if (window.__TAURI__) {
-             const rustConfig = {
-                 apiKey: localKey,
-                 baseURL: (baseUrl || '').trim().replace(/[\s)]+$/g, ''),
-                 model: model
-             };
-             
-             await invoke("ai_chat", { 
-                 messages: [{ role: 'user', content: 'Hi' }], 
-                 temperature: 0.7, 
-                 config: rustConfig 
-             });
-        } else {
-             // Web Mode Direct Call
-            const sanitized = (baseUrl || '').trim().replace(/[\s)]+$/g, '');
-            const response = await fetch(`${sanitized}/chat/completions`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${localKey}`
-                },
-                 body: JSON.stringify({
-                     model: model,
-                     messages: [{ role: 'user', content: 'Hi' }],
-                     max_tokens: 5
-                 })
-             });
-             
-             if (!response.ok) {
-                 const errData = await response.json().catch(() => ({}));
-                 throw new Error(errData.error?.message || `HTTP ${response.status}`);
-             }
+        const sanitized = (baseUrl || '').trim().replace(/[\s)]+$/g, '');
+        const text = await callAI([
+          { role: 'system', content: 'Ping' },
+          { role: 'user', content: 'Hi' }
+        ], 0.1, { configOverride: { baseURL: sanitized, apiKey: localKey, model, provider } });
+        if (!text) {
+          throw new Error('Connection failed');
         }
 
         const endTime = performance.now();
@@ -227,6 +259,8 @@ export const AIConfigPanel: React.FC = () => {
           serperApiKey: localSerperKey,
           yandexSearchApiKey: localYandexKey,
           yandexSearchLogin,
+          omdbApiKey: localOmdbKey,
+          bingApiKey: localBingKey,
           useSystemProxy: localUseSystemProxy,
           proxyProtocol: localProxyProtocol,
           proxyHost: localProxyHost,
@@ -412,7 +446,7 @@ export const AIConfigPanel: React.FC = () => {
                 onChange={(e) => setConfig({ enableSearch: e.target.checked })} 
                 className="sr-only peer" 
               />
-              <div className="w-11 h-6 bg-theme-border peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-theme-accent rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-theme-accent-warm peer-checked:to-theme-accent-warm-2"></div>
+              <div className="w-11 h-6 bg-theme-border border-2 border-theme-subtext/20 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-theme-accent rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-theme-accent-warm peer-checked:to-theme-accent-warm-2"></div>
               <span className="ms-3 text-sm font-medium text-theme-text">{t('ai_config.enable_web_search')}</span>
             </label>
         </div>
@@ -474,6 +508,11 @@ export const AIConfigPanel: React.FC = () => {
                                 {t('ai_config.get_google_cx')}
                             </a>
                         </div>
+                        <div className="md:col-span-2 flex justify-end">
+                            <button onClick={handleTestSearch} disabled={isSearchTesting} className="text-xs px-3 py-1.5 rounded border border-theme-accent text-theme-accent hover:bg-theme-accent hover:text-white transition-colors disabled:opacity-50">
+                                {isSearchTesting ? 'Testing...' : t('ai_config.test_connection_btn')}
+                            </button>
+                        </div>
                     </div>
                 )}
 
@@ -497,9 +536,14 @@ export const AIConfigPanel: React.FC = () => {
                                 {showSerperKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                               </button>
                         </div>
-                         <a href="https://serper.dev/" target="_blank" rel="noreferrer" className="text-xs text-theme-accent hover:underline mt-1 inline-block">
-                            {t('ai_config.get_serper_key')}
-                        </a>
+                         <div className="flex justify-between items-center mt-1">
+                             <a href="https://serper.dev/" target="_blank" rel="noreferrer" className="text-xs text-theme-accent hover:underline inline-block">
+                                {t('ai_config.get_serper_key')}
+                            </a>
+                            <button onClick={handleTestSearch} disabled={isSearchTesting} className="text-xs px-3 py-1.5 rounded border border-theme-accent text-theme-accent hover:bg-theme-accent hover:text-white transition-colors disabled:opacity-50">
+                                {isSearchTesting ? 'Testing...' : t('ai_config.test_connection_btn')}
+                            </button>
+                        </div>
                     </div>
                 )}
 
@@ -537,9 +581,74 @@ export const AIConfigPanel: React.FC = () => {
                              <a href="https://xml.yandex.com/" target="_blank" rel="noreferrer" className="text-xs text-theme-accent hover:underline mt-1 inline-block">
                                 {t('ai_config.get_yandex_key')}
                             </a>
+                          </div>
+                        <div className="md:col-span-2 flex justify-end">
+                            <button onClick={handleTestSearch} disabled={isSearchTesting} className="text-xs px-3 py-1.5 rounded border border-theme-accent text-theme-accent hover:bg-theme-accent hover:text-white transition-colors disabled:opacity-50">
+                                {isSearchTesting ? 'Testing...' : t('ai_config.test_connection_btn')}
+                            </button>
                         </div>
-                    </div>
+                     </div>
                 )}
+
+                
+
+                <div>
+                    <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.bing_key_label')}</label>
+                    <div className="relative">
+                        <input 
+                            type={showBingKey ? "text" : "password"} 
+                            value={localBingKey}
+                            onChange={(e) => setLocalBingKey(e.target.value)}
+                            className="w-full px-4 py-2 pr-10 rounded-lg border bg-theme-bg border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent outline-none"
+                            placeholder="Bing Subscription Key"
+                        />
+                        <button 
+                            type="button"
+                            onClick={() => setShowBingKey(!showBingKey)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-subtext hover:text-theme-text"
+                        >
+                            {showBingKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                    </div>
+                    <div className="flex justify-between items-start mt-1">
+                        <a href="https://www.microsoft.com/en-us/bing/apis/bing-search-apis" target="_blank" rel="noreferrer" className="text-xs text-theme-accent hover:underline inline-block">
+                            {t('ai_config.get_bing_key')}
+                        </a>
+                        <p className="text-xs text-theme-subtext flex items-center gap-1">
+                          <Info className="w-3 h-3" />
+                          {t('ai_config.bing_key_optional_note')}
+                        </p>
+                    </div>
+                </div>
+
+                <div>
+                    <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.omdb_key_label')}</label>
+                    <div className="relative">
+                        <input 
+                            type={showOmdbKey ? "text" : "password"} 
+                            value={localOmdbKey}
+                            onChange={(e) => setLocalOmdbKey(e.target.value)}
+                            className="w-full px-4 py-2 pr-10 rounded-lg border bg-theme-bg border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent outline-none"
+                            placeholder="OMDB API Key"
+                        />
+                        <button 
+                            type="button"
+                            onClick={() => setShowOmdbKey(!showOmdbKey)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-subtext hover:text-theme-text"
+                        >
+                            {showOmdbKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                    </div>
+                    <div className="flex justify-between items-start mt-1">
+                        <p className="text-xs text-theme-subtext flex items-center gap-1">
+                          <Info className="w-3 h-3" />
+                          {t('ai_config.omdb_key_optional_note')}
+                        </p>
+                        <button onClick={handleTestOmdb} disabled={isOmdbTesting} className="text-xs px-3 py-1.5 rounded border border-theme-accent text-theme-accent hover:bg-theme-accent hover:text-white transition-colors disabled:opacity-50 flex-shrink-0 ml-2">
+                            {isOmdbTesting ? 'Testing...' : t('ai_config.test_connection_btn')}
+                        </button>
+                    </div>
+                </div>
 
                 
 
@@ -554,7 +663,7 @@ export const AIConfigPanel: React.FC = () => {
                     onChange={(e) => setLocalUseSystemProxy(e.target.checked)} 
                     className="sr-only peer" 
                   />
-                  <div className="w-11 h-6 bg-theme-border rounded-full peer peer-focus:ring-2 peer-focus:ring-theme-accent peer-checked:bg-gradient-to-r peer-checked:from-theme-accent-warm peer-checked:to-theme-accent-warm-2 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                  <div className="w-11 h-6 bg-theme-border border-2 border-theme-subtext/20 rounded-full peer peer-focus:ring-2 peer-focus:ring-theme-accent peer-checked:bg-gradient-to-r peer-checked:from-theme-accent-warm peer-checked:to-theme-accent-warm-2 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
                 </label>
               </div>
               <div className="flex items-center justify-end">
@@ -709,9 +818,9 @@ export const AIConfigPanel: React.FC = () => {
                 <EyeOff className="w-5 h-5 text-theme-subtext" />
               </button>
             </div>
-            <div className="p-4 space-y-3 bg-theme-bg/60 rounded-lg border-2 border-theme-accent">
+            <div className="p-4 space-y-3 bg-theme-bg rounded-lg border border-theme-border">
               <p className="text-sm text-theme-subtext">{t('ai_config.proxy_help_intro')}</p>
-              <ul className="list-disc list-inside space-y-2 text-sm text-theme-text marker:text-theme-accent">
+              <ul className="list-disc list-inside space-y-2 text-sm text-theme-text marker:text-theme-subtext">
                 <li>{t('ai_config.proxy_help_item_sys_proxy')}</li>
                 <li>{t('ai_config.proxy_help_item_custom_proxy')}</li>
                 <li>{t('ai_config.proxy_help_item_protocol')}</li>
@@ -721,7 +830,7 @@ export const AIConfigPanel: React.FC = () => {
               </ul>
             </div>
             <div className="p-4 border-t border-theme-border flex justify-end">
-              <button onClick={() => setIsProxyHelpOpen(false)} className="px-4 py-2 rounded-lg text-sm font-medium bg-theme-accent text-theme-bg hover:bg-theme-accent-hover border-2 border-theme-accent">
+              <button onClick={() => setIsProxyHelpOpen(false)} className="px-4 py-2 rounded-lg text-sm font-medium bg-theme-surface text-theme-text hover:bg-theme-bg border border-theme-border shadow-sm">
                 {t('ai_config.proxy_help_close')}
               </button>
             </div>

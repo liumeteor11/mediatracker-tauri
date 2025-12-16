@@ -191,7 +191,7 @@ export const EditMediaModal: React.FC<EditMediaModalProps> = ({ item, onClose, o
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
       <div className={clsx(
-        "w-full flex flex-col rounded-2xl shadow-2xl overflow-hidden bg-theme-surface border border-theme-border h-[600px] transition-all duration-300",
+        "w-full flex flex-col rounded-theme shadow-theme overflow-hidden bg-theme-surface border border-theme-border h-[600px] transition-all duration-300",
         viewMode === 'split' ? "max-w-6xl" : "max-w-3xl"
       )}>
         {/* Header */}

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import CryptoJS from 'crypto-js';
+import { AIIOLogEntry } from '../types/types';
 
 // Simple encryption key (In a real app, this should not be hardcoded or should be user-provided)
 // For this requirement, we use a static key to satisfy "encrypted storage" vs plain text in localStorage
@@ -26,10 +27,18 @@ interface AIConfigState {
   serperApiKey: string;
   yandexSearchApiKey: string;
   yandexSearchLogin: string;
+  omdbApiKey: string;
+  bingApiKey: string;
   trendingPrompt: string;
   lastSearchDurationMs: number | null;
   lastSearchAt: string | null;
   lastSearchQuery: string | null;
+  authoritativeDomains: {
+    movie_tv: string[];
+    book: string[];
+    comic: string[];
+    music: string[];
+  };
   
   // Proxy Configuration
   useSystemProxy: boolean;
@@ -42,14 +51,22 @@ interface AIConfigState {
   // Cache for trending media to allow "partial" updates
   trendingCache: any[];
   setTrendingCache: (items: any[]) => void;
+  setAuthoritativeDomains: (domains: Partial<AIConfigState['authoritativeDomains']>) => void;
+  addDomain: (type: 'movie_tv' | 'book' | 'comic' | 'music', domain: string) => void;
+  removeDomain: (type: 'movie_tv' | 'book' | 'comic' | 'music', domain: string) => void;
   
   setProvider: (provider: AIProvider) => void;
-  setConfig: (config: Partial<Omit<AIConfigState, 'setProvider' | 'setConfig' | 'getDecryptedApiKey' | 'getDecryptedGoogleKey' | 'getDecryptedSerperKey' | 'getDecryptedYandexKey'>>) => void;
+  setConfig: (config: Partial<Omit<AIConfigState, 'setProvider' | 'setConfig' | 'getDecryptedApiKey' | 'getDecryptedGoogleKey' | 'getDecryptedSerperKey' | 'getDecryptedYandexKey' | 'getDecryptedOmdbKey'>>) => void;
   getDecryptedApiKey: () => string;
   getDecryptedGoogleKey: () => string;
   getDecryptedSerperKey: () => string;
   getDecryptedYandexKey: () => string;
+  getDecryptedOmdbKey: () => string;
+  getDecryptedBingKey: () => string;
   getProxyUrl: () => string;
+  logs: AIIOLogEntry[];
+  appendLog: (entry: AIIOLogEntry) => void;
+  clearLogs: () => void;
 }
 
 const encrypt = (text: string) => {
@@ -91,17 +108,25 @@ Each object must have the following fields:
 - rating: string (e.g. "8.5/10")
 
 Ensure data is accurate.`,
-    enableSearch: true,
+      enableSearch: true,
       searchProvider: 'google',
       googleSearchApiKey: '',
       googleSearchCx: '',
       serperApiKey: '',
       yandexSearchApiKey: '',
       yandexSearchLogin: '',
+      omdbApiKey: '',
+      bingApiKey: '',
       trendingPrompt: '',
       lastSearchDurationMs: null,
       lastSearchAt: null,
       lastSearchQuery: null,
+      authoritativeDomains: {
+        movie_tv: ['imdb.com','themoviedb.org','tvmaze.com','wikipedia.org','zh.wikipedia.org','douban.com'],
+        book: ['goodreads.com','wikipedia.org','zh.wikipedia.org','douban.com'],
+        comic: ['bgm.tv','bangumi.tv','wikipedia.org','zh.wikipedia.org'],
+        music: ['discogs.com','musicbrainz.org','wikipedia.org','zh.wikipedia.org']
+      },
       useSystemProxy: true,
       proxyProtocol: 'http',
       proxyHost: '',
@@ -109,8 +134,29 @@ Ensure data is accurate.`,
       proxyUsername: '',
       proxyPassword: '',
       trendingCache: [],
+      logs: [],
       
       setTrendingCache: (items) => set({ trendingCache: items }),
+      setAuthoritativeDomains: (domains) => {
+        const current = get().authoritativeDomains;
+        set({ authoritativeDomains: { ...current, ...domains } });
+      },
+      addDomain: (type, domain) => {
+        const d = domain.trim().toLowerCase().replace(/^site:/,'');
+        if (!d) return;
+        const cur = get().authoritativeDomains;
+        const arr = cur[type] || [];
+        if (arr.includes(d)) return;
+        const next = { ...cur, [type]: [...arr, d] };
+        set({ authoritativeDomains: next });
+      },
+      removeDomain: (type, domain) => {
+        const d = domain.trim().toLowerCase().replace(/^site:/,'');
+        const cur = get().authoritativeDomains;
+        const arr = cur[type] || [];
+        const next = { ...cur, [type]: arr.filter(x => x !== d) };
+        set({ authoritativeDomains: next });
+      },
 
       setProvider: (provider) => {
         let defaultBaseUrl = '';
@@ -162,6 +208,8 @@ Ensure data is accurate.`,
         if (config.googleSearchApiKey) updates.googleSearchApiKey = encrypt(config.googleSearchApiKey);
         if (config.serperApiKey) updates.serperApiKey = encrypt(config.serperApiKey);
         if (config.yandexSearchApiKey) updates.yandexSearchApiKey = encrypt(config.yandexSearchApiKey);
+        if (config.omdbApiKey) updates.omdbApiKey = encrypt(config.omdbApiKey);
+        if (config.bingApiKey) updates.bingApiKey = encrypt(config.bingApiKey);
         if (config.proxyPassword) updates.proxyPassword = encrypt(config.proxyPassword);
         
         if (typeof config.baseUrl !== 'undefined') {
@@ -173,6 +221,8 @@ Ensure data is accurate.`,
       getDecryptedGoogleKey: () => decrypt(get().googleSearchApiKey),
       getDecryptedSerperKey: () => decrypt(get().serperApiKey),
       getDecryptedYandexKey: () => decrypt(get().yandexSearchApiKey),
+      getDecryptedOmdbKey: () => decrypt(get().omdbApiKey),
+      getDecryptedBingKey: () => decrypt(get().bingApiKey),
       // Helper getters
       // Note: username stored in plain (non-sensitive), password encrypted
       getProxyUrl: (): string => {
@@ -183,11 +233,17 @@ Ensure data is accurate.`,
         const pass = decrypt(s.proxyPassword);
         const auth = user ? `${encodeURIComponent(user)}${pass ? ':' + encodeURIComponent(pass) : ''}@` : '';
         return `${proto}://${auth}${s.proxyHost}:${s.proxyPort}`;
-      }
+      },
+      appendLog: (entry: AIIOLogEntry) => {
+        const current = get().logs || [];
+        const next = [entry, ...current].slice(0, 200);
+        set({ logs: next });
+      },
+      clearLogs: () => set({ logs: [] })
     }),
     {
       name: 'ai-config-storage',
-      version: 3,
+      version: 4,
       storage: createJSONStorage(() => {
         try {
           if (typeof window !== 'undefined' && window.localStorage) {
@@ -214,6 +270,12 @@ Ensure data is accurate.`,
             persistedState.baseUrl = sanitizeBaseUrl(persistedState.baseUrl || '');
             if (persistedState.searchProvider === 'duckduckgo') {
               persistedState.searchProvider = 'google';
+            }
+            if (persistedState.searchProvider === 'metaso') {
+              persistedState.searchProvider = 'google';
+            }
+            if ('metasoApiKey' in persistedState) {
+              try { delete persistedState.metasoApiKey; } catch {}
             }
             const prov = persistedState.provider;
             const url: string = persistedState.baseUrl || '';
@@ -249,9 +311,12 @@ Ensure data is accurate.`,
         serperApiKey: state.serperApiKey,
         yandexSearchApiKey: state.yandexSearchApiKey,
         yandexSearchLogin: state.yandexSearchLogin,
+        omdbApiKey: state.omdbApiKey,
+        bingApiKey: state.bingApiKey,
         lastSearchDurationMs: state.lastSearchDurationMs,
         lastSearchAt: state.lastSearchAt,
         lastSearchQuery: state.lastSearchQuery,
+        authoritativeDomains: state.authoritativeDomains,
         useSystemProxy: state.useSystemProxy,
         proxyProtocol: state.proxyProtocol,
         proxyHost: state.proxyHost,

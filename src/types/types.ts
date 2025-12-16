@@ -51,3 +51,18 @@ export interface User {
   githubToken?: string;
   lastBackup?: string;
 }
+
+export type IOChannel = 'ai' | 'search';
+export interface AIIOLogEntry {
+  id: string;
+  ts: number;
+  channel: IOChannel;
+  provider?: string;
+  query?: string;
+  request?: any;
+  response?: any;
+  durationMs?: number;
+  searchType?: 'text' | 'image';
+  model?: string;
+  baseURL?: string;
+}

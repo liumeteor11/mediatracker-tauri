@@ -15,6 +15,7 @@
     --border-color: #e5e7eb;
     --font-theme: 'system-ui', 'sans-serif';
     --shadow-color: rgba(0, 0, 0, 0.1);
+    --radius-theme: 0.75rem; /* Default rounded-xl */
   }
 
   [data-theme="doraemon"] {
@@ -28,12 +29,13 @@
     --accent-warm-secondary: #FAAD14;
     --border-color: #B3E5FC;
     --font-theme: 'Quicksand', 'Varela Round', 'sans-serif'; /* Rounded */
-    --shadow-color: rgba(18, 150, 219, 0.2);
+    --shadow-color: 0 4px 15px rgba(18, 150, 219, 0.2);
+    --radius-theme: 1.5rem; /* Extra rounded for playful feel */
   }
 
   [data-theme="cyberpunk"] {
-    --bg-primary: #121212;
-    --bg-secondary: #1E1E1E;
+    --bg-primary: #050505; /* Darker black for better contrast */
+    --bg-secondary: #121212;
     --text-primary: #E0E0E0;
     --text-secondary: #A0A0A0;
     --accent-primary: #FF00FF; /* Neon Pink */
@@ -42,7 +44,8 @@
     --accent-warm-secondary: #FF9500; /* Neon Orange */
     --border-color: #333333;
     --font-theme: 'Orbitron', 'Courier New', 'monospace';
-    --shadow-color: rgba(255, 0, 255, 0.4);
+    --shadow-color: 0 0 10px rgba(255, 0, 255, 0.3), 0 0 20px rgba(0, 255, 255, 0.2);
+    --radius-theme: 0.1rem; /* Sharp edges */
   }
 
   [data-theme="scandinavian"] {
@@ -56,21 +59,23 @@
     --accent-warm-secondary: #D35400; /* Deep Orange */
     --border-color: #E8E8E8;
     --font-theme: 'Helvetica Neue', 'Arial', 'sans-serif';
-    --shadow-color: rgba(0, 0, 0, 0.05);
+    --shadow-color: 0 2px 5px rgba(0, 0, 0, 0.03);
+    --radius-theme: 0.5rem; /* Soft but clean */
   }
 
   [data-theme="gradient"] {
     --bg-primary: #f0f2f5; /* Fallback for transparency/mesh */
-    --bg-secondary: rgba(255, 255, 255, 0.6);
-    --text-primary: #2d3436;
-    --text-secondary: #636e72;
-    --accent-primary: #6c5ce7;
-    --accent-secondary: #a29bfe;
+    --bg-secondary: rgba(255, 255, 255, 0.15); /* More glass-like */
+    --text-primary: #ffffff;
+    --text-secondary: #dfe6e9;
+    --accent-primary: #a29bfe;
+    --accent-secondary: #6c5ce7;
     --accent-warm-primary: #ff7f50; /* Coral */
     --accent-warm-secondary: #ff9f1a; /* Orange */
-    --border-color: rgba(255, 255, 255, 0.5);
+    --border-color: rgba(255, 255, 255, 0.2);
     --font-theme: 'Montserrat', 'sans-serif';
-    --shadow-color: rgba(108, 92, 231, 0.2);
+    --shadow-color: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+    --radius-theme: 1rem;
   }
 
   /* Special Backgrounds */
@@ -157,5 +162,20 @@
 
   .text-shadow-neon {
     text-shadow: 0 0 5px var(--accent-primary), 0 0 10px var(--accent-secondary);
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background-color: var(--border-color);
+    border-radius: 9999px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: var(--text-secondary);
   }
 }

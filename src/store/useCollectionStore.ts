@@ -15,6 +15,7 @@ interface CollectionState {
   updateItem: (id: string, updates: Partial<MediaItem>) => void;
   moveCategory: (id: string, category: CollectionCategory) => void;
   importCollection: (items: MediaItem[]) => void;
+  exportCollection: (targetDir?: string, redactSensitive?: boolean) => Promise<string | null>;
   getStats: () => { total: number; watched: number; toWatch: number; favorites: number };
   refreshForUser: () => Promise<void>;
   clear: () => void;
@@ -85,6 +86,21 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
         
         return { collection: updatedCollection };
       });
+  },
+
+  exportCollection: async (targetDir?: string, redactSensitive: boolean = true) => {
+    try {
+      if (!isTauri) {
+        console.warn('Export not available in web preview');
+        return null;
+      }
+      const username = useAuthStore.getState().user?.username || 'guest';
+      const path = await invoke<string>('export_collection', { username, targetDir, redactSensitive });
+      return path;
+    } catch (e) {
+      console.error('Export collection failed', e);
+      return null;
+    }
   },
 
   addToCollection: (item, category) => {

@@ -64,13 +64,13 @@ export const Navbar: React.FC = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           <Link to="/" className="flex-shrink-0 flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors bg-theme-accent text-theme-bg">
+            <div className="w-8 h-8 rounded-theme flex items-center justify-center transition-colors bg-theme-accent text-theme-bg">
               <Library className="w-5 h-5" />
             </div>
             <span className="font-bold text-xl tracking-tight text-theme-text font-theme">MediaTracker AI</span>
           </Link>
           {aiDate && (
-            <div className="hidden lg:flex items-center gap-2 px-3 py-2 rounded-md text-xs font-medium text-theme-subtext bg-theme-surface/50 border border-theme-border/50 max-w-[300px] truncate" title={aiDate}>
+            <div className="hidden lg:flex items-center gap-2 px-3 py-2 rounded-theme text-xs font-medium text-theme-subtext bg-theme-surface/50 max-w-[300px] truncate" title={aiDate}>
               <Calendar className="w-3 h-3 flex-shrink-0" />
               <span className="truncate">{aiDate}</span>
             </div>
@@ -83,7 +83,7 @@ export const Navbar: React.FC = () => {
                   key={path}
                   to={path}
                   className={clsx(
-                    "flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-theme-accent",
+                    "flex items-center gap-2 px-3 py-2 rounded-theme text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-theme-accent",
                     location.pathname === path
                       ? "bg-theme-accent text-theme-bg border-2 border-theme-accent"
                       : "text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50"

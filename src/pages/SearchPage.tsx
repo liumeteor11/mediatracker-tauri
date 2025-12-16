@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Search, Loader2, TrendingUp, AlertCircle, RefreshCw, Edit, X, Save, RotateCcw } from 'lucide-react';
-import { searchMedia, getTrendingMedia, fetchPosterFromSearch, performClientSideSearch, processSearchResult } from '../services/aiService';
+import { searchMedia, getTrendingMedia, fetchPosterFromSearch, performClientSideSearch, processSearchResult, runBackgroundSearch, refreshTrendingCache } from '../services/aiService';
 import { MediaItem, CollectionCategory, MediaType } from '../types/types';
 import { MediaCard } from '../components/MediaCard';
 import { useCollectionStore } from '../store/useCollectionStore';
@@ -23,6 +23,48 @@ export const SearchPage: React.FC = () => {
   const [tempPrompt, setTempPrompt] = useState('');
 
   const { addToCollection } = useCollectionStore();
+  const isMountedRef = useRef(true);
+  const loadingRef = useRef(loading);
+  const isTrendingRef = useRef(isTrending);
+  const queryRef = useRef(query);
+  const selectedTypeRef = useRef<MediaType | 'All'>(selectedType);
+  useEffect(() => { loadingRef.current = loading; }, [loading]);
+  useEffect(() => { isTrendingRef.current = isTrending; }, [isTrending]);
+  useEffect(() => { queryRef.current = query; }, [query]);
+  useEffect(() => { selectedTypeRef.current = selectedType; }, [selectedType]);
+  useEffect(() => { 
+    return () => { 
+      isMountedRef.current = false; 
+      try {
+        if (loadingRef.current) {
+          if (!isTrendingRef.current && queryRef.current.trim()) {
+            runBackgroundSearch(queryRef.current, selectedTypeRef.current);
+          } else if (isTrendingRef.current) {
+            refreshTrendingCache();
+          }
+        }
+      } catch {}
+    }; 
+  }, []);
+  const getSearchCacheKeys = (q: string) => {
+    const langKey = i18n.language.split('-')[0];
+    const types: Array<MediaType | 'All'> = ['All', MediaType.MOVIE, MediaType.TV_SERIES, MediaType.BOOK, MediaType.COMIC, MediaType.SHORT_DRAMA, MediaType.MUSIC];
+    return types.map(t => ({
+      type: t,
+      key: `media_tracker_search_${langKey}_${t}_${q.trim().toLowerCase()}`,
+      tsKey: `media_tracker_search_${langKey}_${t}_${q.trim().toLowerCase()}_ts`
+    }));
+  };
+
+  const writeSearchCache = (q: string, type: MediaType | 'All', items: MediaItem[]) => {
+    try {
+      const langKey = i18n.language.split('-')[0];
+      const key = `media_tracker_search_${langKey}_${type}_${q.trim().toLowerCase()}`;
+      const tsKey = `${key}_ts`;
+      localStorage.setItem(key, JSON.stringify(items));
+      localStorage.setItem(tsKey, Date.now().toString());
+    } catch {}
+  };
 
   const filters = useMemo(() => [
     { label: t('search_page.filter_all'), value: 'All' },
@@ -124,6 +166,7 @@ export const SearchPage: React.FC = () => {
     try {
       const data = await searchMedia(query, selectedType);
       setResults(data);
+      writeSearchCache(query, selectedType, data);
       await Promise.all([hydratePosters(data), verifyResults(data, query)]);
       const duration = Math.round(performance.now() - startTs);
       useAIStore.getState().setConfig({ lastSearchDurationMs: duration, lastSearchAt: new Date().toISOString(), lastSearchQuery: query });
@@ -146,22 +189,64 @@ export const SearchPage: React.FC = () => {
 
   const verifyResults = async (items: MediaItem[], q: string) => {
     try {
-      const ctx = await performClientSideSearch(q, true);
+      const ctx = await performClientSideSearch(q, true, items && items.length > 0 ? items[0].type : 'All');
       if (!ctx) return;
       const arr = JSON.parse(ctx);
       if (!Array.isArray(arr)) return;
-      const yearMap = new Map<string, string>();
+      const idx = new Map<string, any>();
       for (const r of arr) {
         const p = processSearchResult(r.title || '', r.snippet || '');
-        yearMap.set(p.title.toLowerCase(), p.year);
+        idx.set(p.title.toLowerCase(), { raw: r, meta: p });
       }
-      setResults(prev => prev.map(it => {
-        const y = yearMap.get(it.title.toLowerCase());
-        if (y && (!it.releaseDate || it.releaseDate.length < 4 || it.releaseDate !== y)) {
-          return { ...it, releaseDate: y };
-        }
-        return it;
-      }));
+      const pickNames = (text: string) => {
+        return text
+          .split(/[,，、;；\s]+/)
+          .map(s => s.trim())
+          .filter(Boolean)
+          .slice(0, 5);
+      };
+      setResults(prev => {
+        const mapped = prev.map(it => {
+          const rec = idx.get(it.title.toLowerCase());
+          if (!rec) return it;
+          const { raw, meta } = rec;
+          const snip: string = (raw.snippet || '').toString();
+          const lower = snip.toLowerCase();
+          let director = it.directorOrAuthor || '';
+          let cast: string[] = Array.isArray(it.cast) ? it.cast : [];
+          let desc = it.description || '';
+          const y = meta.year;
+          const m1 = snip.match(/导演[:：]\s*([^。；;\n]+)/);
+          const m2 = snip.match(/(Director|Directors)[:\-–—]\s*([^.;\n]+)/i);
+          const m3 = snip.match(/(Author|作者)[:：\-–—]\s*([^.;。；\n]+)/i);
+          const c1 = snip.match(/主演[:：]\s*([^。；;\n]+)/);
+          const c2 = snip.match(/演员[:：]\s*([^。；;\n]+)/);
+          const c3 = snip.match(/配音[:：]\s*([^。；;\n]+)/);
+          const c4 = snip.match(/(Stars?|Cast|Starring)[:\-–—]?\s*([^.;\n]+)/i);
+          if (!director) {
+            if (m1 && m1[1]) director = m1[1].trim();
+            else if (m2 && m2[2]) director = m2[2].trim();
+            else if (m3 && m3[2]) director = m3[2].trim();
+          }
+          if (!cast || cast.length === 0) {
+            const rawCast = c1?.[1] || c2?.[1] || c3?.[1] || c4?.[2] || '';
+            if (rawCast) cast = pickNames(rawCast.replace(/^(and|with)\s+/i, ''));
+          }
+          if (!desc || desc.length < 60) {
+            desc = snip.trim();
+          }
+          const next: MediaItem = { ...it };
+          if (y && (!next.releaseDate || next.releaseDate.length < 4 || next.releaseDate !== y)) {
+            next.releaseDate = y;
+          }
+          if (director) next.directorOrAuthor = director;
+          if (cast && cast.length > 0) next.cast = cast;
+          if (desc) next.description = desc;
+          return next;
+        });
+        try { writeSearchCache(q, selectedType, mapped); } catch {}
+        return isMountedRef.current ? mapped : prev;
+      });
     } catch {}
   };
 
@@ -174,13 +259,45 @@ export const SearchPage: React.FC = () => {
         try {
           const url = await fetchPosterFromSearch(item.title, year, item.type);
           if (url) {
-            setResults(prev => prev.map(r => r.id === item.id ? { ...r, posterUrl: url } : r));
+            setResults(prev => {
+              const mapped = prev.map(r => r.id === item.id ? { ...r, posterUrl: url } : r);
+              try { writeSearchCache(query, selectedType, mapped); } catch {}
+              return isMountedRef.current ? mapped : prev;
+            });
           }
         } catch {}
       }
     };
     await Promise.all([worker(), worker(), worker()]);
   };
+
+  useEffect(() => {
+    const lastQ = useAIStore.getState().lastSearchQuery || '';
+    if (!lastQ.trim()) return;
+    const keys = getSearchCacheKeys(lastQ);
+    let best: { key: string; ts: number; type: MediaType | 'All' } | null = null;
+    for (const k of keys) {
+      try {
+        const tsStr = localStorage.getItem(k.tsKey);
+        const dataStr = localStorage.getItem(k.key);
+        if (tsStr && dataStr) {
+          const ts = parseInt(tsStr, 10);
+          if (!isNaN(ts)) {
+            if (!best || ts > best.ts) best = { key: k.key, ts, type: k.type };
+          }
+        }
+      } catch {}
+    }
+    if (best) {
+      try {
+        const arr = JSON.parse(localStorage.getItem(best.key) || '[]');
+        if (Array.isArray(arr) && arr.length > 0) {
+          setResults(arr);
+          setIsTrending(false);
+        }
+      } catch {}
+    }
+  }, []);
 
   const onAddToCollection = (item: MediaItem, category: CollectionCategory) => {
     addToCollection(item, category);

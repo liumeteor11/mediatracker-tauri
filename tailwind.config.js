@@ -32,6 +32,12 @@ export default {
         sans: ['system-ui', 'sans-serif'],
         theme: ['var(--font-theme)', 'sans-serif'],
       },
+      borderRadius: {
+        'theme': 'var(--radius-theme)',
+      },
+      boxShadow: {
+        'theme': 'var(--shadow-color)',
+      },
       animation: {
         'fade-in': 'fadeIn 0.5s ease-out',
         'slide-in-from-bottom-2': 'slideInFromBottom 0.3s ease-out',

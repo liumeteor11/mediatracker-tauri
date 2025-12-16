@@ -67,8 +67,8 @@ fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) 
             let builder = Client::builder()
                 .tcp_nodelay(true)
                 .user_agent("MediaTracker/1.0")
-                .connect_timeout(Duration::from_secs(7))
-                .timeout(Duration::from_secs(20))
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(120))
                 .proxy(reqwest::Proxy::all(url).ok()?);
             return builder.build().ok();
         }
@@ -81,8 +81,8 @@ fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) 
         let mut builder = Client::builder()
             .tcp_nodelay(true)
             .user_agent("MediaTracker/1.0")
-            .connect_timeout(Duration::from_secs(7))
-            .timeout(Duration::from_secs(20));
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(120));
         let mut any = false;
         if let Some(a) = all {
             if !a.is_empty() {
@@ -129,8 +129,8 @@ fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) 
                         let mut builder = Client::builder()
                             .tcp_nodelay(true)
                             .user_agent("MediaTracker/1.0")
-                            .connect_timeout(Duration::from_secs(7))
-                            .timeout(Duration::from_secs(20));
+                            .connect_timeout(Duration::from_secs(10))
+                            .timeout(Duration::from_secs(120));
                         let mut have = false;
                         if let Some(s) = socks_u { if let Ok(p) = reqwest::Proxy::all(s) { builder = builder.proxy(p); have = true; } }
                         else {
@@ -212,9 +212,15 @@ async fn serper_search(client: &Client, query: &str, api_key: &str, search_type:
         .json(&serde_json::json!({ "q": query }))
         .send();
     let resp = tokio::time::timeout(std::time::Duration::from_secs(12), fut)
-        .await??
-        .json::<Value>()
-        .await?;
+        .await??;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Serper API Error ({}): {}", status, text).into());
+    }
+
+    let resp = resp.json::<Value>().await?;
         
     let mut results = Vec::new();
     
@@ -262,6 +268,44 @@ async fn serper_search(client: &Client, query: &str, api_key: &str, search_type:
                     metadata: Some(Value::Object(metadata)),
                 });
             }
+        }
+    }
+    Ok(results)
+}
+
+async fn bing_image_search(client: &Client, query: &str, api_key: &str) -> Result<Vec<SearchResultItem>, Box<dyn Error>> {
+    let url = format!(
+        "https://api.bing.microsoft.com/v7.0/images/search?q={}&count=10&safeSearch=Moderate",
+        urlencoding::encode(query)
+    );
+    let fut = client
+        .get(&url)
+        .header("Ocp-Apim-Subscription-Key", api_key)
+        .header("Accept", "application/json")
+        .send();
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(12), fut)
+        .await??;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Bing Image API Error ({}): {}", status, text).into());
+    }
+    let v = resp.json::<Value>().await?;
+    let mut results = Vec::new();
+    if let Some(arr) = v.get("value").and_then(|x| x.as_array()) {
+        for item in arr {
+            let title = item.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let snippet = item.get("hostPageDomainFriendlyName").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let image_url = item.get("contentUrl").and_then(|x| x.as_str()).map(|s| s.to_string())
+                .or_else(|| item.get("thumbnailUrl").and_then(|x| x.as_str()).map(|s| s.to_string()));
+            let page_url = item.get("hostPageUrl").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            results.push(SearchResultItem {
+                title,
+                snippet,
+                link: page_url,
+                image: image_url,
+                metadata: None
+            });
         }
     }
     Ok(results)
@@ -389,6 +433,77 @@ async fn duckduckgo_search(client: &Client, query: &str) -> Result<Vec<SearchRes
 }
 
 #[command]
+async fn douban_cover(title: String, kind: Option<String>, state: State<'_, AppState>) -> Result<String, String> {
+    let q = urlencoding::encode(&title);
+    // Prefer movie search, then book
+    let urls = vec![
+        format!("https://movie.douban.com/subject_search?search_text={}&cat=1002", q),
+        format!("https://book.douban.com/subject_search?search_text={}&cat=1001", q),
+        format!("https://www.douban.com/search?q={}", q)
+    ];
+    // Helper: extract first subject URL via simple patterns
+    fn find_subject_url(body: &str) -> Option<String> {
+        let keys = ["https://movie.douban.com/subject/", "https://book.douban.com/subject/"];
+        for k in keys.iter() {
+            if let Some(idx) = body.find(k) {
+                // read until next quote
+                let tail = &body[idx..];
+                let end = tail.find('"').unwrap_or_else(|| tail.len());
+                let url = &tail[..end];
+                if url.contains("/subject/") { return Some(url.to_string()); }
+            }
+        }
+        None
+    }
+    // Helper: parse og:image from subject page
+    fn find_og_image(body: &str) -> Option<String> {
+        let pat = r#"property="og:image""#;
+        if let Some(i) = body.find(pat) {
+            let tail = &body[i..];
+            if let Some(ci) = tail.find("content=\"") {
+                let rest = &tail[ci + 9..];
+                if let Some(end) = rest.find('"') {
+                    let img = &rest[..end];
+                    if !img.is_empty() { return Some(img.to_string()); }
+                }
+            }
+        }
+        None
+    }
+    // 1) Fetch search page(s) using direct client (domestic)
+    let mut subject_url: Option<String> = None;
+    for u in urls {
+        if subject_url.is_some() { break; }
+        let fut = state.direct_client.get(&u).send();
+        let res = tokio::time::timeout(std::time::Duration::from_secs(8), fut).await;
+        if let Ok(Ok(resp)) = res {
+            if let Ok(text) = resp.text().await {
+                if let Some(su) = find_subject_url(&text) {
+                    subject_url = Some(su);
+                    break;
+                }
+            }
+        }
+    }
+    // 2) Fetch subject page and extract og:image
+    if let Some(su) = subject_url {
+        let fut = state.direct_client.get(&su).send();
+        if let Ok(Ok(resp)) = tokio::time::timeout(std::time::Duration::from_secs(8), fut).await {
+            if let Ok(text) = resp.text().await {
+                if let Some(img) = find_og_image(&text) {
+                    let body = serde_json::json!({ "ok": true, "url": su, "image": img }).to_string();
+                    return Ok(body);
+                }
+            }
+        }
+        let body = serde_json::json!({ "ok": false, "url": su }).to_string();
+        return Ok(body);
+    }
+    Ok(serde_json::json!({ "ok": false }).to_string())
+}
+
+
+#[command]
 async fn web_search(query: String, config: SearchConfig, state: State<'_, AppState>) -> Result<String, String> {
     println!("Rust web_search called. Query: {}, Provider: {}, Type: {:?}", query, config.provider, config.search_type);
     
@@ -417,9 +532,20 @@ async fn web_search(query: String, config: SearchConfig, state: State<'_, AppSta
                 return Err("Yandex image search not supported".to_string());
             }
             if let (Some(key), Some(user)) = (&config.api_key, &config.user) {
-                yandex_search(client, &query, user, key).await
+                yandex_search(&state.direct_client, &query, user, key).await
             } else {
                 return Err("Missing Yandex API Key or User".to_string());
+            }
+        },
+        "bing" => {
+            if search_type == Some("image") {
+                if let Some(key) = &config.api_key {
+                    bing_image_search(client, &query, key).await
+                } else {
+                    return Err("Missing Bing API Key".to_string());
+                }
+            } else {
+                Err("Bing text search not supported".into())
             }
         },
         "duckduckgo" => duckduckgo_search(client, &query).await,
@@ -433,6 +559,96 @@ async fn web_search(query: String, config: SearchConfig, state: State<'_, AppSta
             Err(format!("Search failed: {}", e))
         }
     }
+}
+
+#[command]
+async fn test_search_provider(config: SearchConfig, state: State<'_, AppState>) -> Result<String, String> {
+    let start = std::time::Instant::now();
+    let q = "test";
+    let res = match config.provider.as_str() {
+        "google" => {
+            if let (Some(key), Some(cx)) = (&config.api_key, &config.cx) {
+                google_search(&state.proxy_client, q, key, cx, Some("text")).await
+            } else { Err("Missing Google API Key or CX".into()) }
+        },
+        "serper" => {
+            if let Some(key) = &config.api_key {
+                serper_search(&state.proxy_client, q, key, Some("text")).await
+            } else { Err("Missing Serper API Key".into()) }
+        },
+        "yandex" => {
+            if let (Some(key), Some(user)) = (&config.api_key, &config.user) {
+                yandex_search(&state.direct_client, q, user, key).await
+            } else { Err("Missing Yandex API Key or User".into()) }
+        },
+        _ => Err("Unsupported search provider".into()),
+    };
+    let elapsed = start.elapsed().as_millis() as u64;
+    match res {
+        Ok(items) => {
+            let body = serde_json::json!({
+                "ok": true,
+                "latency_ms": elapsed,
+                "provider": config.provider,
+                "count": items.len()
+            });
+            Ok(body.to_string())
+        },
+        Err(e) => {
+            let body = serde_json::json!({
+                "ok": false,
+                "latency_ms": elapsed,
+                "provider": config.provider,
+                "error": e.to_string()
+            });
+            Ok(body.to_string())
+        }
+    }
+}
+
+#[command]
+async fn test_omdb(api_key: String, state: State<'_, AppState>) -> Result<String, String> {
+    let start = std::time::Instant::now();
+    let url = format!("https://www.omdbapi.com/?t={}&y={}&apikey={}", urlencoding::encode("Inception"), urlencoding::encode("2010"), urlencoding::encode(&api_key));
+    let resp = state.direct_client.get(&url).send().await.map_err(|e| e.to_string())?;
+    let elapsed = start.elapsed().as_millis() as u64;
+    let ok = resp.status().is_success();
+    let status = resp.status().as_u16();
+    let mut poster = String::new();
+    if ok {
+        if let Ok(v) = resp.json::<Value>().await {
+            poster = v.get("Poster").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        }
+    }
+    let body = serde_json::json!({
+        "ok": ok,
+        "status": status,
+        "latency_ms": elapsed,
+        "poster": poster
+    });
+    Ok(body.to_string())
+}
+#[command]
+async fn wiki_pageimages(title: String, lang_zh: bool, state: State<'_, AppState>) -> Result<String, String> {
+    let base = if lang_zh { "https://zh.wikipedia.org/w/api.php" } else { "https://en.wikipedia.org/w/api.php" };
+    let url = format!(
+        "{}?action=query&prop=pageimages&piprop=thumbnail|original&pithumbsize=1024&format=json&titles={}",
+        base,
+        urlencoding::encode(&title)
+    );
+    let fut1 = state.direct_client.get(&url).send();
+    let try_direct = tokio::time::timeout(std::time::Duration::from_secs(8), fut1).await;
+    if let Ok(Ok(resp)) = try_direct {
+        let body = resp.text().await.map_err(|e| e.to_string())?;
+        return Ok(body);
+    }
+    let fut2 = state.proxy_client.get(&url).send();
+    let resp2 = tokio::time::timeout(std::time::Duration::from_secs(12), fut2)
+        .await
+        .map_err(|_| "Timeout".to_string())?
+        .map_err(|e| e.to_string())?;
+    let body2 = resp2.text().await.map_err(|e| e.to_string())?;
+    Ok(body2)
 }
 
 #[command]
@@ -507,19 +723,50 @@ async fn ai_chat(messages: Vec<Value>, temperature: f32, tools: Option<Value>, c
         println!("AI Request Sent (Headers Received), Duration: {:?}", start.elapsed());
 
         if resp.status().is_success() {
-            let json_resp: Value = resp.json().await.map_err(|e| format!("Failed to parse JSON: {}", e))?;
-            println!("AI Request Complete, Total Duration: {:?}", start.elapsed());
-            return Ok(json_resp.to_string());
+            // Capture status before consuming response
+            let _status_ok = resp.status().as_u16();
+            // Read bytes once; on failure, treat as transient and retry
+            match resp.bytes().await {
+                Ok(body_bytes) => {
+                    match serde_json::from_slice::<Value>(&body_bytes) {
+                        Ok(json_resp) => {
+                            println!("AI Request Complete (JSON bytes), Total Duration: {:?}", start.elapsed());
+                            return Ok(json_resp.to_string());
+                        },
+                        Err(parse_err) => {
+                            println!("AI Response not JSON (bytes), wrapping as text. Err: {}", parse_err);
+                            let body_text = String::from_utf8_lossy(&body_bytes).to_string();
+                            let fallback = serde_json::json!({
+                                "choices": [ { "message": { "content": body_text } } ]
+                            });
+                            return Ok(fallback.to_string());
+                        }
+                    }
+                },
+                Err(read_err) => {
+                    if attempt < max_retries - 1 {
+                        let delay_ms = 2000u64 * (1u64 << attempt);
+                        println!("Body read failed. Backing off for {} ms before retry {}... Err: {}", delay_ms, attempt + 2, read_err);
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        continue;
+                    }
+                    return Err(format!("Failed to read body bytes: {}", read_err));
+                }
+            }
         } else {
             let status = resp.status().as_u16();
-            let error_text = resp.text().await.unwrap_or_default();
-            if status == 429 && attempt < max_retries - 1 {
+            let err_body = match resp.bytes().await {
+                Ok(b) => String::from_utf8_lossy(&b).to_string(),
+                Err(_) => String::new(),
+            };
+            if (status == 429 || (status >= 500 && status < 600)) && attempt < max_retries - 1 {
                 let delay_ms = 2000u64 * (1u64 << attempt); // 2000, 4000, 8000
-                println!("Rate limited (429). Backing off for {} ms before retry {}...", delay_ms, attempt + 2);
+                let reason = if status == 429 { "Rate limited (429)" } else { "Server error (5xx)" };
+                println!("{} Backing off for {} ms before retry {}...", reason, delay_ms, attempt + 2);
                 tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                 continue;
             }
-            return Err(format!("API Error ({}): {}", status, error_text));
+            return Err(format!("API Error ({}): {}", status, err_body));
         }
     }
 
@@ -580,6 +827,44 @@ fn import_collection(username: String, items: Vec<MediaItem>, db: State<Database
     db.import_for_user(&username, items)
 }
 
+#[command]
+fn export_collection(
+    username: String,
+    target_dir: Option<String>,
+    redact_sensitive: Option<bool>,
+    db: State<Database>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let items = db.get_all_for_user(&username)?;
+    let redact = redact_sensitive.unwrap_or(true);
+    let mut export_items = Vec::new();
+    if redact {
+        for mut it in items.clone() {
+            it.user_review = None;
+            it.notification_enabled = None;
+            export_items.push(it);
+        }
+    } else {
+        export_items = items;
+    }
+
+    let base_dir = if let Some(dir) = target_dir {
+        std::path::PathBuf::from(dir)
+    } else {
+        app.path()
+            .document_dir()
+            .map_err(|e| e.to_string())?
+    };
+
+    let out_dir = base_dir.join("MediaTracker").join(&username);
+    std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+    let out_path = out_dir.join("collection.json");
+    let content = serde_json::to_string_pretty(&export_items).map_err(|e| e.to_string())?;
+    std::fs::write(&out_path, content).map_err(|e| e.to_string())?;
+
+    Ok(out_path.to_string_lossy().to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -592,8 +877,8 @@ fn main() {
                 .tcp_nodelay(true)
                 .user_agent("MediaTracker/1.0")
                 .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)))
-                .connect_timeout(std::time::Duration::from_secs(7))
-                .timeout(std::time::Duration::from_secs(20))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(120))
                 .build()
                 .unwrap_or_else(|_| Client::new());
 
@@ -604,7 +889,7 @@ fn main() {
                 .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)))
                 .no_proxy() // <--- CRITICAL: Bypass system proxy
                 .connect_timeout(std::time::Duration::from_secs(5))
-                .timeout(std::time::Duration::from_secs(20))
+                .timeout(std::time::Duration::from_secs(120))
                 .build()
                 .unwrap_or_else(|_| Client::new());
             
@@ -621,11 +906,16 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             web_search, 
             ai_chat,
+            wiki_pageimages,
+            douban_cover,
             test_proxy,
+            test_search_provider,
+            test_omdb,
             get_collection,
             save_item,
             remove_item,
             import_collection,
+            export_collection,
             register_user,
             login_user
         ])

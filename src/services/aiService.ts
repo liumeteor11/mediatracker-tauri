@@ -13,6 +13,14 @@ declare global {
   }
 }
 
+const isTauriEnv = typeof window !== 'undefined' && (
+  ('__TAURI__' in window) || ('__TAURI_INTERNALS__' in window) ||
+  (typeof window.location !== 'undefined' && (
+    window.location.protocol === 'tauri:' ||
+    (typeof window.location.origin === 'string' && window.location.origin.startsWith('http://tauri.localhost'))
+  ))
+);
+
 const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit & { timeoutMs?: number } = {}) => {
   const ms = init.timeoutMs ?? 12000;
   const controller = new AbortController();
@@ -68,28 +76,49 @@ const getPlaceholder = (type: string = 'Media') => {
   return `https://placehold.co/600x900/1a1a1a/FFF?text=${encodeURIComponent(type)}`;
 };
 
+const FRANCHISE_ALIASES: Record<string, string[]> = {
+  '疯狂动物城': ['动物方城市', 'Zootopia', 'Zootropolis'],
+  'Zootopia': ['疯狂动物城', 'Zootropolis'],
+  'Zootropolis': ['Zootopia', '疯狂动物城'],
+  '速度与激情': ['速激', 'Fast & Furious', 'The Fast and the Furious'],
+  'Fast & Furious': ['Fast and Furious', 'The Fast and the Furious', '速度与激情', '速激'],
+  '复仇者联盟': ["Avengers", "Marvel's The Avengers"],
+  'Avengers': ['复仇者联盟', "Marvel's The Avengers"],
+  '哈利·波特': ['哈利波特', 'Harry Potter'],
+  'Harry Potter': ['哈利·波特', '哈利波特'],
+  '蜘蛛侠': ['Spiderman', 'Spider-Man'],
+  'Spider-Man': ['蜘蛛侠', 'Spiderman'],
+  '玩具总动员': ['Toy Story'],
+  'Toy Story': ['玩具总动员']
+};
+
 const prefetchedImages = new Map<string, string>();
 
 const fetchPosterFromOMDB = async (title: string, year: string): Promise<string | undefined> => {
-  if (!OMDB_API_KEY) return undefined;
-
+  const s = useAIStore.getState();
+  const key = (s.getDecryptedOmdbKey && s.getDecryptedOmdbKey()) || OMDB_API_KEY;
+  if (!key) return undefined;
   try {
     const cleanYear = year ? year.split('-')[0].trim() : '';
-    const url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&y=${cleanYear}&apikey=${OMDB_API_KEY}`;
-    
+    const url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&y=${cleanYear}&apikey=${key}`;
     const response = await fetch(url);
     const data = await response.json();
-
     if (data.Response === "True" && data.Poster && data.Poster !== "N/A") {
       return data.Poster;
     }
-  } catch (error) {
-    console.warn(`Failed to fetch poster for ${title} from OMDB`, error);
-  }
+  } catch (error) {}
   return undefined;
 };
 
-export const performClientSideSearch = async (query: string, force: boolean = false): Promise<string> => {
+export const performClientSideSearch = async (
+    query: string,
+    force: boolean = false,
+    preferredType?: MediaType | 'All'
+): Promise<string> => {
+    const normalizeProvider = (sp: any): string => {
+        const v = String(sp || '').toLowerCase();
+        return (v === 'google' || v === 'serper' || v === 'yandex') ? v : 'duckduckgo';
+    };
     const { 
         enableSearch, 
         searchProvider, 
@@ -107,7 +136,8 @@ export const performClientSideSearch = async (query: string, force: boolean = fa
         provider: searchProvider,
         apiKey: searchProvider === 'google' ? getDecryptedGoogleKey() : 
                 searchProvider === 'serper' ? getDecryptedSerperKey() :
-                searchProvider === 'yandex' ? getDecryptedYandexKey() : undefined,
+                searchProvider === 'yandex' ? getDecryptedYandexKey() : 
+                undefined,
         cx: googleSearchCx,
         user: yandexSearchLogin
     };
@@ -115,28 +145,127 @@ export const performClientSideSearch = async (query: string, force: boolean = fa
     try {
         const isChinese = i18n.language.startsWith('zh');
         const shortOrNumeric = query.trim().length < 3 || /^[0-9\s]+$/.test(query.trim());
-        let q = query;
+        const base = query.trim();
+        const variants = new Set<string>();
+        variants.add(base);
         if (shortOrNumeric) {
-            q = isChinese 
-                ? `${query} 电影 OR 电视剧 OR 小说 OR 漫画 OR 专辑 -新闻 -评测 -发布会 -价格 -手机 -iPhone -Apple -三星 -华为`
-                : `${query} movie OR tv series OR novel OR comic OR album -news -review -price -iphone -apple -samsung -huawei`;
+            variants.add(isChinese 
+                ? `${base} 电影 OR 电视剧 OR 小说 OR 漫画 OR 专辑 -新闻 -评测 -发布会 -价格 -手机 -iPhone -Apple -三星 -华为`
+                : `${base} movie OR tv series OR novel OR comic OR album -news -review -price -iphone -apple -samsung -huawei`);
         }
+        const hasSeq = /(^|\s)(1|2|第一|第二|续集)($|\s)/.test(base);
+        if (!hasSeq) {
+            if (isChinese) {
+                variants.add(`${base} 第一部`);
+                variants.add(`${base} 第二部`);
+                variants.add(`${base} 续集`);
+            } else {
+                variants.add(`${base} 1`);
+                variants.add(`${base} 2`);
+                variants.add(`${base} sequel`);
+            }
+        }
+        Object.entries(FRANCHISE_ALIASES).forEach(([k, arr]) => {
+            if (base.includes(k)) {
+                arr.forEach(v => variants.add(v));
+            }
+        });
+        const isAllSearch = !preferredType || preferredType === 'All';
+        if (isAllSearch) {
+            variants.add(isChinese 
+                ? `${base} 电影 OR 电视剧 OR 小说 OR 漫画 OR 专辑`
+                : `${base} movie OR tv series OR novel OR comic OR album`
+            );
+        }
+        const qList = Array.from(variants).slice(0, 4);
+
+        const inferType = (): MediaType | 'All' => {
+            if (preferredType) return preferredType as MediaType | 'All';
+            const l = base.toLowerCase();
+            const zhMovieTv = ['电影','电视剧','短剧','第','季','集'];
+            const enMovieTv = ['movie','film','tv series','season','episode','s1','s2','s3'];
+            const zhBook = ['小说','书','书籍'];
+            const enBook = ['novel','book'];
+            const zhComic = ['漫画'];
+            const enComic = ['comic','manga'];
+            const zhMusic = ['专辑','音乐'];
+            const enMusic = ['album','music'];
+            const hasAny = (arr: string[]) => arr.some(k => l.includes(k));
+            if (hasAny(isChinese ? zhMovieTv : enMovieTv)) return MediaType.TV_SERIES; // prefer series when season cues present
+            if (hasAny(['movie','film','电影'])) return MediaType.MOVIE;
+            if (hasAny(isChinese ? zhBook : enBook)) return MediaType.BOOK;
+            if (hasAny(isChinese ? zhComic : enComic)) return MediaType.COMIC;
+            if (hasAny(isChinese ? zhMusic : enMusic)) return MediaType.MUSIC;
+            return 'All';
+        };
+
+        const effType = inferType();
+        const domsFromStore = (() => {
+            const s = useAIStore.getState();
+            if (effType === MediaType.MOVIE || effType === MediaType.TV_SERIES) return s.authoritativeDomains.movie_tv || [];
+            if (effType === MediaType.BOOK) return s.authoritativeDomains.book || [];
+            if (effType === MediaType.COMIC) return s.authoritativeDomains.comic || [];
+            if (effType === MediaType.MUSIC) return s.authoritativeDomains.music || [];
+            return [];
+        })();
+        const precisionDomains = domsFromStore.map(d => `site:${d}`);
+        const isEnglishUI = (typeof i18n?.language === 'string') && i18n.language.startsWith('en');
+        const englishTypeTerm = (t: MediaType | 'All') => {
+            switch (t) {
+                case MediaType.MOVIE: return 'movie';
+                case MediaType.TV_SERIES: return 'tv series';
+                case MediaType.BOOK: return 'novel';
+                case MediaType.COMIC: return 'comic';
+                case MediaType.MUSIC: return 'album';
+                case MediaType.SHORT_DRAMA: return 'short drama';
+                default: return '';
+            }
+        };
+        const toEnglishBase = (text: string) => {
+            const t = text.trim();
+            const aliases = FRANCHISE_ALIASES[t] || [];
+            const enAlias = aliases.find(a => /[a-z]/i.test(a));
+            return enAlias || t;
+        };
+        const precisionQueries: string[] = [];
+        for (const d of precisionDomains) {
+            const englishDomain = d.includes('imdb.com') || d.includes('themoviedb.org') || d.includes('tvmaze.com') || (d.includes('wikipedia.org') && !d.includes('zh.wikipedia.org')) || d.includes('goodreads.com') || d.includes('discogs.com') || d.includes('musicbrainz.org');
+            if (englishDomain && !isEnglishUI) {
+                const baseEn = toEnglishBase(base);
+                if (effType === 'All') {
+                    const hints = ['movie','tv series','novel','comic','album'];
+                    for (const h of hints) {
+                        precisionQueries.push(`${d} ${baseEn} ${h}`);
+                    }
+                } else {
+                    const typeHint = englishTypeTerm(effType);
+                    const q = typeHint ? `${baseEn} ${typeHint}` : baseEn;
+                    precisionQueries.push(`${d} ${q}`);
+                }
+            } else {
+                precisionQueries.push(`${d} ${base}`);
+            }
+        }
+
         const isMediaCandidate = (title: string, snippet: string): boolean => {
             const text = `${title} ${snippet}`.toLowerCase();
             const positives = isChinese 
                 ? ['电影','电视剧','短剧','漫画','小说','书籍','专辑','音乐','原声','ost']
                 : ['movie','film','tv series','season','episode','novel','book','comic','manga','album','music','soundtrack','ost'];
-            const negatives = ['iphone','apple','samsung','huawei','vs','review','price','spec','launch','press','event','news','新闻','发布会','评测','开箱','手机','参数','报价','rumor','快讯'];
-            return positives.some(k => text.includes(k)) && !negatives.some(k => text.includes(k));
+            if (effType === 'All') {
+                const hasYear = /(19\d{2}|20\d{2})/.test(text);
+                return positives.some(k => text.includes(k)) || hasYear;
+            }
+            return positives.some(k => text.includes(k));
         };
 
         // Tauri Mode
-        if (window.__TAURI__) {
+        if (isTauriEnv) {
             try {
                 // Map config to Rust struct naming conventions
                 const { useSystemProxy, getProxyUrl } = useAIStore.getState();
                 const rustConfig = {
-                    provider: searchProvider,
+                    provider: normalizeProvider(searchProvider),
                     api_key: searchConfig.apiKey,
                     cx: googleSearchCx,
                     user: yandexSearchLogin,
@@ -144,12 +273,104 @@ export const performClientSideSearch = async (query: string, force: boolean = fa
                     proxy_url: getProxyUrl(),
                     use_system_proxy: useSystemProxy
                 };
-                
-                const resultStr = await invoke<string>("web_search", { query, config: rustConfig });
-                return resultStr; // Rust returns JSON string directly
+                let merged: any[] = [];
+                const topN = (effType === MediaType.MOVIE || effType === MediaType.TV_SERIES) ? 3 : 2;
+                const ordered = [...precisionQueries.slice(0, topN), ...qList];
+                const uniq = new Map<string, any>();
+                for (const qv of ordered) {
+                    const start = performance.now();
+                    const resultStr = await invoke<string>("web_search", { query: qv, config: rustConfig });
+                    try {
+                        const arr = JSON.parse(resultStr);
+                        if (Array.isArray(arr)) {
+                            merged = merged.concat(arr);
+                        }
+                    } catch {}
+                    try {
+                        useAIStore.getState().appendLog({
+                            id: uuidv4(),
+                            ts: Date.now(),
+                            channel: 'search',
+                            provider: searchProvider,
+                            query: qv,
+                            request: { config: { provider: rustConfig.provider, cx: rustConfig.cx, user: rustConfig.user, search_type: rustConfig.search_type } },
+                            response: resultStr,
+                            durationMs: Math.round(performance.now() - start),
+                            searchType: 'text'
+                        });
+                    } catch {}
+                    const filteredStep = (effType === 'All') ? merged : merged.filter((it: any) => isMediaCandidate(it.title, it.snippet));
+                    for (const it of filteredStep) {
+                        const pr = processSearchResult(it.title || '', it.snippet || '');
+                        const key = `${pr.title}|${pr.year}`;
+                        if (!uniq.has(key)) uniq.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
+                    }
+                    if (uniq.size >= 8) break;
+                }
+                const out = Array.from(uniq.values()).slice(0, 8);
+                if (out.length > 0) return JSON.stringify(out);
+                const ddgConfig = {
+                    provider: 'duckduckgo',
+                    api_key: undefined,
+                    cx: undefined,
+                    user: undefined,
+                    search_type: "text",
+                    proxy_url: useAIStore.getState().getProxyUrl(),
+                    use_system_proxy: useAIStore.getState().useSystemProxy
+                };
+                let ddgMerged: any[] = [];
+                const uniqD = new Map<string, any>();
+                for (const qv of ordered) {
+                    const start = performance.now();
+                    let resultStr = "";
+                    try {
+                        resultStr = await invoke<string>("web_search", { query: qv, config: ddgConfig });
+                        try {
+                            useAIStore.getState().appendLog({
+                                id: uuidv4(),
+                                ts: Date.now(),
+                                channel: 'search',
+                                provider: 'duckduckgo',
+                                query: qv,
+                                request: { config: { provider: ddgConfig.provider, search_type: ddgConfig.search_type } },
+                                response: resultStr || "",
+                                durationMs: Math.round(performance.now() - start),
+                                searchType: 'text'
+                            });
+                        } catch {}
+                        try {
+                            const arr = JSON.parse(resultStr);
+                            if (Array.isArray(arr)) {
+                                ddgMerged = ddgMerged.concat(arr);
+                            }
+                        } catch {}
+                    } catch {}
+                    const filteredStep = (effType === 'All') ? ddgMerged : ddgMerged.filter((it: any) => isMediaCandidate(it.title, it.snippet));
+                    for (const it of filteredStep) {
+                        const pr = processSearchResult(it.title || '', it.snippet || '');
+                        const key = `${pr.title}|${pr.year}`;
+                        if (!uniqD.has(key)) uniqD.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
+                    }
+                    if (uniqD.size >= 8) break;
+                }
+                const outD = Array.from(uniqD.values()).slice(0, 8);
+                if (outD.length > 0) return JSON.stringify(outD);
             } catch (tauriError) {
                 console.error("Tauri search failed:", tauriError);
-                return "[]";
+                try {
+                    useAIStore.getState().appendLog({
+                        id: uuidv4(),
+                        ts: Date.now(),
+                        channel: 'search',
+                        provider: searchProvider,
+                        query: base,
+                        request: { config: { provider: searchProvider, cx: googleSearchCx, user: yandexSearchLogin, search_type: "text" } },
+                        response: { error: (tauriError as any)?.message || String(tauriError) },
+                        durationMs: undefined,
+                        searchType: 'text'
+                    });
+                } catch {}
+                // Fall through to web-mode Wikipedia fallback
             }
         }
         
@@ -157,65 +378,158 @@ export const performClientSideSearch = async (query: string, force: boolean = fa
         if (searchProvider === 'google') {
             const apiKey = getDecryptedGoogleKey();
             if (apiKey && googleSearchCx) {
-            const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(q)}`;
-            const res = await fetchWithTimeout(url, { timeoutMs: 12000 });
-            if (res.ok) {
-                const data = await res.json();
-                if (data.items) {
-                    const mapped = data.items.map((item: any) => ({
-                        title: item.title,
-                        snippet: item.snippet,
-                        link: item.link,
-                        image: item.pagemap?.cse_image?.[0]?.src
-                    })).filter((it: any) => isMediaCandidate(it.title, it.snippet)).slice(0, 5);
-                    if (mapped.length > 0) return JSON.stringify(mapped);
+            let merged: any[] = [];
+            const topN = (effType === MediaType.MOVIE || effType === MediaType.TV_SERIES) ? 3 : 2;
+            const ordered = [...precisionQueries.slice(0, topN), ...qList];
+            const uniq = new Map<string, any>();
+            for (const qv of ordered) {
+                const start = performance.now();
+                const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(qv)}`;
+                const res = await fetchWithTimeout(url, { timeoutMs: 12000 });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.items) {
+                        merged = merged.concat(data.items.map((item: any) => ({
+                            title: item.title,
+                            snippet: item.snippet,
+                            link: item.link,
+                            image: item.pagemap?.cse_image?.[0]?.src
+                        })));
+                    }
                 }
+                try {
+                    useAIStore.getState().appendLog({
+                        id: uuidv4(),
+                        ts: Date.now(),
+                        channel: 'search',
+                        provider: 'google',
+                        query: qv,
+                        request: { url },
+                        response: res.ok ? merged.slice(-Math.max(0, Math.min(10, merged.length))) : { status: res.status },
+                        durationMs: Math.round(performance.now() - start),
+                        searchType: 'text'
+                    });
+                } catch {}
+                const filteredStep = merged.filter((it: any) => isMediaCandidate(it.title, it.snippet));
+                for (const it of filteredStep) {
+                    const pr = processSearchResult(it.title || '', it.snippet || '');
+                    const key = `${pr.title}|${pr.year}`;
+                    if (!uniq.has(key)) uniq.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
+                }
+                if (uniq.size >= 8) break;
+            }
+            const out = Array.from(uniq.values()).slice(0, 8);
+            if (out.length > 0) return JSON.stringify(out);
             }
         }
-    }
 
     // Serper (Web Mode)
     if (searchProvider === 'serper') {
         const apiKey = getDecryptedSerperKey();
         if (apiKey) {
-            const response = await fetchWithTimeout('https://google.serper.dev/search', {
-                method: 'POST',
-                headers: {
-                    'X-API-KEY': apiKey,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ q })
-            , timeoutMs: 12000 });
-
-            if (response.ok) {
-                const data = await response.json();
-                if (data.organic) {
-                        const mapped = data.organic.map((item: any) => ({
+            let merged: any[] = [];
+            const topN = (effType === MediaType.MOVIE || effType === MediaType.TV_SERIES) ? 3 : 2;
+            const ordered = [...precisionQueries.slice(0, topN), ...qList];
+            const uniq = new Map<string, any>();
+            for (const qv of ordered) {
+                const start = performance.now();
+                const response = await fetchWithTimeout('https://google.serper.dev/search', {
+                    method: 'POST',
+                    headers: {
+                        'X-API-KEY': apiKey,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ q: qv })
+                , timeoutMs: 12000 });
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.organic) {
+                        merged = merged.concat(data.organic.map((item: any) => ({
                             title: item.title,
                             snippet: item.snippet,
                             link: item.link,
-                            image: undefined // Serper organic usually doesn't have image
-                        })).filter((it: any) => isMediaCandidate(it.title, it.snippet)).slice(0, 5);
-                        if (mapped.length > 0) return JSON.stringify(mapped);
+                            image: undefined
+                        })));
+                    }
                 }
+                try {
+                    useAIStore.getState().appendLog({
+                        id: uuidv4(),
+                        ts: Date.now(),
+                        channel: 'search',
+                        provider: 'serper',
+                        query: qv,
+                        request: { body: { q: qv } },
+                        response: merged.slice(-Math.max(0, Math.min(10, merged.length))),
+                        durationMs: Math.round(performance.now() - start),
+                        searchType: 'text'
+                    });
+                } catch {}
+                const filteredStep = merged.filter((it: any) => isMediaCandidate(it.title, it.snippet));
+                for (const it of filteredStep) {
+                    const pr = processSearchResult(it.title || '', it.snippet || '');
+                    const key = `${pr.title}|${pr.year}`;
+                    if (!uniq.has(key)) uniq.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
+                }
+                if (uniq.size >= 8) break;
             }
+            const out = Array.from(uniq.values()).slice(0, 8);
+            if (out.length > 0) return JSON.stringify(out);
         }
     }
 
     try {
-        const res = await fetchWithTimeout(`https://zh.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(q)}&utf8=&format=json&origin=*`, { timeoutMs: 8000 });
-        if (res.ok) {
-            const data = await res.json();
-            const items = Array.isArray(data?.query?.search) ? data.query.search.slice(0, 5).map((s: any) => ({
-                title: s.title,
-                snippet: (s.snippet || '').replace(/<[^>]+>/g, ''),
-                link: `https://zh.wikipedia.org/wiki/${encodeURIComponent(s.title)}`,
-                image: undefined
-            })).filter((it: any) => isMediaCandidate(it.title, it.snippet)) : [];
-            if (items.length > 0) return JSON.stringify(items);
+        let mergedDDG: any[] = [];
+        const orderedD = [...precisionQueries.slice(0, 3), ...qList];
+        const uniqD = new Map<string, any>();
+        for (const qv of orderedD) {
+            const start = performance.now();
+            let items: any[] = [];
+            try {
+                const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(qv)}&format=json&no_redirect=1&no_html=1`;
+                const res = await fetchWithTimeout(url, { timeoutMs: 8000 });
+                if (res.ok) {
+                    const data = await res.json();
+                    const rt = Array.isArray(data?.RelatedTopics) ? data.RelatedTopics : [];
+                    const results = Array.isArray(data?.Results) ? data.Results : [];
+                    for (const r of results) {
+                        const t = r?.Text || '';
+                        const u = r?.FirstURL || '';
+                        if (t && u) items.push({ title: t, snippet: t, link: u, image: undefined });
+                    }
+                    for (const r of rt) {
+                        const t = r?.Text || '';
+                        const u = r?.FirstURL || '';
+                        if (t && u) items.push({ title: t, snippet: t, link: u, image: undefined });
+                    }
+                }
+            } catch {}
+            mergedDDG = mergedDDG.concat(items);
+            try {
+                useAIStore.getState().appendLog({
+                    id: uuidv4(),
+                    ts: Date.now(),
+                    channel: 'search',
+                    provider: 'duckduckgo',
+                    query: qv,
+                    request: { url: 'https://api.duckduckgo.com', params: { q: qv } },
+                    response: mergedDDG.slice(-Math.max(0, Math.min(10, mergedDDG.length))),
+                    durationMs: Math.round(performance.now() - start),
+                    searchType: 'text'
+                });
+            } catch {}
+            const filteredD = (effType === 'All') ? mergedDDG : mergedDDG.filter((it: any) => isMediaCandidate(it.title, it.snippet));
+            for (const it of filteredD) {
+                const pr = processSearchResult(it.title || '', it.snippet || '');
+                const key = `${pr.title}|${pr.year}`;
+                if (!uniqD.has(key)) uniqD.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
+            }
+            if (uniqD.size >= 8) break;
         }
+        const outD = Array.from(uniqD.values()).slice(0, 8);
+        if (outD.length > 0) return JSON.stringify(outD);
     } catch {}
-    
+        
         
     } catch (e) {
         console.warn("Search failed", e);
@@ -223,12 +537,139 @@ export const performClientSideSearch = async (query: string, force: boolean = fa
     return "";
 };
 
-const callAI = async (messages: any[], temperature: number = 0.7, options: { forceSearch?: boolean } = {}): Promise<string> => {
+export const testAuthoritativeDomain = async (domain: string, sampleQuery: string = 'test'): Promise<{ ok: boolean; count: number; items: any[]; error?: string }> => {
+    const { 
+        enableSearch,
+        searchProvider,
+        getDecryptedGoogleKey,
+        googleSearchCx,
+        getDecryptedSerperKey,
+        getDecryptedYandexKey,
+        yandexSearchLogin
+    } = useAIStore.getState();
+    const normalizeProvider = (sp: any): string => {
+        const v = String(sp || '').toLowerCase();
+        return (v === 'google' || v === 'serper' || v === 'yandex') ? v : 'duckduckgo';
+    };
+    if (!enableSearch) return { ok: false, count: 0, items: [], error: 'search_disabled' };
+    const d = domain.trim().toLowerCase().replace(/^site:/,'');
+    const query = `site:${d} ${sampleQuery}`;
+    try {
+        if (isTauriEnv) {
+            const { useSystemProxy, getProxyUrl } = useAIStore.getState();
+            const apiKey = searchProvider === 'google' ? getDecryptedGoogleKey() : 
+                           searchProvider === 'serper' ? getDecryptedSerperKey() :
+                           searchProvider === 'yandex' ? getDecryptedYandexKey() : undefined;
+            const rustConfig = {
+                provider: normalizeProvider(searchProvider),
+                api_key: apiKey,
+                cx: googleSearchCx,
+                user: yandexSearchLogin,
+                search_type: 'text',
+                proxy_url: getProxyUrl(),
+                use_system_proxy: useSystemProxy
+            };
+            const resultStr = await invoke<string>('web_search', { query, config: rustConfig });
+            try {
+                const arr = JSON.parse(resultStr);
+                const items = Array.isArray(arr) ? arr : [];
+                return { ok: items.length > 0, count: items.length, items };
+            } catch {
+                return { ok: false, count: 0, items: [], error: 'parse_failed' };
+            }
+        }
+        if (searchProvider === 'google') {
+            const apiKey = getDecryptedGoogleKey();
+            if (apiKey && googleSearchCx) {
+                const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(query)}`;
+                const res = await fetchWithTimeout(url, { timeoutMs: 12000 });
+                if (!res.ok) return { ok: false, count: 0, items: [], error: String(res.status) };
+                const data = await res.json();
+                const items = Array.isArray(data.items) ? data.items.map((item: any) => ({
+                    title: item.title,
+                    snippet: item.snippet,
+                    link: item.link
+                })) : [];
+                return { ok: items.length > 0, count: items.length, items };
+            }
+        }
+        if (searchProvider === 'serper') {
+            const apiKey = getDecryptedSerperKey();
+            if (apiKey) {
+                const response = await fetchWithTimeout('https://google.serper.dev/search', {
+                    method: 'POST',
+                    headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ q: query }),
+                    timeoutMs: 12000
+                });
+                if (!response.ok) return { ok: false, count: 0, items: [], error: String(response.status) };
+                const data = await response.json();
+                const items = Array.isArray(data.organic) ? data.organic.map((item: any) => ({
+                    title: item.title,
+                    snippet: item.snippet,
+                    link: item.link
+                })) : [];
+                return { ok: items.length > 0, count: items.length, items };
+            }
+        }
+        return { ok: false, count: 0, items: [], error: 'unsupported_provider_or_missing_key' };
+    } catch (e: any) {
+        return { ok: false, count: 0, items: [], error: e?.message || 'error' };
+    }
+};
+
+export const runBackgroundSearch = async (query: string, type?: MediaType | 'All'): Promise<void> => {
+    const q = (query || '').trim();
+    if (!q) return;
+    const t: MediaType | 'All' = type || 'All';
+    const start = performance.now();
+    try {
+        const items = await searchMedia(q, t);
+        const enriched = [] as MediaItem[];
+        for (const it of items) {
+            try {
+                const year = it.releaseDate ? it.releaseDate.split('-')[0] : '';
+                const url = await fetchPosterFromSearch(it.title, year, it.type);
+                if (url && (!it.customPosterUrl)) {
+                    enriched.push({ ...it, posterUrl: url });
+                } else {
+                    enriched.push(it);
+                }
+            } catch {
+                enriched.push(it);
+            }
+        }
+        try {
+            const langKey = i18n.language.split('-')[0];
+            const key = `media_tracker_search_${langKey}_${t}_${q.toLowerCase()}`;
+            const tsKey = `${key}_ts`;
+            localStorage.setItem(key, JSON.stringify(enriched));
+            localStorage.setItem(tsKey, Date.now().toString());
+        } catch {}
+        const duration = Math.round(performance.now() - start);
+        useAIStore.getState().setConfig({ lastSearchDurationMs: duration, lastSearchAt: new Date().toISOString(), lastSearchQuery: q });
+    } catch {}
+};
+
+export const refreshTrendingCache = async (): Promise<void> => {
+    try {
+        const trending = await getTrendingMedia();
+        if (Array.isArray(trending) && trending.length > 0) {
+            try {
+                localStorage.setItem('media_tracker_trending_data', JSON.stringify(trending));
+                localStorage.setItem('media_tracker_trending_ts', Date.now().toString());
+            } catch {}
+            useAIStore.getState().setTrendingCache(trending as any[]);
+        }
+    } catch {}
+};
+
+export const callAI = async (messages: any[], temperature: number = 0.7, options: { forceSearch?: boolean; configOverride?: { baseURL?: string; apiKey?: string; model?: string; provider?: AIProvider } } = {}): Promise<string> => {
     const state = useAIStore.getState();
     const { 
         provider,
-        baseUrl: baseURL, 
-        model, 
+        baseUrl: storeBaseURL, 
+        model: storeModel, 
         enableSearch,
         searchProvider,
         getDecryptedGoogleKey,
@@ -238,10 +679,13 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
         yandexSearchLogin
     } = state;
 
-    // Decrypt the API Key
-    let apiKey = state.getDecryptedApiKey();
+    const override = options.configOverride || {};
+    const effProvider: AIProvider = (override.provider as AIProvider) ?? (provider as AIProvider);
+    const baseURL = override.baseURL ?? storeBaseURL;
+    const model = override.model ?? storeModel;
 
-    // Fallback to env var if not set in store (Development convenience)
+    let apiKey = override.apiKey ?? state.getDecryptedApiKey();
+
     if (!apiKey) {
         try {
             const envKey = (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.VITE_MOONSHOT_API_KEY) ? (import.meta as any).env.VITE_MOONSHOT_API_KEY : undefined;
@@ -280,7 +724,7 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
         }
         return url;
     };
-    finalBaseURL = ensureV1IfNeeded(provider as AIProvider, finalBaseURL);
+    finalBaseURL = ensureV1IfNeeded(effProvider as AIProvider, finalBaseURL);
 
     // Proxy handling for Web Mode to avoid CORS (only in local dev)
     const isLocalDev = typeof window !== 'undefined' && /^https?:\/\/(localhost|127\.|0\.0\.0\.0)/.test(window.location.origin || '');
@@ -326,7 +770,7 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
             });
             
             return await client.chat.completions.create({
-                model: model || (provider === 'moonshot' ? "kimi-latest" : "gpt-3.5-turbo"),
+                model: model || (effProvider === 'moonshot' ? "kimi-latest" : "gpt-3.5-turbo"),
                 messages: msgs,
                 temperature: temperature,
                 tools: tools.length > 0 ? tools : undefined,
@@ -336,12 +780,10 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
     };
 
     try {
-        // Define tools based on provider
         let tools: any[] = [];
         const shouldSearch = enableSearch || options.forceSearch;
-
-        if (shouldSearch) {
-            // Unified Search Tool Strategy
+        const supportsTools = effProvider === 'moonshot';
+        if (shouldSearch && supportsTools) {
             tools = [
                 {
                     type: "function",
@@ -369,6 +811,7 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
 
         while (turnCount < MAX_TURNS) {
             let completion;
+            const startTs = performance.now();
             
             // Retry logic with Semaphore and Exponential Backoff
             const MAX_RETRIES = 3;
@@ -385,12 +828,15 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
                     break; // Success
                 } catch (apiError: any) {
                     console.error(`AI Chat API failed (Attempt ${attempt + 1}/${MAX_RETRIES})`, apiError);
-                    
-                    if (apiError.status === 429) {
+                    const status = (apiError && typeof apiError.status === 'number') ? apiError.status : (apiError?.response?.status);
+                    const msg = String(apiError?.message || '');
+                    const is5xx = typeof status === 'number' && status >= 500 && status < 600;
+                    const is429 = status === 429;
+                    const looksServiceUnavailable = msg.includes('503') || msg.toLowerCase().includes('service unavailable');
+                    if (is429 || is5xx || looksServiceUnavailable) {
                         attempt++;
                         if (attempt < MAX_RETRIES) {
-                            const delay = 2000 * Math.pow(2, attempt - 1); // 2s, 4s, ...
-                            console.warn(`Rate limit hit, waiting ${delay}ms...`);
+                            const delay = 2000 * Math.pow(2, attempt - 1);
                             await new Promise(resolve => setTimeout(resolve, delay));
                             continue;
                         }
@@ -423,6 +869,19 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
                 }
             };
             const message = normalizeAssistantMessage(completion);
+            try {
+                useAIStore.getState().appendLog({
+                    id: uuidv4(),
+                    ts: Date.now(),
+                    channel: 'ai',
+                    provider: effProvider,
+                    model,
+                    baseURL: finalBaseURL,
+                    request: { messages: currentMessages, temperature, tools },
+                    response: completion,
+                    durationMs: Math.round(performance.now() - startTs)
+                });
+            } catch {}
 
             // If the model wants to call a tool
             const toolCalls = (message && (message.tool_calls || (message.function_call ? [{ type: 'function', id: 'fn', function: message.function_call }] : []))) || [];
@@ -432,14 +891,44 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
                 // Execute tool calls
                 for (const toolCall of toolCalls) {
                     if (toolCall.type === 'function' && toolCall.function.name === '$web_search') {
-                        // For Kimi's $web_search, we simply echo the arguments back to the model
-                        currentMessages.push({
-                            role: "tool",
-                            tool_call_id: toolCall.id,
-                            name: "$web_search",
-                            content: toolCall.function.arguments 
-                        });
-                        continue;
+                        let query = "";
+                        try {
+                            const args = JSON.parse(toolCall.function.arguments);
+                            query = args.query || args.q || "";
+                        } catch (parseError) {
+                            console.warn("Failed to parse $web_search args", parseError);
+                        }
+                        if (query) {
+                            const searchResult = await performClientSideSearch(query, options.forceSearch);
+                            currentMessages.push({
+                                role: "tool",
+                                tool_call_id: toolCall.id,
+                                name: "$web_search",
+                                content: searchResult || "No relevant results found."
+                            });
+                            try {
+                                useAIStore.getState().appendLog({
+                                    id: uuidv4(),
+                                    ts: Date.now(),
+                                    channel: 'search',
+                                    provider: useAIStore.getState().searchProvider,
+                                    query,
+                                    request: {},
+                                    response: searchResult || "",
+                                    durationMs: undefined,
+                                    searchType: 'text'
+                                });
+                            } catch {}
+                            continue;
+                        } else {
+                            currentMessages.push({
+                                role: "tool",
+                                tool_call_id: toolCall.id,
+                                name: "$web_search",
+                                content: "Error: Missing query parameter."
+                            });
+                            continue;
+                        }
                     }
 
                     // Standard Web Search Handling
@@ -459,6 +948,19 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
                                 tool_call_id: toolCall.id,
                                 content: searchResult || "No relevant results found."
                             });
+                            try {
+                                useAIStore.getState().appendLog({
+                                    id: uuidv4(),
+                                    ts: Date.now(),
+                                    channel: 'search',
+                                    provider: searchProvider,
+                                    query,
+                                    request: {},
+                                    response: searchResult || "",
+                                    durationMs: undefined,
+                                    searchType: 'text'
+                                });
+                            } catch {}
                         } else {
                              currentMessages.push({
                                 role: "tool",
@@ -483,6 +985,19 @@ const callAI = async (messages: any[], temperature: number = 0.7, options: { for
         return ""; // Exceeded max turns
     } catch (e) {
         console.error("Direct AI Chat failed:", e);
+        try {
+            useAIStore.getState().appendLog({
+                id: uuidv4(),
+                ts: Date.now(),
+                channel: 'ai',
+                provider: (useAIStore.getState().provider as any),
+                model: useAIStore.getState().model,
+                baseURL: useAIStore.getState().baseUrl,
+                request: { messages, temperature },
+                response: { error: e?.message || String(e) },
+                durationMs: undefined
+            });
+        } catch {}
         return "";
     }
 };
@@ -511,7 +1026,21 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
 
   let searchContext = "";
   try {
-    searchContext = await performClientSideSearch(query, true);
+    searchContext = await performClientSideSearch(query, true, type);
+  } catch {}
+  try {
+    if (searchContext) {
+      const parsedSC = JSON.parse(searchContext);
+      if (Array.isArray(parsedSC)) {
+        parsedSC.forEach((item: any) => {
+          if (item.title && item.image) {
+            prefetchedImages.set(item.title.toLowerCase(), item.image);
+            const { title } = processSearchResult(item.title, item.snippet || "");
+            prefetchedImages.set(title.toLowerCase(), item.image);
+          }
+        });
+      }
+    }
   } catch {}
   
   const { systemPrompt, provider } = useAIStore.getState();
@@ -527,6 +1056,7 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
               userPrompt += ` (包括书籍、电影、电视剧、漫画、短剧)`;
           }
           userPrompt += `\n[限制] 仅返回作品（小说、电影、电视剧、短剧、漫画、音乐专辑）。严禁返回新闻、产品评测、对比、参数、价格、手机/电子产品相关条目。`;
+          userPrompt += `\n[系列] 若查询为系列作品（如第一部/第二部/续集），请分别返回各部作品，并给出准确年份。`;
           userPrompt += `\n[优先] 使用联网搜索工具 (web_search) 获取最新信息；如网络不可用，请基于以下候选搜索结果或已有知识返回有效 JSON：\n${searchContext}\n仅从可靠信息中选择并返回有效 JSON 数组。检查 metadata/pagemap 获取准确上映日期；若无匹配请返回空数组。`;
       } else {
           userPrompt = `Search for media works matching the query: "${query}".`;
@@ -547,6 +1077,7 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
           } else {
               userPrompt += ` (包括书籍、电影、电视剧、漫画、短剧)`;
           }
+          userPrompt += `\n[系列] 若查询为系列作品（如第一部/第二部/续集），请分别返回各部作品，并给出准确年份。`;
           userPrompt += `\n请利用你的联网搜索工具或参考以下搜索结果来获取准确信息：\n${searchContext}\n仅从搜索结果中选择并返回有效JSON数组。请仔细检查搜索结果中的 metadata/pagemap 信息以获取准确的上映日期。如果没有匹配项，请返回空数组。确保上映日期准确。`;
       } else {
           userPrompt = `Search for media works matching the query: "${query}".`;
@@ -561,12 +1092,19 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
 
   const messages = [
     { role: "system", content: systemPrompt + (isChinese ? " 请务必使用JSON格式返回。不要使用Markdown代码块。只返回JSON数组。" : " Please return strictly valid JSON. Do not use markdown code blocks. Return ONLY a JSON array.") },
+    ...(searchContext ? [{ role: "user", content: searchContext }] : []),
     { role: "user", content: userPrompt }
   ];
 
   // Force search to allow the AI to verify dates if needed
   const text = await callAI(messages, 0.1, { forceSearch: true });
-  if (!text) return [];
+  if (!text) {
+    try {
+      const fb = await createFallbackItemsFromContext(searchContext);
+      if (fb.length > 0) return fb;
+    } catch {}
+    return [];
+  }
 
   // Improved JSON extraction
   let jsonStr = "";
@@ -582,6 +1120,10 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
   // Quick check if it looks like JSON
   if (!jsonStr.startsWith('[') && !jsonStr.startsWith('{')) {
       console.warn("AI returned non-JSON response:", text);
+      try {
+        const fb = await createFallbackItemsFromContext(searchContext);
+        if (fb.length > 0) return fb;
+      } catch {}
       return [];
   }
 
@@ -597,9 +1139,17 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
           rawData = JSON.parse(recovered);
         } catch (retryError) {
           console.error("Failed to recover JSON:", retryError);
+          try {
+            const fb = await createFallbackItemsFromContext(searchContext);
+            if (fb.length > 0) return fb;
+          } catch {}
           return [];
         }
       } else {
+        try {
+          const fb = await createFallbackItemsFromContext(searchContext);
+          if (fb.length > 0) return fb;
+        } catch {}
         return [];
       }
   }
@@ -608,8 +1158,21 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
     const id = uuidv4();
     const placeholder = getPlaceholder(item.type || 'Media');
     const posterUrl = prefetchedImages.get(item.title.toLowerCase()) || undefined;
+    const normalizeType = (v: any, title: string, desc?: string): MediaType => {
+      const s = String(v || '').toLowerCase();
+      if (s.includes('novel') || s.includes('book') || s.includes('小说') || s.includes('书')) return MediaType.BOOK;
+      if (s.includes('album') || s.includes('music') || s.includes('专辑') || s.includes('音乐')) return MediaType.MUSIC;
+      if (s.includes('tv') || s.includes('series') || s.includes('season') || s.includes('电视剧') || s.includes('剧集')) return MediaType.TV_SERIES;
+      if (s.includes('comic') || s.includes('manga') || s.includes('漫画')) return MediaType.COMIC;
+      if (s.includes('short') || s.includes('短剧')) return MediaType.SHORT_DRAMA;
+      if (s.includes('movie') || s.includes('film') || s.includes('电影')) return MediaType.MOVIE;
+      const inferred = processSearchResult(title, desc || '');
+      return inferred.type || MediaType.MOVIE;
+    };
+    const normalizedType = normalizeType((item as any).type, item.title, (item as any).description);
     return {
       ...item,
+      type: normalizedType,
       id,
       posterUrl: posterUrl || placeholder,
       userRating: 0,
@@ -618,9 +1181,8 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
     } as MediaItem;
   });
 
-  const allowedTypes = new Set(["Book","Movie","TV Series","Comic","Short Drama","Music"]);
-  const negatives = ['iphone','apple','samsung','huawei','vs','review','price','spec','launch','press','event','news','新闻','发布会','评测','开箱','手机','参数','报价','rumor','快讯'];
-  const filtered = results.filter(r => allowedTypes.has(r.type) && !negatives.some(k => (r.title + ' ' + (r.description || '')).toLowerCase().includes(k)));
+  const allowedTypes = new Set<string>(Object.values(MediaType).filter((t) => t !== MediaType.OTHER));
+  const filtered = results.filter(r => allowedTypes.has(r.type));
 
   if (filtered.length === 0) {
       return await createFallbackItemsFromContext(searchContext);
@@ -716,13 +1278,50 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
         googleSearchCx, 
         getDecryptedSerperKey,
         getDecryptedYandexKey,
+        getDecryptedBingKey,
         yandexSearchLogin
     } = useAIStore.getState();
-
-    if (!enableSearch) return undefined;
+    const normalizeProvider = (sp: any): string => {
+        const v = String(sp || '').toLowerCase();
+        return (v === 'google' || v === 'serper' || v === 'yandex') ? v : 'duckduckgo';
+    };
+    if (!enableSearch) {
+        return await fetchPosterFromOMDB(title, year);
+    }
     
     if (searchProvider === 'yandex') {
-        return undefined;
+        try {
+            const first = await fetchPosterFromOMDB(title, year);
+            if (first) return first;
+            const langZh = i18n.language.startsWith('zh');
+            if (isTauriEnv) {
+                const jsonStr = await invoke<string>('wiki_pageimages', { title, lang_zh: langZh });
+                const data = JSON.parse(jsonStr);
+                if (data?.query?.pages) {
+                    const pages = Object.values(data.query.pages);
+                    if (pages.length > 0) {
+                        const p: any = pages[0];
+                        const img = p?.thumbnail?.source || p?.original?.source;
+                        if (typeof img === 'string' && img.length > 0) return img;
+                    }
+                }
+            } else {
+                const api = langZh ? 'https://zh.wikipedia.org/w/api.php' : 'https://en.wikipedia.org/w/api.php';
+                const res = await fetchWithTimeout(`${api}?action=query&prop=pageimages&piprop=thumbnail|original&pithumbsize=1024&format=json&origin=*&titles=${encodeURIComponent(title)}`, { timeoutMs: 8000 });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data?.query?.pages) {
+                        const pages = Object.values(data.query.pages);
+                        if (pages.length > 0) {
+                            const p: any = pages[0];
+                            const img = p?.thumbnail?.source || p?.original?.source;
+                            if (typeof img === 'string' && img.length > 0) return img;
+                        }
+                    }
+                }
+            }
+        } catch {}
+        return await fetchPosterFromOMDB(title, year);
     }
 
     // Construct a more specific query
@@ -752,21 +1351,25 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
     try {
         let results: any = [];
 
-        // Tauri Mode
-        if (window.__TAURI__) {
+        if (isTauriEnv) {
             try {
-                const apiKey = searchProvider === 'google' ? getDecryptedGoogleKey() : 
-                               searchProvider === 'serper' ? getDecryptedSerperKey() :
-                               searchProvider === 'yandex' ? getDecryptedYandexKey() : undefined;
+                let apiKey: string | undefined = undefined;
+                const sp = String(searchProvider);
+                switch (sp) {
+                    case 'google': apiKey = getDecryptedGoogleKey(); break;
+                    case 'serper': apiKey = getDecryptedSerperKey(); break;
+                    case 'yandex': apiKey = getDecryptedYandexKey(); break;
+                }
 
                 const rustConfig = {
-                    provider: searchProvider,
+                    provider: normalizeProvider(searchProvider),
                     api_key: apiKey,
                     cx: googleSearchCx,
                     user: yandexSearchLogin,
                     search_type: "image"
                 };
                 
+                const start = performance.now();
                 const resultStr = await invoke<string>("web_search", { query, config: rustConfig });
                 
                 try {
@@ -776,6 +1379,72 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                     }
                 } catch (e) {
                     console.error("Failed to parse Tauri search result", e);
+                }
+                try {
+                    useAIStore.getState().appendLog({
+                        id: uuidv4(),
+                        ts: Date.now(),
+                        channel: 'search',
+                        provider: searchProvider,
+                        query,
+                        request: { config: { provider: rustConfig.provider, cx: rustConfig.cx, user: rustConfig.user, search_type: rustConfig.search_type } },
+                        response: resultStr,
+                        durationMs: Math.round(performance.now() - start),
+                        searchType: 'image'
+                    });
+                } catch {}
+                if ((!Array.isArray(results)) || results.length === 0) {
+                    try {
+                        const bingKey = getDecryptedBingKey();
+                        if (bingKey) {
+                            const cfg = { provider: 'bing', api_key: bingKey, cx: undefined, user: undefined, search_type: "image" };
+                            const startB = performance.now();
+                            const outB = await invoke<string>("web_search", { query, config: cfg });
+                            try {
+                                useAIStore.getState().appendLog({
+                                    id: uuidv4(),
+                                    ts: Date.now(),
+                                    channel: 'search',
+                                    provider: 'bing',
+                                    query,
+                                    request: { config: { provider: 'bing', search_type: 'image' } },
+                                    response: outB,
+                                    durationMs: Math.round(performance.now() - startB),
+                                    searchType: 'image'
+                                });
+                            } catch {}
+                            try {
+                                const arr = JSON.parse(outB);
+                                if (Array.isArray(arr)) results = arr;
+                            } catch {}
+                        }
+                    } catch {}
+                    try {
+                        if ((!Array.isArray(results)) || results.length === 0) {
+                            const kind = String(type || '').toLowerCase();
+                            const t0 = performance.now();
+                            const outD = await invoke<string>("douban_cover", { title, kind });
+                            try {
+                                useAIStore.getState().appendLog({
+                                    id: uuidv4(),
+                                    ts: Date.now(),
+                                    channel: 'search',
+                                    provider: 'douban',
+                                    query: title,
+                                    request: { title, kind },
+                                    response: outD,
+                                    durationMs: Math.round(performance.now() - t0),
+                                    searchType: 'image'
+                                });
+                            } catch {}
+                            try {
+                                const v = JSON.parse(outD || '{}');
+                                if (v && v.image) {
+                                    return v.image;
+                                }
+                            } catch {}
+                        }
+                    } catch {}
                 }
             } catch (tauriError) {
                 console.error("Tauri search failed:", tauriError);
@@ -829,27 +1498,85 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
         }
 
         if (Array.isArray(results)) {
-             // Filter for valid image URLs and avoid known blocking domains
-             const validImage = results.find((r: any) => {
-                 if (!r.image) return false;
-                 const url = r.image.toLowerCase();
-                 // Filter out social media pages that are not direct images
-                 if (url.includes('instagram.com') || url.includes('facebook.com') || url.includes('twitter.com') || url.includes('x.com')) {
-                     return false;
+            const scoreDomain = (u: string) => {
+                const url = u.toLowerCase();
+                if (url.includes('image.tmdb.org') || url.includes('themoviedb.org')) return 100;
+                if (url.includes('doubanio.com') || url.includes('douban.com')) return 90;
+                if (url.includes('wikimedia.org') || url.includes('wikipedia.org')) return 85;
+                if (url.includes('m.media-amazon.com')) return 60;
+                if (url.includes('imdb.com')) return 70;
+                if (url.includes('pinterest.com')) return 40;
+                return 50;
+            };
+             const scoreSizeHint = (u: string) => {
+                 const url = u.toLowerCase();
+                 if (url.includes('image.tmdb.org/t/p/original')) return 60;
+                 if (url.includes('/t/p/w780')) return 40;
+                 if (url.includes('/t/p/w500')) return 25;
+                 if (url.includes('doubanio.com') && (url.includes('/l/') || url.includes('large'))) return 35;
+                 const wm = url.match(/\/(\d{3,5})px\-/);
+                 if (url.includes('wikimedia.org') && wm) {
+                     const n = parseInt(wm[1], 10);
+                     if (!isNaN(n) && n >= 1080) return 45;
                  }
-                 // Allow Pinterest as it often has good posters, but try to prefer others if possible?
-                 // For now, let's allow it as it's better than nothing.
-                 return true;
-             });
-             if (validImage) return validImage.image;
+                 const am = url.match(/UY(\d{3,4})/i);
+                 if (url.includes('m.media-amazon.com') && am) {
+                     const n = parseInt(am[1], 10);
+                     if (!isNaN(n) && n >= 1080) return 40;
+                 }
+                 return 0;
+             };
+            const candidates = results
+              .flatMap((r: any) => {
+                  const out: string[] = [];
+                  if (typeof r?.image === 'string') out.push(r.image);
+                  const l = r?.link;
+                  if (typeof l === 'string' && /\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i.test(l)) out.push(l);
+                  return out;
+              })
+              .filter((u: any) => typeof u === 'string')
+              .filter((u: string) => {
+                  const url = u.toLowerCase();
+                  if (url.includes('instagram.com') || url.includes('facebook.com') || url.includes('twitter.com') || url.includes('x.com')) return false;
+                  return true;
+              })
+               .sort((a: string, b: string) => (scoreDomain(b) + scoreSizeHint(b)) - (scoreDomain(a) + scoreSizeHint(a)));
+            if (candidates.length > 0) {
+                const nonAmazon = candidates.filter((u: string) => !u.toLowerCase().includes('m.media-amazon.com'));
+                return nonAmazon.length > 0 ? nonAmazon[0] : candidates[0];
+            }
         }
 
-        // Fallback: If localized search failed, try generic English search
-        if (isChinese) {
-            console.log(`Localized poster search failed for "${title}", trying generic search...`);
-            // const genericQuery = `"${title}" ${type} poster high resolution`;
-            // ... (Skipping full duplication for brevity)
-        }
+
+        try {
+            const langZh = i18n.language.startsWith('zh');
+            if (isTauriEnv) {
+                const jsonStr = await invoke<string>('wiki_pageimages', { title, lang_zh: langZh });
+                const data = JSON.parse(jsonStr);
+                if (data?.query?.pages) {
+                    const pages = Object.values(data.query.pages);
+                    if (pages.length > 0) {
+                        const p: any = pages[0];
+                        const img = p?.thumbnail?.source || p?.original?.source;
+                        if (typeof img === 'string' && img.length > 0) return img;
+                    }
+                }
+            } else {
+                const api = langZh ? 'https://zh.wikipedia.org/w/api.php' : 'https://en.wikipedia.org/w/api.php';
+                const res = await fetchWithTimeout(`${api}?action=query&prop=pageimages&piprop=thumbnail|original&pithumbsize=1024&format=json&origin=*&titles=${encodeURIComponent(title)}`, { timeoutMs: 8000 });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data?.query?.pages) {
+                        const pages = Object.values(data.query.pages);
+                        if (pages.length > 0) {
+                            const p: any = pages[0];
+                            const img = p?.thumbnail?.source || p?.original?.source;
+                            if (typeof img === 'string' && img.length > 0) return img;
+                        }
+                    }
+                }
+            }
+        } catch {}
 
     } catch (e) {
         console.warn(`Failed to fetch poster from search for ${title}`, e);
@@ -859,6 +1586,105 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
     return await fetchPosterFromOMDB(title, year);
 };
 
+export const testSearchConnection = async (
+    provider?: string,
+    configOverride?: {
+        googleSearchApiKey?: string;
+        googleSearchCx?: string;
+        serperApiKey?: string;
+        yandexSearchApiKey?: string;
+        yandexSearchLogin?: string;
+    }
+): Promise<{ ok: boolean; latency_ms?: number; provider?: string; count?: number; error?: string }> => {
+    const s = useAIStore.getState();
+    const effProvider = provider || s.searchProvider;
+    const normalizeProvider = (sp: any): string => {
+        const v = String(sp || '').toLowerCase();
+        return (v === 'google' || v === 'serper' || v === 'yandex') ? v : 'duckduckgo';
+    };
+    const effGoogleKey = configOverride?.googleSearchApiKey || s.getDecryptedGoogleKey();
+    const effGoogleCx = configOverride?.googleSearchCx || s.googleSearchCx;
+    const effSerperKey = configOverride?.serperApiKey || s.getDecryptedSerperKey();
+    const effYandexKey = configOverride?.yandexSearchApiKey || s.getDecryptedYandexKey();
+    const effYandexLogin = configOverride?.yandexSearchLogin || s.yandexSearchLogin;
+    const effUseSystemProxy = s.useSystemProxy;
+
+    if (isTauriEnv) {
+        let apiKey: string | undefined = undefined;
+        switch (effProvider) {
+            case 'google': apiKey = effGoogleKey; break;
+            case 'serper': apiKey = effSerperKey; break;
+            case 'yandex': apiKey = effYandexKey; break;
+            default: apiKey = undefined;
+        }
+        const rustConfig = {
+            provider: normalizeProvider(effProvider),
+            api_key: apiKey,
+            cx: effGoogleCx,
+            user: effYandexLogin,
+            search_type: 'text',
+            proxy_url: s.getProxyUrl(),
+            use_system_proxy: effUseSystemProxy
+        };
+        try {
+            const out = await invoke<string>('test_search_provider', { config: rustConfig });
+            return JSON.parse(out);
+        } catch (e: any) {
+            return { ok: false, error: e?.message || String(e) };
+        }
+    } else {
+        try {
+            if (effProvider === 'google') {
+                if (!effGoogleKey || !effGoogleCx) return { ok: false, error: 'missing_google_config' };
+                const url = `https://www.googleapis.com/customsearch/v1?key=${effGoogleKey}&cx=${effGoogleCx}&q=test`;
+                const res = await fetchWithTimeout(url, { timeoutMs: 8000 });
+                const ok = res.ok;
+                return { ok, provider: 'google' };
+            }
+            if (effProvider === 'serper') {
+                if (!effSerperKey) return { ok: false, error: 'missing_serper_key' };
+                const res = await fetchWithTimeout('https://google.serper.dev/search', { method: 'POST', headers: { 'X-API-KEY': effSerperKey, 'Content-Type': 'application/json' }, body: JSON.stringify({ q: 'test' }), timeoutMs: 8000 });
+                return { ok: res.ok, provider: 'serper' };
+            }
+            if (effProvider === 'yandex') {
+                return { ok: false, error: 'web_preview_not_supported' };
+            }
+            return { ok: false, error: 'unsupported_provider' };
+        } catch (e: any) {
+            return { ok: false, error: e?.message || String(e) };
+        }
+    }
+};
+
+export const testOmdbConnection = async (apiKeyOverride?: string): Promise<{ ok: boolean; status?: number; latency_ms?: number; poster?: string; error?: string }> => {
+    const s = useAIStore.getState();
+    const key = apiKeyOverride || (s.getDecryptedOmdbKey && s.getDecryptedOmdbKey()) || OMDB_API_KEY;
+    if (!key) return { ok: false, error: 'missing_omdb_key' };
+    if (isTauriEnv) {
+        try {
+            const out = await invoke<string>('test_omdb', { apiKey: key });
+            return JSON.parse(out);
+        } catch (e: any) {
+            return { ok: false, error: e?.message || String(e) };
+        }
+    } else {
+        try {
+            const start = performance.now();
+            const res = await fetchWithTimeout(`https://www.omdbapi.com/?t=${encodeURIComponent('Inception')}&y=2010&apikey=${key}`, { timeoutMs: 8000 });
+            const latency = Math.round(performance.now() - start);
+            const ok = res.ok;
+            const status = res.status;
+            let poster = '';
+            if (ok) {
+                const v = await res.json();
+                poster = v?.Poster || '';
+            }
+            return { ok, status, latency_ms: latency, poster };
+        } catch (e: any) {
+            return { ok: false, error: e?.message || String(e) };
+        }
+    }
+};
 // Helper to clean title and extract year from search result
 export const processSearchResult = (title: string, snippet: string): { title: string, year: string, type: MediaType } => {
     let cleanTitle = title
@@ -899,12 +1725,12 @@ const createFallbackItemsFromContext = async (searchContext: string, limit: numb
         const arr = JSON.parse(trimmed);
         if (!Array.isArray(arr) || arr.length === 0) return [];
         
-        // Deduplicate by title roughly
         const uniqueMap = new Map();
         arr.forEach((item: any) => {
-            const { title } = processSearchResult(item.title || '', '');
-            if (!uniqueMap.has(title)) {
-                uniqueMap.set(title, item);
+            const { title, year } = processSearchResult(item.title || '', item.snippet || '');
+            const key = `${title}|${year}`;
+            if (!uniqueMap.has(key)) {
+                uniqueMap.set(key, item);
             }
         });
         
@@ -921,7 +1747,7 @@ const createFallbackItemsFromContext = async (searchContext: string, limit: numb
                 description: r.snippet || '',
                 releaseDate: year,
                 type,
-                isOngoing: type === 'TV Series',
+                isOngoing: type === MediaType.TV_SERIES,
                 latestUpdateInfo: '',
                 rating: '',
                 posterUrl: getPlaceholder(type),
@@ -971,27 +1797,7 @@ export const getTrendingMedia = async (): Promise<MediaItem[]> => {
       }
   }
 
-  // AI Processing RE-ENABLED
-  let prefetchedImages = new Map<string, string>();
-  try {
-      if (searchContext) {
-          const parsedSC = JSON.parse(searchContext);
-          if (Array.isArray(parsedSC)) {
-              parsedSC.forEach((item: any) => {
-                  if (item.title && item.image) {
-                       prefetchedImages.set(item.title.toLowerCase(), item.image);
-                       // Also store by cleaned title
-                       const { title } = processSearchResult(item.title, item.snippet || "");
-                       prefetchedImages.set(title.toLowerCase(), item.image);
-                  }
-              });
-          } else {
-              searchContext = "";
-          }
-      }
-  } catch {
-      searchContext = "";
-  }
+  
 
   let userPrompt = "";
 

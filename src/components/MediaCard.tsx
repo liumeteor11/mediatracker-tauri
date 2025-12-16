@@ -97,16 +97,20 @@ export const MediaCard: React.FC<MediaCardProps> = ({
       >
         <motion.div
           className={clsx(
-            "relative w-full aspect-[1/1.48] transition-all duration-300 ease-out transform-style-3d cursor-pointer shadow-lg rounded-xl",
+            "relative w-full aspect-[1/1.48] transition-all duration-300 ease-out transform-style-3d cursor-pointer shadow-theme rounded-theme",
             // Hardware acceleration hints
             "will-change-transform backface-visibility-hidden",
             isFlipped ? "rotate-y-180" : "",
             // Desktop: Scale up on hover
-            !isMobile && !isEditModalOpen && "md:group-hover:scale-105 md:group-hover:shadow-2xl"
+            !isMobile && !isEditModalOpen && "md:group-hover:scale-105 md:group-hover:shadow-2xl",
+            // Cyberpunk specific glow
+            theme === 'cyberpunk' && "border border-transparent hover:border-theme-accent hover:shadow-[0_0_20px_var(--accent-primary)]",
+            // Gradient specific
+            theme === 'gradient' && "backdrop-blur-sm border border-white/20"
           )}
         >
           {/* Front Side */}
-          <div className="absolute inset-0 backface-hidden rounded-xl overflow-hidden border-2 border-theme-border bg-theme-surface">
+          <div className="absolute inset-0 backface-hidden rounded-theme overflow-hidden border-2 border-theme-border bg-theme-surface">
             <div className="relative h-full w-full">
               {/* Mobile Flip Button */}
               {isMobile && (
@@ -171,7 +175,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
           </div>
 
           {/* Back Side */}
-          <div className="absolute inset-0 backface-hidden rotate-y-180 rounded-xl overflow-hidden p-5 flex flex-col border-2 bg-theme-surface border-theme-border text-theme-text">
+          <div className="absolute inset-0 backface-hidden rotate-y-180 rounded-theme overflow-hidden p-5 flex flex-col border-2 bg-theme-surface border-theme-border text-theme-text">
             {/* Spotlight Effect */}
             <div className="absolute inset-0 pointer-events-none bg-gradient-to-tr from-theme-accent/5 via-transparent to-transparent opacity-50" />
             

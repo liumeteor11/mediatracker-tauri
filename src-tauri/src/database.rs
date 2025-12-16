@@ -67,7 +67,7 @@ impl Database {
     }
     
     #[allow(dead_code)]
-    pub fn update_item(&self, item: MediaItem) -> Result<(), String> {
+    pub fn update_item(&self, _item: MediaItem) -> Result<(), String> {
         Err("update_item deprecated; use per-user methods".to_string())
     }
     
