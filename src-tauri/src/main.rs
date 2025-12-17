@@ -273,43 +273,6 @@ async fn serper_search(client: &Client, query: &str, api_key: &str, search_type:
     Ok(results)
 }
 
-async fn bing_image_search(client: &Client, query: &str, api_key: &str) -> Result<Vec<SearchResultItem>, Box<dyn Error>> {
-    let url = format!(
-        "https://api.bing.microsoft.com/v7.0/images/search?q={}&count=10&safeSearch=Moderate",
-        urlencoding::encode(query)
-    );
-    let fut = client
-        .get(&url)
-        .header("Ocp-Apim-Subscription-Key", api_key)
-        .header("Accept", "application/json")
-        .send();
-    let resp = tokio::time::timeout(std::time::Duration::from_secs(12), fut)
-        .await??;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let text = resp.text().await.unwrap_or_default();
-        return Err(format!("Bing Image API Error ({}): {}", status, text).into());
-    }
-    let v = resp.json::<Value>().await?;
-    let mut results = Vec::new();
-    if let Some(arr) = v.get("value").and_then(|x| x.as_array()) {
-        for item in arr {
-            let title = item.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let snippet = item.get("hostPageDomainFriendlyName").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            let image_url = item.get("contentUrl").and_then(|x| x.as_str()).map(|s| s.to_string())
-                .or_else(|| item.get("thumbnailUrl").and_then(|x| x.as_str()).map(|s| s.to_string()));
-            let page_url = item.get("hostPageUrl").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            results.push(SearchResultItem {
-                title,
-                snippet,
-                link: page_url,
-                image: image_url,
-                metadata: None
-            });
-        }
-    }
-    Ok(results)
-}
 
 async fn yandex_search(client: &Client, query: &str, user: &str, api_key: &str) -> Result<Vec<SearchResultItem>, Box<dyn Error>> {
     let url = format!(
@@ -535,17 +498,6 @@ async fn web_search(query: String, config: SearchConfig, state: State<'_, AppSta
                 yandex_search(&state.direct_client, &query, user, key).await
             } else {
                 return Err("Missing Yandex API Key or User".to_string());
-            }
-        },
-        "bing" => {
-            if search_type == Some("image") {
-                if let Some(key) = &config.api_key {
-                    bing_image_search(client, &query, key).await
-                } else {
-                    return Err("Missing Bing API Key".to_string());
-                }
-            } else {
-                Err("Bing text search not supported".into())
             }
         },
         "duckduckgo" => duckduckgo_search(client, &query).await,

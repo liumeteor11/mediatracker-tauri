@@ -58,7 +58,7 @@ export const AIConfigPanel: React.FC = () => {
     provider, apiKey, model, baseUrl, temperature, maxTokens, systemPrompt,
     enableSearch, searchProvider, googleSearchCx, yandexSearchLogin,
     useSystemProxy, proxyProtocol, proxyHost, proxyPort, proxyUsername,
-    setProvider, setConfig, getDecryptedApiKey, getDecryptedGoogleKey, getDecryptedSerperKey, getDecryptedYandexKey, getDecryptedOmdbKey, getDecryptedBingKey, getProxyUrl
+    setProvider, setConfig, getDecryptedApiKey, getDecryptedGoogleKey, getDecryptedSerperKey, getDecryptedYandexKey, getDecryptedOmdbKey, getProxyUrl
   } = useAIStore();
 
   const [localKey, setLocalKey] = useState(getDecryptedApiKey());
@@ -66,14 +66,12 @@ export const AIConfigPanel: React.FC = () => {
   const [localSerperKey, setLocalSerperKey] = useState(getDecryptedSerperKey());
   const [localYandexKey, setLocalYandexKey] = useState(getDecryptedYandexKey());
   const [localOmdbKey, setLocalOmdbKey] = useState(getDecryptedOmdbKey());
-  const [localBingKey, setLocalBingKey] = useState(getDecryptedBingKey());
   
   const [showKey, setShowKey] = useState(false);
   const [showGoogleKey, setShowGoogleKey] = useState(false);
   const [showSerperKey, setShowSerperKey] = useState(false);
   const [showYandexKey, setShowYandexKey] = useState(false);
   const [showOmdbKey, setShowOmdbKey] = useState(false);
-  const [showBingKey, setShowBingKey] = useState(false);
   const [localUseSystemProxy, setLocalUseSystemProxy] = useState(useSystemProxy);
   const [localProxyProtocol, setLocalProxyProtocol] = useState<'http' | 'socks5'>(proxyProtocol || 'http');
   const [localProxyHost, setLocalProxyHost] = useState(proxyHost || '');
@@ -178,7 +176,7 @@ export const AIConfigPanel: React.FC = () => {
     setLocalYandexKey(getDecryptedYandexKey());
     setLocalOmdbKey(getDecryptedOmdbKey());
     setIsManualInput(false);
-  }, [provider, getDecryptedApiKey, getDecryptedGoogleKey, getDecryptedSerperKey, getDecryptedYandexKey, getDecryptedOmdbKey, getDecryptedBingKey]);
+  }, [provider, getDecryptedApiKey, getDecryptedGoogleKey, getDecryptedSerperKey, getDecryptedYandexKey, getDecryptedOmdbKey]);
 
   const handleSave = () => {
     if (!localKey) {
@@ -213,7 +211,6 @@ export const AIConfigPanel: React.FC = () => {
             yandexSearchApiKey: localYandexKey,
             yandexSearchLogin,
             omdbApiKey: localOmdbKey,
-            bingApiKey: localBingKey,
             useSystemProxy: localUseSystemProxy,
             proxyProtocol: localProxyProtocol,
             proxyHost: localProxyHost,
@@ -260,7 +257,6 @@ export const AIConfigPanel: React.FC = () => {
           yandexSearchApiKey: localYandexKey,
           yandexSearchLogin,
           omdbApiKey: localOmdbKey,
-          bingApiKey: localBingKey,
           useSystemProxy: localUseSystemProxy,
           proxyProtocol: localProxyProtocol,
           proxyHost: localProxyHost,
@@ -592,34 +588,7 @@ export const AIConfigPanel: React.FC = () => {
 
                 
 
-                <div>
-                    <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.bing_key_label')}</label>
-                    <div className="relative">
-                        <input 
-                            type={showBingKey ? "text" : "password"} 
-                            value={localBingKey}
-                            onChange={(e) => setLocalBingKey(e.target.value)}
-                            className="w-full px-4 py-2 pr-10 rounded-lg border bg-theme-bg border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent outline-none"
-                            placeholder="Bing Subscription Key"
-                        />
-                        <button 
-                            type="button"
-                            onClick={() => setShowBingKey(!showBingKey)}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-subtext hover:text-theme-text"
-                        >
-                            {showBingKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                        </button>
-                    </div>
-                    <div className="flex justify-between items-start mt-1">
-                        <a href="https://www.microsoft.com/en-us/bing/apis/bing-search-apis" target="_blank" rel="noreferrer" className="text-xs text-theme-accent hover:underline inline-block">
-                            {t('ai_config.get_bing_key')}
-                        </a>
-                        <p className="text-xs text-theme-subtext flex items-center gap-1">
-                          <Info className="w-3 h-3" />
-                          {t('ai_config.bing_key_optional_note')}
-                        </p>
-                    </div>
-                </div>
+                
 
                 <div>
                     <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.omdb_key_label')}</label>

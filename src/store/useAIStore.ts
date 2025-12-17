@@ -28,7 +28,6 @@ interface AIConfigState {
   yandexSearchApiKey: string;
   yandexSearchLogin: string;
   omdbApiKey: string;
-  bingApiKey: string;
   trendingPrompt: string;
   lastSearchDurationMs: number | null;
   lastSearchAt: string | null;
@@ -62,7 +61,6 @@ interface AIConfigState {
   getDecryptedSerperKey: () => string;
   getDecryptedYandexKey: () => string;
   getDecryptedOmdbKey: () => string;
-  getDecryptedBingKey: () => string;
   getProxyUrl: () => string;
   logs: AIIOLogEntry[];
   appendLog: (entry: AIIOLogEntry) => void;
@@ -116,7 +114,6 @@ Ensure data is accurate.`,
       yandexSearchApiKey: '',
       yandexSearchLogin: '',
       omdbApiKey: '',
-      bingApiKey: '',
       trendingPrompt: '',
       lastSearchDurationMs: null,
       lastSearchAt: null,
@@ -209,7 +206,6 @@ Ensure data is accurate.`,
         if (config.serperApiKey) updates.serperApiKey = encrypt(config.serperApiKey);
         if (config.yandexSearchApiKey) updates.yandexSearchApiKey = encrypt(config.yandexSearchApiKey);
         if (config.omdbApiKey) updates.omdbApiKey = encrypt(config.omdbApiKey);
-        if (config.bingApiKey) updates.bingApiKey = encrypt(config.bingApiKey);
         if (config.proxyPassword) updates.proxyPassword = encrypt(config.proxyPassword);
         
         if (typeof config.baseUrl !== 'undefined') {
@@ -222,7 +218,6 @@ Ensure data is accurate.`,
       getDecryptedSerperKey: () => decrypt(get().serperApiKey),
       getDecryptedYandexKey: () => decrypt(get().yandexSearchApiKey),
       getDecryptedOmdbKey: () => decrypt(get().omdbApiKey),
-      getDecryptedBingKey: () => decrypt(get().bingApiKey),
       // Helper getters
       // Note: username stored in plain (non-sensitive), password encrypted
       getProxyUrl: (): string => {
@@ -312,7 +307,6 @@ Ensure data is accurate.`,
         yandexSearchApiKey: state.yandexSearchApiKey,
         yandexSearchLogin: state.yandexSearchLogin,
         omdbApiKey: state.omdbApiKey,
-        bingApiKey: state.bingApiKey,
         lastSearchDurationMs: state.lastSearchDurationMs,
         lastSearchAt: state.lastSearchAt,
         lastSearchQuery: state.lastSearchQuery,

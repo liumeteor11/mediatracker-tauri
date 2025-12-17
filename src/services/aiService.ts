@@ -1278,7 +1278,6 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
         googleSearchCx, 
         getDecryptedSerperKey,
         getDecryptedYandexKey,
-        getDecryptedBingKey,
         yandexSearchLogin
     } = useAIStore.getState();
     const normalizeProvider = (sp: any): string => {
@@ -1394,31 +1393,6 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                     });
                 } catch {}
                 if ((!Array.isArray(results)) || results.length === 0) {
-                    try {
-                        const bingKey = getDecryptedBingKey();
-                        if (bingKey) {
-                            const cfg = { provider: 'bing', api_key: bingKey, cx: undefined, user: undefined, search_type: "image" };
-                            const startB = performance.now();
-                            const outB = await invoke<string>("web_search", { query, config: cfg });
-                            try {
-                                useAIStore.getState().appendLog({
-                                    id: uuidv4(),
-                                    ts: Date.now(),
-                                    channel: 'search',
-                                    provider: 'bing',
-                                    query,
-                                    request: { config: { provider: 'bing', search_type: 'image' } },
-                                    response: outB,
-                                    durationMs: Math.round(performance.now() - startB),
-                                    searchType: 'image'
-                                });
-                            } catch {}
-                            try {
-                                const arr = JSON.parse(outB);
-                                if (Array.isArray(arr)) results = arr;
-                            } catch {}
-                        }
-                    } catch {}
                     try {
                         if ((!Array.isArray(results)) || results.length === 0) {
                             const kind = String(type || '').toLowerCase();
