@@ -9,9 +9,14 @@ import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 import { checkUpdates, repairMediaItem } from '../services/aiService';
 
+import { save } from '@tauri-apps/plugin-dialog';
+
+// Helper to detect Tauri environment
+const isTauri = typeof window !== 'undefined' && (('__TAURI__' in window) || ('__TAURI_INTERNALS__' in window));
+
 export const CollectionPage: React.FC = () => {
   const { t } = useTranslation();
-  const { collection, moveCategory, importCollection, updateItem } = useCollectionStore();
+  const { collection, moveCategory, importCollection, exportCollection, updateItem } = useCollectionStore();
   const [filter, setFilter] = useState<CollectionCategory | 'All'>('All');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -128,10 +133,37 @@ export const CollectionPage: React.FC = () => {
     toast.success(t('collection.moved_toast', { title: item.title, category: getCategoryLabel(category) }));
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (collection.length === 0) {
       toast.info(t('collection.export_empty'));
       return;
+    }
+
+    if (isTauri) {
+        try {
+            const path = await save({
+                filters: [{
+                    name: 'JSON',
+                    extensions: ['json']
+                }],
+                defaultPath: `media-collection-${new Date().toISOString().split('T')[0]}.json`
+            });
+            
+            if (path) {
+                // Call store export with the selected path
+                const result = await exportCollection(path);
+                if (result) {
+                    toast.success(t('collection.export_success'));
+                } else {
+                    toast.error(t('collection.export_error') || 'Export failed');
+                }
+            }
+        } catch (e) {
+            console.error('Save dialog failed', e);
+            toast.error('Export failed');
+        }
+        setShowMenu(false);
+        return;
     }
     
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(collection, null, 2));

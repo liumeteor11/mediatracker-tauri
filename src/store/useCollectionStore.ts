@@ -88,14 +88,14 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
       });
   },
 
-  exportCollection: async (targetDir?: string, redactSensitive: boolean = true) => {
+  exportCollection: async (targetPath?: string, redactSensitive: boolean = true) => {
     try {
       if (!isTauri) {
         console.warn('Export not available in web preview');
         return null;
       }
       const username = useAuthStore.getState().user?.username || 'guest';
-      const path = await invoke<string>('export_collection', { username, targetDir, redactSensitive });
+      const path = await invoke<string>('export_collection', { username, targetPath, redactSensitive });
       return path;
     } catch (e) {
       console.error('Export collection failed', e);

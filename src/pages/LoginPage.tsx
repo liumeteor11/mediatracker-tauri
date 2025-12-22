@@ -16,11 +16,11 @@ export const LoginPage: React.FC = () => {
   const [serverError, setServerError] = useState<string | null>(null);
 
   const loginSchema = z.object({
-    username: z.string().min(3, t('login.username_error')),
+    username: z.string().trim().min(3, t('login.username_error')),
     password: z.string().min(6, t('login.password_error')),
   });
   const registerSchema = z.object({
-    username: z.string().min(3, t('login.username_error')),
+    username: z.string().trim().min(3, t('login.username_error')),
     password: z.string().min(6, t('login.password_error')),
     confirmPassword: z.string().min(6, t('login.password_error')),
   }).refine((data) => data.password === data.confirmPassword, {
@@ -40,7 +40,8 @@ export const LoginPage: React.FC = () => {
       await login(data.username, data.password);
       navigate('/');
     } catch (e: any) {
-      setServerError(e?.message || t('login.invalid_credentials'));
+      const msg = typeof e === 'string' ? e : e?.message;
+      setServerError(msg === 'INVALID_CREDENTIALS' ? t('login.invalid_credentials') : (msg || t('login.invalid_credentials')));
     }
   };
   const onRegister = async (data: RegisterForm) => {
@@ -49,7 +50,8 @@ export const LoginPage: React.FC = () => {
       await register(data.username, data.password);
       navigate('/');
     } catch (e: any) {
-      setServerError(e?.message || t('login.user_exists'));
+      const msg = typeof e === 'string' ? e : e?.message;
+      setServerError(msg === 'USER_EXISTS' ? t('login.user_exists') : (msg || t('login.user_exists')));
     }
   };
 

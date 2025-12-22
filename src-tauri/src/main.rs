@@ -787,7 +787,7 @@ fn import_collection(username: String, items: Vec<MediaItem>, db: State<Database
 #[command]
 fn export_collection(
     username: String,
-    target_dir: Option<String>,
+    target_path: Option<String>,
     redact_sensitive: Option<bool>,
     db: State<Database>,
     app: tauri::AppHandle,
@@ -805,17 +805,23 @@ fn export_collection(
         export_items = items;
     }
 
-    let base_dir = if let Some(dir) = target_dir {
-        std::path::PathBuf::from(dir)
+    let out_path = if let Some(path) = target_path {
+        std::path::PathBuf::from(path)
     } else {
-        app.path()
+        let base_dir = app.path()
             .document_dir()
-            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+        let out_dir = base_dir.join("MediaTracker").join(&username);
+        std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+        out_dir.join("collection.json")
     };
 
-    let out_dir = base_dir.join("MediaTracker").join(&username);
-    std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
-    let out_path = out_dir.join("collection.json");
+    if let Some(parent) = out_path.parent() {
+        if !parent.exists() {
+             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+
     let content = serde_json::to_string_pretty(&export_items).map_err(|e| e.to_string())?;
     std::fs::write(&out_path, content).map_err(|e| e.to_string())?;
 
@@ -875,6 +881,7 @@ async fn bangumi_details(id: u64, token: Option<String>, state: State<'_, AppSta
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let db = Database::new(app.handle());
             app.manage(db);

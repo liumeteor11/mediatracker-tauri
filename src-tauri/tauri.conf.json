@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "MediaTracker AI",
         "width": 1280,
         "height": 800
