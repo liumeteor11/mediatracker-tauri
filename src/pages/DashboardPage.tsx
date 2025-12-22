@@ -7,7 +7,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Ba
 import { CollectionCategory, MediaType, MediaItem } from '../types/types';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
-import { Bell, Upload } from 'lucide-react';
+import { Bell, Upload, Activity, ChevronDown, ChevronUp, BarChart2, X } from 'lucide-react';
 import { useAIStore } from '../store/useAIStore';
 import { toast } from 'react-toastify';
 import { testAuthoritativeDomain } from '../services/aiService';
@@ -16,6 +16,7 @@ import { AIIOLogEntry } from '../types/types';
 const YearlyReport: React.FC<{ collection: MediaItem[] }> = ({ collection }) => {
     const { t } = useTranslation();
     const [year, setYear] = useState(new Date().getFullYear());
+    const [showChart, setShowChart] = useState(false);
     
     // Generate last 5 years options
     const yearOptions = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
@@ -82,65 +83,84 @@ const YearlyReport: React.FC<{ collection: MediaItem[] }> = ({ collection }) => 
     };
 
     return (
-        <div className="p-6 rounded-theme shadow-theme border bg-theme-surface border-theme-border mb-8">
-            <div className="flex items-center justify-between mb-6">
-                <h3 className="text-lg font-bold text-theme-text">{t('dashboard.yearly_report')}</h3>
-                <select 
-                    value={year} 
-                    onChange={(e) => setYear(Number(e.target.value))}
-                    className="bg-theme-bg border border-theme-border rounded px-3 py-1 text-sm text-theme-text focus:outline-none focus:border-theme-accent"
+        <div className="p-4 rounded-theme shadow-theme border bg-theme-surface border-theme-border mb-8 transition-all duration-300">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                        <h3 className="font-bold text-theme-text whitespace-nowrap">{t('dashboard.yearly_report')}</h3>
+                        <select 
+                            value={year} 
+                            onChange={(e) => setYear(Number(e.target.value))}
+                            className="bg-theme-bg border border-theme-border rounded px-2 py-1 text-xs text-theme-text focus:outline-none focus:border-theme-accent"
+                        >
+                            {yearOptions.map(y => (
+                                <option key={y} value={y}>{y}</option>
+                            ))}
+                        </select>
+                    </div>
+                    
+                    <div className="hidden md:block h-6 w-[1px] bg-theme-border mx-2"></div>
+                    
+                    <div className="flex items-center gap-6 text-sm">
+                        <div className="flex items-center gap-2">
+                            <span className="text-theme-subtext">{t('dashboard.items_added')}:</span>
+                            <span className="font-bold text-theme-text">{totalAdded}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-theme-subtext">{t('dashboard.most_active_month')}:</span>
+                            <span className="font-bold text-theme-text">{topMonth}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-theme-subtext">{t('dashboard.favorite_category')}:</span>
+                            <span className="font-bold text-theme-text max-w-[100px] truncate" title={topCategory}>
+                                {topCategory === '-' ? '-' : t(`search_page.filter_${topCategory === 'TV Series' ? 'tv' : topCategory.toLowerCase().replace(' ', '_')}s`) || topCategory}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <button 
+                    onClick={() => setShowChart(!showChart)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-theme-border bg-theme-bg hover:bg-theme-surface hover:text-theme-accent transition-colors ml-auto md:ml-0"
                 >
-                    {yearOptions.map(y => (
-                        <option key={y} value={y}>{y}</option>
-                    ))}
-                </select>
+                    <BarChart2 className="w-3.5 h-3.5" />
+                    {showChart ? (t('dashboard.hide_chart') || '隐藏图表') : (t('dashboard.show_chart') || '显示图表')}
+                    {showChart ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                <div className="bg-theme-bg/50 p-4 rounded-lg border border-theme-border/50">
-                    <div className="text-sm text-theme-subtext">{t('dashboard.items_added')}</div>
-                    <div className="text-2xl font-bold text-theme-text mt-1">{totalAdded}</div>
+            {showChart && (
+                <div className="mt-6 h-[250px] w-full animate-in fade-in slide-in-from-top-2">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={monthlyData}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-color)" opacity={0.5} />
+                            <XAxis 
+                                dataKey="name" 
+                                tick={{fontSize: 11, fill: chartStyles.text}} 
+                                axisLine={false}
+                                tickLine={false}
+                            />
+                            <YAxis 
+                                allowDecimals={false} 
+                                tick={{fontSize: 11, fill: chartStyles.text}}
+                                axisLine={false}
+                                tickLine={false}
+                            />
+                            <Tooltip 
+                                cursor={{fill: 'var(--bg-secondary)', opacity: 0.5}}
+                                contentStyle={{ 
+                                    backgroundColor: chartStyles.tooltipBg,
+                                    borderColor: chartStyles.tooltipBorder,
+                                    color: chartStyles.tooltipText,
+                                    borderRadius: '8px',
+                                    fontSize: '12px'
+                                }}
+                            />
+                            <Bar dataKey="count" fill={chartStyles.barFill} radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                    </ResponsiveContainer>
                 </div>
-                <div className="bg-theme-bg/50 p-4 rounded-lg border border-theme-border/50">
-                    <div className="text-sm text-theme-subtext">{t('dashboard.most_active_month')}</div>
-                    <div className="text-2xl font-bold text-theme-text mt-1">{topMonth}</div>
-                </div>
-                <div className="bg-theme-bg/50 p-4 rounded-lg border border-theme-border/50">
-                    <div className="text-sm text-theme-subtext">{t('dashboard.favorite_category')}</div>
-                    <div className="text-2xl font-bold text-theme-text mt-1 truncate" title={topCategory}>{topCategory === '-' ? '-' : t(`search_page.filter_${topCategory === 'TV Series' ? 'tv' : topCategory.toLowerCase().replace(' ', '_')}s`) || topCategory}</div>
-                </div>
-            </div>
-
-            <div className="h-[300px] w-full">
-                <h4 className="text-sm font-medium text-theme-subtext mb-4">{t('dashboard.monthly_activity')}</h4>
-                <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={monthlyData}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-color)" opacity={0.5} />
-                        <XAxis 
-                            dataKey="name" 
-                            tick={{fontSize: 12, fill: chartStyles.text}} 
-                            axisLine={false}
-                            tickLine={false}
-                        />
-                        <YAxis 
-                            allowDecimals={false} 
-                            tick={{fontSize: 12, fill: chartStyles.text}}
-                            axisLine={false}
-                            tickLine={false}
-                        />
-                        <Tooltip 
-                            cursor={{fill: 'var(--bg-secondary)', opacity: 0.5}}
-                            contentStyle={{ 
-                                backgroundColor: chartStyles.tooltipBg,
-                                borderColor: chartStyles.tooltipBorder,
-                                color: chartStyles.tooltipText,
-                                borderRadius: '8px'
-                            }}
-                        />
-                        <Bar dataKey="count" fill={chartStyles.barFill} radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                </ResponsiveContainer>
-            </div>
+            )}
         </div>
     );
 };
@@ -166,6 +186,7 @@ export const DashboardPage: React.FC = () => {
     return arr.filter(l => logFilter === 'all' ? true : l.channel === logFilter);
   }, [logs, logFilter]);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [showLogs, setShowLogs] = useState(false);
   const toggleExpand = (id: string) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
   const copyText = async (text: string) => {
     try { await navigator.clipboard.writeText(text); toast.success(t('dashboard.copied') || '已复制'); } catch {}
@@ -267,57 +288,82 @@ export const DashboardPage: React.FC = () => {
         <AIConfigPanel />
       </div>
 
-      <div className="p-6 rounded-theme shadow-theme border bg-theme-surface border-theme-border">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold text-theme-text">{t('dashboard.io_logs') || '输入输出日志'}</h3>
-          <div className="flex items-center gap-2">
-            <div className="flex gap-1">
-              <button className={clsx('px-2 py-1 text-xs rounded-md border', logFilter==='all'?'bg-theme-accent text-theme-bg border-theme-accent':'bg-theme-surface text-theme-subtext border-theme-border hover:text-theme-text')} onClick={()=>setLogFilter('all')}>{t('dashboard.filter_all') || '全部'}</button>
-              <button className={clsx('px-2 py-1 text-xs rounded-md border', logFilter==='ai'?'bg-theme-accent text-theme-bg border-theme-accent':'bg-theme-surface text-theme-subtext border-theme-border hover:text-theme-text')} onClick={()=>setLogFilter('ai')}>{t('dashboard.filter_ai') || '大模型'}</button>
-              <button className={clsx('px-2 py-1 text-xs rounded-md border', logFilter==='search'?'bg-theme-accent text-theme-bg border-theme-accent':'bg-theme-surface text-theme-subtext border-theme-border hover:text-theme-text')} onClick={()=>setLogFilter('search')}>{t('dashboard.filter_search') || '搜索'}</button>
-            </div>
-            <button className="px-2 py-1 text-xs rounded-md border-2 border-theme-accent bg-theme-accent text-theme-bg hover:bg-theme-accent-hover transition-colors" onClick={clearLogs}>{t('dashboard.clear_logs') || '清空日志'}</button>
-          </div>
-        </div>
-        {filteredLogs.length === 0 ? (
-          <div className="text-sm text-theme-subtext">{t('dashboard.no_logs') || '暂无日志'}</div>
+      <div className="mb-8 transition-all duration-300">
+        {!showLogs ? (
+            <button 
+                onClick={() => setShowLogs(true)}
+                className="w-full py-3 border-2 border-dashed border-theme-border rounded-theme text-theme-subtext hover:border-theme-accent hover:text-theme-accent hover:bg-theme-surface transition-all flex items-center justify-center gap-2 group"
+            >
+                <Activity className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                <span className="font-medium">{t('dashboard.show_logs') || '展开输入输出日志'}</span>
+            </button>
         ) : (
-          <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-            {filteredLogs.map((l: AIIOLogEntry) => {
-              const ts = new Date(l.ts || Date.now()).toLocaleString();
-              const head = `${ts} | ${l.channel === 'ai' ? (t('dashboard.filter_ai') || '大模型') : (t('dashboard.filter_search') || '搜索')} | ${l.provider || '-'}${l.searchType ? ' · ' + l.searchType : ''}${l.model ? ' · ' + l.model : ''}`;
-              const reqStr = typeof l.request === 'string' ? l.request : JSON.stringify(l.request ?? {}, null, 2);
-              const resStr = typeof l.response === 'string' ? l.response : JSON.stringify(l.response ?? {}, null, 2);
-              const isExp = !!expanded[l.id];
-              return (
-                <div key={l.id} className="rounded-md border bg-theme-bg/50 border-theme-border/50">
-                  <div className="flex items-center justify-between px-3 py-2">
-                    <div className="text-xs font-mono text-theme-subtext truncate" title={head}>{head}</div>
-                    <div className="flex gap-2">
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-theme-surface text-theme-subtext border border-theme-border/50">{(l.durationMs ?? 0) + 'ms'}</span>
-                      <button className={clsx('text-[11px] px-2 py-0.5 rounded border', 'bg-theme-surface text-theme-accent hover:bg-theme-accent hover:text-theme-bg transition-colors')} onClick={()=>toggleExpand(l.id)}>{isExp ? (t('dashboard.collapse') || '收起') : (t('dashboard.expand') || '展开')}</button>
+            <div className="p-6 rounded-theme shadow-theme border bg-theme-surface border-theme-border relative animate-in fade-in slide-in-from-top-4">
+                <button 
+                    onClick={() => setShowLogs(false)} 
+                    className="absolute top-4 right-4 p-1 rounded-md text-theme-subtext hover:bg-theme-bg hover:text-theme-text transition-colors"
+                    title={t('common.close') || '关闭'}
+                >
+                    <X className="w-5 h-5" />
+                </button>
+
+                <div className="flex items-center justify-between mb-4 pr-8">
+                    <h3 className="text-lg font-bold text-theme-text flex items-center gap-2">
+                        <Activity className="w-5 h-5 text-theme-accent" />
+                        {t('dashboard.io_logs') || '输入输出日志'}
+                    </h3>
+                    <div className="flex items-center gap-2">
+                        <div className="flex gap-1">
+                        <button className={clsx('px-2 py-1 text-xs rounded-md border', logFilter==='all'?'bg-theme-accent text-theme-bg border-theme-accent':'bg-theme-surface text-theme-subtext border-theme-border hover:text-theme-text')} onClick={()=>setLogFilter('all')}>{t('dashboard.filter_all') || '全部'}</button>
+                        <button className={clsx('px-2 py-1 text-xs rounded-md border', logFilter==='ai'?'bg-theme-accent text-theme-bg border-theme-accent':'bg-theme-surface text-theme-subtext border-theme-border hover:text-theme-text')} onClick={()=>setLogFilter('ai')}>{t('dashboard.filter_ai') || '大模型'}</button>
+                        <button className={clsx('px-2 py-1 text-xs rounded-md border', logFilter==='search'?'bg-theme-accent text-theme-bg border-theme-accent':'bg-theme-surface text-theme-subtext border-theme-border hover:text-theme-text')} onClick={()=>setLogFilter('search')}>{t('dashboard.filter_search') || '搜索'}</button>
+                        </div>
+                        <button className="px-2 py-1 text-xs rounded-md border-2 border-theme-accent bg-theme-accent text-theme-bg hover:bg-theme-accent-hover transition-colors" onClick={clearLogs}>{t('dashboard.clear_logs') || '清空日志'}</button>
                     </div>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 px-3 pb-3">
-                    <div className="bg-theme-surface/50 border border-theme-border/50 rounded p-2">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs text-theme-subtext">Request</span>
-                        <button className="text-[11px] px-2 py-0.5 rounded border bg-theme-surface text-theme-accent hover:bg-theme-accent hover:text-theme-bg transition-colors" onClick={()=>copyText(reqStr)}>{t('dashboard.copy') || '复制'}</button>
-                      </div>
-                      <pre className={clsx('text-[11px] whitespace-pre-wrap break-all', isExp ? 'max-h-[240px] overflow-auto' : 'max-h-[120px] overflow-hidden')}>{reqStr}</pre>
-                    </div>
-                    <div className="bg-theme-surface/50 border border-theme-border/50 rounded p-2">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs text-theme-subtext">Response</span>
-                        <button className="text-[11px] px-2 py-0.5 rounded border bg-theme-surface text-theme-accent hover:bg-theme-accent hover:text-theme-bg transition-colors" onClick={()=>copyText(resStr)}>{t('dashboard.copy') || '复制'}</button>
-                      </div>
-                      <pre className={clsx('text-[11px] whitespace-pre-wrap break-all', isExp ? 'max-h-[240px] overflow-auto' : 'max-h-[120px] overflow-hidden')}>{resStr}</pre>
-                    </div>
-                  </div>
                 </div>
-              );
-            })}
-          </div>
+                {filteredLogs.length === 0 ? (
+                <div className="text-sm text-theme-subtext py-8 text-center bg-theme-bg/30 rounded-lg border border-theme-border/30 border-dashed">{t('dashboard.no_logs') || '暂无日志'}</div>
+                ) : (
+                <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+                    {filteredLogs.map((l: AIIOLogEntry) => {
+                    const ts = new Date(l.ts || Date.now()).toLocaleString();
+                    const head = `${ts} | ${l.channel === 'ai' ? (t('dashboard.filter_ai') || '大模型') : (t('dashboard.filter_search') || '搜索')} | ${l.provider || '-'}${l.searchType ? ' · ' + l.searchType : ''}${l.model ? ' · ' + l.model : ''}`;
+                    const reqStr = typeof l.request === 'string' ? l.request : JSON.stringify(l.request ?? {}, null, 2);
+                    const resStr = typeof l.response === 'string' ? l.response : JSON.stringify(l.response ?? {}, null, 2);
+                    const isExp = !!expanded[l.id];
+                    return (
+                        <div key={l.id} className="rounded-md border bg-theme-bg/50 border-theme-border/50 hover:border-theme-border transition-colors">
+                        <div className="flex items-center justify-between px-3 py-2 cursor-pointer" onClick={()=>toggleExpand(l.id)}>
+                            <div className="text-xs font-mono text-theme-subtext truncate flex-1 mr-4" title={head}>{head}</div>
+                            <div className="flex gap-2 flex-shrink-0">
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-theme-surface text-theme-subtext border border-theme-border/50">{(l.durationMs ?? 0) + 'ms'}</span>
+                            <button className={clsx('text-[11px] px-2 py-0.5 rounded border', 'bg-theme-surface text-theme-accent hover:bg-theme-accent hover:text-theme-bg transition-colors')} onClick={(e) => { e.stopPropagation(); toggleExpand(l.id); }}>{isExp ? (t('dashboard.collapse') || '收起') : (t('dashboard.expand') || '展开')}</button>
+                            </div>
+                        </div>
+                        {isExp && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 px-3 pb-3 animate-in fade-in slide-in-from-top-1">
+                                <div className="bg-theme-surface/50 border border-theme-border/50 rounded p-2">
+                                <div className="flex items-center justify-between mb-1">
+                                    <span className="text-xs text-theme-subtext">Request</span>
+                                    <button className="text-[11px] px-2 py-0.5 rounded border bg-theme-surface text-theme-accent hover:bg-theme-accent hover:text-theme-bg transition-colors" onClick={()=>copyText(reqStr)}>{t('dashboard.copy') || '复制'}</button>
+                                </div>
+                                <pre className="text-[11px] whitespace-pre-wrap break-all max-h-[300px] overflow-auto custom-scrollbar">{reqStr}</pre>
+                                </div>
+                                <div className="bg-theme-surface/50 border border-theme-border/50 rounded p-2">
+                                <div className="flex items-center justify-between mb-1">
+                                    <span className="text-xs text-theme-subtext">Response</span>
+                                    <button className="text-[11px] px-2 py-0.5 rounded border bg-theme-surface text-theme-accent hover:bg-theme-accent hover:text-theme-bg transition-colors" onClick={()=>copyText(resStr)}>{t('dashboard.copy') || '复制'}</button>
+                                </div>
+                                <pre className="text-[11px] whitespace-pre-wrap break-all max-h-[300px] overflow-auto custom-scrollbar">{resStr}</pre>
+                                </div>
+                            </div>
+                        )}
+                        </div>
+                    );
+                    })}
+                </div>
+                )}
+            </div>
         )}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

@@ -149,7 +149,7 @@ fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) 
 
 async fn google_search(client: &Client, query: &str, api_key: &str, cx: &str, search_type: Option<&str>) -> Result<Vec<SearchResultItem>, Box<dyn Error>> {
     let mut url = format!(
-        "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}&safe=active",
+        "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}&safe=active&num=8",
         api_key,
         cx,
         urlencoding::encode(query)

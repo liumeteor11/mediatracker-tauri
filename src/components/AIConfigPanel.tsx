@@ -4,7 +4,7 @@ import { useAIStore, AIProvider, SearchProvider } from '../store/useAIStore';
 import { callAI, testSearchConnection, testOmdbConnection } from '../services/aiService';
 import { testTmdbConnection } from '../services/tmdbService';
 import { testBangumiConnection } from '../services/bangumiService';
-import { Save, Activity, CheckCircle, AlertCircle, Eye, EyeOff, Info, List, Globe, Search, Plug } from 'lucide-react';
+import { Activity, CheckCircle, AlertCircle, Eye, EyeOff, Info, List, Globe, Search, Plug } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { toast } from 'react-toastify';
@@ -203,6 +203,15 @@ export const AIConfigPanel: React.FC = () => {
       setTestResult({ status: ok ? 'success' : 'error', latency, message: `HTTP ${parsed.status}` });
       if (ok) {
         toast.success(t('ai_config.proxy_test_success'));
+        setConfig({
+            useSystemProxy: localUseSystemProxy,
+            proxyProtocol: localProxyProtocol,
+            proxyHost: localProxyHost,
+            proxyPort: localProxyPort,
+            proxyUsername: localProxyUsername,
+            proxyPassword: localProxyPassword
+        });
+        toast.success(t('ai_config.auto_saved_after_test'));
       } else {
         toast.error(`${t('ai_config.proxy_test_failed')} HTTP ${parsed.status}`);
       }
@@ -228,52 +237,6 @@ export const AIConfigPanel: React.FC = () => {
     setIsManualInput(false);
   }, [provider, getDecryptedApiKey, getDecryptedGoogleKey, getDecryptedSerperKey, getDecryptedYandexKey, getDecryptedOmdbKey, getDecryptedTmdbKey, getDecryptedBangumiToken, enableTmdb, enableBangumi]);
 
-  const handleSave = () => {
-    if (!localKey) {
-        toast.error(t('ai_config.api_key_required'));
-        return;
-    }
-    
-    if (enableSearch) {
-        if (searchProvider === 'google' && (!localGoogleKey || !googleSearchCx)) {
-            toast.warning(t('ai_config.google_warning'));
-        }
-        if (searchProvider === 'serper' && !localSerperKey) {
-            toast.warning(t('ai_config.serper_warning'));
-        }
-        if (searchProvider === 'yandex' && (!localYandexKey || !yandexSearchLogin)) {
-            toast.warning(t('ai_config.yandex_warning'));
-        }
-    }
-
-    const sanitizedBaseUrl = (baseUrl || '').trim().replace(/[\s)]+$/g, '');
-        setConfig({
-            apiKey: localKey,
-            model,
-            baseUrl: sanitizedBaseUrl,
-            temperature,
-            maxTokens,
-            enableSearch,
-            searchProvider,
-            googleSearchApiKey: localGoogleKey,
-            googleSearchCx,
-            serperApiKey: localSerperKey,
-            yandexSearchApiKey: localYandexKey,
-            yandexSearchLogin,
-            omdbApiKey: localOmdbKey,
-            tmdbApiKey: localTmdbKey,
-            enableTmdb: localEnableTmdb,
-            enableBangumi: localEnableBangumi,
-            useSystemProxy: localUseSystemProxy,
-            proxyProtocol: localProxyProtocol,
-            proxyHost: localProxyHost,
-            proxyPort: localProxyPort,
-            proxyUsername: localProxyUsername,
-            proxyPassword: localProxyPassword
-        });
-    toast.success(t('ai_config.save_success'));
-  };
-
   const handleTestConnection = async () => {
     setIsTesting(true);
     setTestResult({ status: null, latency: null, message: '' });
@@ -296,6 +259,8 @@ export const AIConfigPanel: React.FC = () => {
             message: 'Connection successful'
         });
         toast.success(t('ai_config.connection_verified'));
+        
+        // Auto-save on success
         setConfig({
           apiKey: localKey,
           model,
@@ -391,10 +356,33 @@ export const AIConfigPanel: React.FC = () => {
                 {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
-            <p className="text-xs text-theme-subtext mt-1 flex items-center gap-1">
-              <Info className="w-3 h-3" />
-              {t('ai_config.stored_locally')}
-            </p>
+            <div className="flex justify-between items-start mt-1">
+              <p className="text-xs text-theme-subtext flex items-center gap-1">
+                <Info className="w-3 h-3" />
+                {t('ai_config.stored_locally')}
+              </p>
+              <div className="flex items-center gap-2">
+                {testResult.status && (
+                    <div className={clsx(
+                        "text-xs px-2 py-0.5 rounded border flex items-center gap-1",
+                        testResult.status === 'success' 
+                            ? "bg-green-500/10 border-green-500/20 text-green-600"
+                            : "bg-red-500/10 border-red-500/20 text-red-600"
+                    )}>
+                        {testResult.status === 'success' ? <CheckCircle className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                        <span>{testResult.status === 'success' ? `${testResult.latency}ms` : 'Failed'}</span>
+                    </div>
+                )}
+                <button 
+                    onClick={handleTestConnection}
+                    disabled={isTesting}
+                    className="text-xs px-3 py-1.5 rounded border border-theme-accent text-theme-accent hover:bg-theme-accent hover:text-white transition-colors disabled:opacity-50 flex-shrink-0 ml-2 flex items-center gap-1"
+                >
+                    {isTesting && <Activity className="w-3 h-3 animate-spin" />}
+                    {t('ai_config.test_connection_btn')}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -481,6 +469,24 @@ export const AIConfigPanel: React.FC = () => {
               onChange={(e) => setConfig({ maxTokens: parseInt(e.target.value) })}
               className="w-full px-4 py-2 rounded-lg border bg-theme-bg border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent outline-none"
             />
+          </div>
+          <div className="flex justify-end">
+            <a 
+                href={
+                    provider === 'moonshot' ? 'https://platform.moonshot.cn/docs' :
+                    provider === 'openai' ? 'https://platform.openai.com/docs' :
+                    provider === 'deepseek' ? 'https://api-docs.deepseek.com/' :
+                    provider === 'qwen' ? 'https://help.aliyun.com/zh/model-studio/developer-reference/use-compatible-text-generation-interfaces' :
+                    provider === 'google' ? 'https://ai.google.dev/gemini-api/docs/openai' :
+                    provider === 'mistral' ? 'https://docs.mistral.ai/' :
+                    '#'
+                } 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                className="text-xs text-theme-accent hover:underline"
+            >
+                {t('ai_config.view_api_docs')}
+            </a>
           </div>
         </div>
       </div>
@@ -904,66 +910,9 @@ export const AIConfigPanel: React.FC = () => {
         )}
       </div>
 
-      <div className="mt-8 flex flex-col md:flex-row items-center justify-between gap-4 border-t border-theme-border pt-6">
-        <div className="flex items-center gap-4 w-full md:w-auto">
-            <button 
-                onClick={handleTestConnection}
-                disabled={isTesting}
-                className={clsx(
-                    "px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors w-full md:w-auto justify-center",
-                    isTesting 
-                        ? "bg-theme-surface border border-theme-border text-theme-subtext cursor-wait"
-                        : "bg-theme-surface border-2 border-theme-accent hover:bg-theme-bg text-theme-text"
-                )}
-            >
-                <Activity className={clsx("w-4 h-4", isTesting && "animate-spin")} />
-                {isTesting ? t('ai_config.testing_btn') : t('ai_config.test_connection_btn')}
-            </button>
-            
-            {testResult.status && (
-                <div className={clsx(
-                    "flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg border",
-                    testResult.status === 'success' 
-                        ? "bg-green-500/10 border-green-500/20 text-green-600"
-                        : "bg-red-500/10 border-red-500/20 text-red-600"
-                )}>
-                    {testResult.status === 'success' ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-                    <span>
-                        {testResult.status === 'success' 
-                            ? `${testResult.latency}ms` 
-                            : t('ai_config.test_failed')}
-                    </span>
-                </div>
-            )}
-        </div>
 
-        <button 
-            onClick={handleSave}
-            className="px-6 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors bg-theme-accent text-theme-bg hover:bg-theme-accent-hover shadow-lg w-full md:w-auto justify-center border-2 border-theme-accent"
-        >
-            <Save className="w-4 h-4" />
-            {t('ai_config.save_configuration')}
-        </button>
-      </div>
       
-      <div className="mt-4 text-center md:text-right">
-        <a 
-            href={
-                provider === 'moonshot' ? 'https://platform.moonshot.cn/docs' :
-                provider === 'openai' ? 'https://platform.openai.com/docs' :
-                provider === 'deepseek' ? 'https://api-docs.deepseek.com/' :
-                provider === 'qwen' ? 'https://help.aliyun.com/zh/model-studio/developer-reference/use-compatible-text-generation-interfaces' :
-                provider === 'google' ? 'https://ai.google.dev/gemini-api/docs/openai' :
-                provider === 'mistral' ? 'https://docs.mistral.ai/' :
-                '#'
-            } 
-            target="_blank" 
-            rel="noopener noreferrer" 
-            className="text-xs text-theme-accent hover:underline"
-        >
-            {t('ai_config.view_api_docs')}
-        </a>
-      </div>
+
       {isProxyHelpOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-theme-surface border border-theme-border rounded-xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh]">

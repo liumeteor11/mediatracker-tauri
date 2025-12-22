@@ -37,6 +37,9 @@ const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit & { 
   }
 };
 
+const searchCache = new Map<string, { ts: number; data: any }>();
+const CACHE_TTL = 1000 * 60 * 60 * 2; // 2 hours
+
 // Simple Semaphore to limit concurrent API calls
 class Semaphore {
     private max: number;
@@ -477,22 +480,51 @@ export const performClientSideSearch = async (
             const uniq = new Map<string, any>();
             for (const qv of ordered) {
                 const start = performance.now();
-                const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(qv)}`;
-                const res = await fetchWithTimeout(url, { timeoutMs: 12000 });
-                if (res.status === 429) {
-                    console.warn("Google Search 429 (Too Many Requests). Stopping.");
-                    break;
-                }
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.items) {
-                        merged = merged.concat(data.items.map((item: any) => ({
-                            title: item.title,
-                            snippet: item.snippet,
-                            link: item.link,
-                            image: item.pagemap?.cse_image?.[0]?.src
-                        })));
+                const cacheKey = `google_${googleSearchCx}_${qv}`;
+                const cached = searchCache.get(cacheKey);
+                let data: any = null;
+                let status: any = 200;
+                let fromCache = false;
+
+                if (cached && (Date.now() - cached.ts < CACHE_TTL)) {
+                    data = cached.data;
+                    fromCache = true;
+                    status = 'cached';
+                } else {
+                    const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(qv)}&num=8`;
+                    let res;
+                    try {
+                         // Optional: Add small delay to avoid burst
+                         await new Promise(r => setTimeout(r, 200));
+                         res = await fetchWithTimeout(url, { timeoutMs: 12000 });
+                    } catch (e) {
+                         res = { ok: false, status: 500 } as any;
                     }
+                    
+                    status = res.status;
+
+                    if (res.status === 429) {
+                        console.warn("Google Search 429 (Too Many Requests).");
+                        if (cached) {
+                            data = cached.data;
+                            fromCache = true;
+                            status = '429_cached_fallback';
+                        } else {
+                            break;
+                        }
+                    } else if (res.ok) {
+                        data = await res.json();
+                        searchCache.set(cacheKey, { ts: Date.now(), data });
+                    }
+                }
+
+                if (data && data.items) {
+                    merged = merged.concat(data.items.map((item: any) => ({
+                        title: item.title,
+                        snippet: item.snippet,
+                        link: item.link,
+                        image: item.pagemap?.cse_image?.[0]?.src
+                    })));
                 }
                 try {
                     useAIStore.getState().appendLog({
@@ -501,8 +533,8 @@ export const performClientSideSearch = async (
                         channel: 'search',
                         provider: 'google',
                         query: qv,
-                        request: { url },
-                        response: res.ok ? merged.slice(-Math.max(0, Math.min(10, merged.length))) : { status: res.status },
+                        request: { url: `https://www.googleapis.com/customsearch/v1?q=${encodeURIComponent(qv)}&num=8` },
+                        response: data ? (data.items || []).slice(0, 8) : { status },
                         durationMs: Math.round(performance.now() - start),
                         searchType: 'text'
                     });
@@ -686,7 +718,19 @@ export const testAuthoritativeDomain = async (domain: string, sampleQuery: strin
         if (searchProvider === 'google') {
             const apiKey = getDecryptedGoogleKey();
             if (apiKey && googleSearchCx) {
-                const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(query)}`;
+                const cacheKey = `google_${googleSearchCx}_${query}`;
+                const cached = searchCache.get(cacheKey);
+                if (cached && (Date.now() - cached.ts < CACHE_TTL)) {
+                     const data = cached.data;
+                     const items = Array.isArray(data.items) ? data.items.map((item: any) => ({
+                        title: item.title,
+                        snippet: item.snippet,
+                        link: item.link
+                    })) : [];
+                    return { ok: items.length > 0, count: items.length, items };
+                }
+
+                const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(query)}&num=8`;
                 let res;
                 try {
                     await apiLimiter.acquire();
@@ -694,8 +738,21 @@ export const testAuthoritativeDomain = async (domain: string, sampleQuery: strin
                 } finally {
                     apiLimiter.release();
                 }
-                if (!res || !res.ok) return { ok: false, count: 0, items: [], error: res ? String(res.status) : 'network_error' };
+                if (!res || !res.ok) {
+                     if (res && res.status === 429 && cached) {
+                         const data = cached.data;
+                         const items = Array.isArray(data.items) ? data.items.map((item: any) => ({
+                            title: item.title,
+                            snippet: item.snippet,
+                            link: item.link
+                        })) : [];
+                        return { ok: items.length > 0, count: items.length, items };
+                     }
+                     return { ok: false, count: 0, items: [], error: res ? String(res.status) : 'network_error' };
+                }
                 const data = await res.json();
+                searchCache.set(cacheKey, { ts: Date.now(), data });
+
                 const items = Array.isArray(data.items) ? data.items.map((item: any) => ({
                     title: item.title,
                     snippet: item.snippet,
@@ -1698,26 +1755,36 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
             if (searchProvider === 'google') {
                 const apiKey = getDecryptedGoogleKey();
                 if (apiKey && googleSearchCx) {
-                    const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(query)}`;
+                    const cacheKey = `google_${googleSearchCx}_${query}`;
+                    const cached = searchCache.get(cacheKey);
                     
-                    let res;
-                    try {
-                        await apiLimiter.acquire();
-                        res = await fetchWithTimeout(url, { timeoutMs: 10000 });
-                    } finally {
-                        apiLimiter.release();
+                    let data: any = null;
+                    if (cached && (Date.now() - cached.ts < CACHE_TTL)) {
+                        data = cached.data;
+                    } else {
+                        const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(query)}&num=8`;
+                        
+                        let res;
+                        try {
+                            await apiLimiter.acquire();
+                            res = await fetchWithTimeout(url, { timeoutMs: 10000 });
+                        } finally {
+                            apiLimiter.release();
+                        }
+
+                        if (res.status === 429) {
+                             console.warn("Google Custom Search quota exceeded (429).");
+                             if (cached) data = cached.data;
+                        } else if (res.ok) {
+                            data = await res.json();
+                            searchCache.set(cacheKey, { ts: Date.now(), data });
+                        }
                     }
 
-                    if (res.status === 429) {
-                         console.warn("Google Custom Search quota exceeded (429).");
-                    }
-                    if (res.ok) {
-                        const data = await res.json();
-                        if (data.items) {
-                            results = data.items.map((item: any) => ({
-                                image: item.pagemap?.cse_image?.[0]?.src
-                            }));
-                        }
+                    if (data && data.items) {
+                        results = data.items.map((item: any) => ({
+                            image: item.pagemap?.cse_image?.[0]?.src
+                        }));
                     }
                 }
             }
@@ -1900,7 +1967,7 @@ export const testSearchConnection = async (
         try {
             if (effProvider === 'google') {
                 if (!effGoogleKey || !effGoogleCx) return { ok: false, error: 'missing_google_config' };
-                const url = `https://www.googleapis.com/customsearch/v1?key=${effGoogleKey}&cx=${effGoogleCx}&q=test`;
+                const url = `https://www.googleapis.com/customsearch/v1?key=${effGoogleKey}&cx=${effGoogleCx}&q=test&num=1`;
                 const res = await fetchWithTimeout(url, { timeoutMs: 8000 });
                 const ok = res.ok;
                 return { ok, provider: 'google' };

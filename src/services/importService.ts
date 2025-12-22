@@ -75,13 +75,13 @@ export const parseImportFile = async (content: string, source: ImportSource): Pr
         try {
             let item: Partial<MediaItem> = {
                 id: uuidv4(),
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
+                addedAt: new Date().toISOString(),
+                lastEditedAt: Date.now(),
                 category: CollectionCategory.WATCHED, // Default to watched
                 isOngoing: false,
                 hasNewUpdate: false,
                 notificationEnabled: false,
-                review: '',
+                userReview: '',
             };
 
             if (source === 'letterboxd') {
@@ -98,7 +98,7 @@ export const parseImportFile = async (content: string, source: ImportSource): Pr
                 item.type = MediaType.MOVIE; // Letterboxd is mostly movies
                 
                 if (dateIdx !== -1 && row[dateIdx]) {
-                    item.createdAt = new Date(row[dateIdx]).toISOString();
+                    item.addedAt = new Date(row[dateIdx]).toISOString();
                 }
                 
                 if (ratingIdx !== -1 && row[ratingIdx]) {
@@ -138,14 +138,14 @@ export const parseImportFile = async (content: string, source: ImportSource): Pr
                 if (titleIdx === -1) throw new Error("Missing 'Title/标题' column");
 
                 item.title = row[titleIdx];
-                if (dateIdx !== -1 && row[dateIdx]) item.createdAt = new Date(row[dateIdx]).toISOString();
+                if (dateIdx !== -1 && row[dateIdx]) item.addedAt = new Date(row[dateIdx]).toISOString();
                 if (ratingIdx !== -1 && row[ratingIdx]) {
                     // Douban is 1-5 stars usually, or 2/4/6/8/10. 
                     // If it's 1-5, x2. If >5, assume 10 scale.
                     const r = parseFloat(row[ratingIdx]);
                     if (!isNaN(r)) item.rating = r <= 5 ? `${r * 2}/10` : `${r}/10`;
                 }
-                if (commentIdx !== -1) item.review = row[commentIdx];
+                if (commentIdx !== -1) item.userReview = row[commentIdx];
                 item.type = MediaType.MOVIE; // Default, user can change later or we guess?
             }
 
