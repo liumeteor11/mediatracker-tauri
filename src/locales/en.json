@@ -10,7 +10,8 @@
     "error": "Error",
     "select_theme": "Select Theme",
     "theme": "Theme",
-    "save_success": "Saved successfully"
+    "save_success": "Saved successfully",
+    "close": "Close"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -27,6 +28,10 @@
     "model": "Model",
     "enable_search": "Enable Web Search",
     "search_provider": "Search Provider",
+    "search_provider_google": "Google Custom Search",
+    "search_provider_serper": "Serper.dev",
+    "search_provider_yandex": "Yandex XML",
+    "search_provider_duckduckgo": "DuckDuckGo (No Key)",
     "google_api_key": "Google Search API Key",
     "google_cx": "Google Search Engine ID (CX)",
     "serper_api_key": "Serper API Key",
@@ -80,6 +85,8 @@
     "get_yandex_key": "Get Yandex XML Key",
     "omdb_key_label": "OMDB API Key",
     "omdb_key_optional_note": "Optional; used only as poster fallback",
+    "tmdb_key_label": "TMDB API Key",
+    "tmdb_key_optional_note": "Optional; used for better metadata and posters",
     "ddg_info": "DuckDuckGo search does not require an API key. It is free to use but may be slower or rate-limited.",
     "test_connection_btn": "Test Connection",
     "testing_btn": "Testing...",
@@ -122,6 +129,25 @@
       "proxy_help_item_test": "Use 'Test Proxy Connection' to verify and measure latency.",
       "proxy_help_close": "Close"
     },
+  "import": {
+    "title": "Import Media",
+    "btn_label": "Import",
+    "source_label": "Source Platform",
+    "file_label": "CSV File",
+    "upload_btn": "Upload a file",
+    "drag_drop": "or drag and drop",
+    "guide_title": "Import Guide",
+    "start_btn": "Start Import",
+    "success_msg": "Successfully imported {{count}} items",
+    "failed_msg": "Import Failed",
+    "completed": "Import Completed",
+    "summary": "Successfully imported {{success}} items. {{failed}} failed.",
+    "errors": "Errors",
+    "help_trakt": "Trakt: Export your history from settings.",
+    "help_letterboxd": "Letterboxd: Export your data from settings.",
+    "help_douban": "Douban: Use a browser extension to export your interests to CSV.",
+    "file_limit": "CSV up to 10MB"
+  },
   "dashboard": {
     "title": "Dashboard",
     "total_collection": "Total Collection",
@@ -138,8 +164,10 @@
     "updates_found": "Found {{count}} new updates!",
     "no_new_updates": "No new updates.",
     "no_ongoing_items": "No ongoing tracked items.",
-    "update_check_failed": "Update check failed"
-    ,
+    "update_check_failed": "Update check failed",
+    "last_search": "Recent Search",
+    "no_recent_search": "No recent search",
+    "copied": "Copied",
     "io_logs": "I/O Logs",
     "filter_all": "All",
     "filter_ai": "AI",
@@ -148,7 +176,13 @@
     "no_logs": "No logs yet",
     "expand": "Expand",
     "collapse": "Collapse",
-    "copied": "Copied"
+    "copy": "Copy",
+    "yearly_report": "Annual Report",
+    "items_added": "Items Added",
+    "most_active_month": "Peak Month",
+    "favorite_category": "Favorite Category",
+    "monthly_activity": "Monthly Activity",
+    "year_selector": "Select Year"
   },
   "search_page": {
     "title": "Discover Your Next Obsession",
@@ -287,5 +321,30 @@
     "markdown_supported": "Markdown Supported",
     "chars": "chars",
     "markdown_placeholder": "Type your review here using Markdown..."
+  },
+  "plugin_manager": {
+    "title": "Plugin Manager",
+    "new_plugin": "New Plugin",
+    "no_plugins": "No plugins installed.",
+    "name_label": "Name",
+    "version_label": "Version",
+    "description_label": "Description",
+    "script_label": "Script (JavaScript)",
+    "script_hint": "Available: context.fetch, context.console",
+    "test_query_placeholder": "Test query...",
+    "run_test": "Run Test",
+    "save_plugin": "Save Plugin",
+    "no_description": "No description",
+    "validation_error": "Name and script are required",
+    "update_success": "Plugin updated",
+    "add_success": "Plugin added",
+    "name_placeholder": "My Plugin",
+    "description_placeholder": "What does this plugin do?"
+  },
+  "share_card": {
+    "title": "Share Card",
+    "my_review": "My Review",
+    "download": "Save Image",
+    "branding": "MediaTracker"
   }
 }

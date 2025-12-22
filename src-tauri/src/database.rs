@@ -38,6 +38,7 @@ impl Database {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn get_all(&self) -> Result<Vec<MediaItem>, String> {
         let data = self.cache.lock().map_err(|e| e.to_string())?;
         Ok(data.items.clone())

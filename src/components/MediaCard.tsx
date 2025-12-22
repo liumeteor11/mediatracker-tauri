@@ -1,13 +1,38 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Star, Clock, Calendar, Heart, Check, Bookmark, MoreVertical, Info, Bell, BellOff, RefreshCw, Edit, Trash2, User, Users } from 'lucide-react';
+import { Star, Clock, Calendar, Heart, Check, Bookmark, MoreVertical, Info, Bell, BellOff, RefreshCw, Edit, Trash2, User, Users, Plus, Minus, ChevronsUp, Share2 } from 'lucide-react';
 import { MediaItem, CollectionCategory } from '../types/types';
 import clsx from 'clsx';
 import { useThemeStore } from '../store/useThemeStore';
 import { useCollectionStore } from '../store/useCollectionStore';
 import { EditMediaModal } from './EditMediaModal';
+import { ShareCardModal } from './ShareCardModal';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
+
+const smartIncrement = (str: string): string => {
+    const match = str.match(/(\d+)(?!.*\d)/);
+    if (!match) return str;
+    const numStr = match[0];
+    const num = parseInt(numStr, 10);
+    const nextNum = num + 1;
+    // Attempt to preserve zero-padding
+    const nextNumStr = nextNum.toString().padStart(numStr.length, '0'); 
+    const index = match.index!;
+    return str.substring(0, index) + nextNumStr + str.substring(index + numStr.length);
+};
+
+const smartDecrement = (str: string): string => {
+    const match = str.match(/(\d+)(?!.*\d)/);
+    if (!match) return str;
+    const numStr = match[0];
+    const num = parseInt(numStr, 10);
+    if (num <= 0) return str;
+    const nextNum = num - 1;
+    const nextNumStr = nextNum.toString().padStart(numStr.length, '0');
+    const index = match.index!;
+    return str.substring(0, index) + nextNumStr + str.substring(index + numStr.length);
+};
 
 interface MediaCardProps {
   item: MediaItem;
@@ -35,6 +60,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const { t } = useTranslation();
   const [imgLoading, setImgLoading] = useState(true);
   const [imgFailed, setImgFailed] = useState(false);
@@ -292,14 +318,34 @@ export const MediaCard: React.FC<MediaCardProps> = ({
                       <label className="text-[10px] 2xl:text-xs text-theme-subtext">
                         {t('media_card.my_progress')}
                       </label>
-                      <input 
-                        type="text"
-                        value={item.userProgress || ''}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => updateItem(item.id, { userProgress: e.target.value })}
-                        placeholder="e.g. S4E8"
-                        className="w-full rounded px-2 py-1 2xl:py-1.5 text-xs 2xl:text-sm border focus:outline-none focus:ring-1 bg-theme-bg border-theme-border text-theme-text focus:border-theme-accent focus:ring-theme-accent/50"
-                      />
+                      <div className="flex items-center gap-1">
+                        <button 
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                updateItem(item.id, { userProgress: smartDecrement(item.userProgress || '') });
+                            }}
+                            className="p-1.5 rounded bg-theme-bg border border-theme-border text-theme-subtext hover:text-theme-text hover:border-theme-accent transition-colors"
+                        >
+                            <Minus className="w-3 h-3" />
+                        </button>
+                        <input 
+                            type="text"
+                            value={item.userProgress || ''}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => updateItem(item.id, { userProgress: e.target.value })}
+                            placeholder="e.g. S4E8"
+                            className="flex-1 min-w-0 rounded px-2 py-1 2xl:py-1.5 text-xs 2xl:text-sm border focus:outline-none focus:ring-1 bg-theme-bg border-theme-border text-theme-text focus:border-theme-accent focus:ring-theme-accent/50 text-center"
+                        />
+                        <button 
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                updateItem(item.id, { userProgress: smartIncrement(item.userProgress || '') });
+                            }}
+                            className="p-1.5 rounded bg-theme-bg border border-theme-border text-theme-subtext hover:text-theme-text hover:border-theme-accent transition-colors"
+                        >
+                            <Plus className="w-3 h-3" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -323,14 +369,25 @@ export const MediaCard: React.FC<MediaCardProps> = ({
                 <button
                   type="button"
                   onClick={(e) => {
+                    e.stopPropagation();
+                    setIsShareModalOpen(true);
+                  }}
+                  className="flex items-center justify-center px-3 py-2 rounded-lg font-medium transition-colors bg-theme-bg text-theme-text hover:bg-theme-bg-hover border-2 border-theme-border focus:outline-none focus:ring-2 focus:ring-theme-accent"
+                  title={t('media_card.share')}
+                >
+                  <Share2 className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     setShowDeleteConfirm(true);
                   }}
-                  className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg font-medium transition-colors bg-theme-accent-warm text-theme-bg hover:bg-theme-accent-warm-2 border-2 border-theme-accent-warm focus:outline-none focus:ring-2 focus:ring-theme-accent"
+                  className="flex items-center justify-center px-3 py-2 rounded-lg font-medium transition-colors bg-theme-accent-warm text-theme-bg hover:bg-theme-accent-warm-2 border-2 border-theme-accent-warm focus:outline-none focus:ring-2 focus:ring-theme-accent"
+                  title={t('media_card.delete')}
                 >
                   <Trash2 className="w-4 h-4" />
-                  {t('media_card.delete')}
                 </button>
               </div>
             ) : (
@@ -373,6 +430,14 @@ export const MediaCard: React.FC<MediaCardProps> = ({
           item={item} 
           onClose={() => setIsEditModalOpen(false)} 
           onDelete={() => removeFromCollection(item.id)}
+        />
+      )}
+
+      {/* Share Modal */}
+      {isShareModalOpen && (
+        <ShareCardModal 
+          item={item} 
+          onClose={() => setIsShareModalOpen(false)} 
         />
       )}
 

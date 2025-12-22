@@ -67,7 +67,7 @@ fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) 
             let builder = Client::builder()
                 .tcp_nodelay(true)
                 .user_agent("MediaTracker/1.0")
-                .connect_timeout(Duration::from_secs(10))
+                .connect_timeout(Duration::from_secs(20))
                 .timeout(Duration::from_secs(120))
                 .proxy(reqwest::Proxy::all(url).ok()?);
             return builder.build().ok();
@@ -81,7 +81,7 @@ fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) 
         let mut builder = Client::builder()
             .tcp_nodelay(true)
             .user_agent("MediaTracker/1.0")
-            .connect_timeout(Duration::from_secs(10))
+            .connect_timeout(Duration::from_secs(20))
             .timeout(Duration::from_secs(120));
         let mut any = false;
         if let Some(a) = all {
@@ -129,7 +129,7 @@ fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) 
                         let mut builder = Client::builder()
                             .tcp_nodelay(true)
                             .user_agent("MediaTracker/1.0")
-                            .connect_timeout(Duration::from_secs(10))
+                            .connect_timeout(Duration::from_secs(20))
                             .timeout(Duration::from_secs(120));
                         let mut have = false;
                         if let Some(s) = socks_u { if let Ok(p) = reqwest::Proxy::all(s) { builder = builder.proxy(p); have = true; } }
@@ -149,7 +149,7 @@ fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) 
 
 async fn google_search(client: &Client, query: &str, api_key: &str, cx: &str, search_type: Option<&str>) -> Result<Vec<SearchResultItem>, Box<dyn Error>> {
     let mut url = format!(
-        "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}",
+        "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}&safe=active",
         api_key,
         cx,
         urlencoding::encode(query)
@@ -160,7 +160,7 @@ async fn google_search(client: &Client, query: &str, api_key: &str, cx: &str, se
     }
     
     let fut = client.get(&url).send();
-    let resp = tokio::time::timeout(std::time::Duration::from_secs(12), fut)
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(30), fut)
         .await??
         .json::<Value>()
         .await?;
@@ -209,9 +209,9 @@ async fn serper_search(client: &Client, query: &str, api_key: &str, search_type:
         .post(url)
         .header("X-API-KEY", api_key)
         .header("Content-Type", "application/json")
-        .json(&serde_json::json!({ "q": query }))
+        .json(&serde_json::json!({ "q": query, "safe": "active" }))
         .send();
-    let resp = tokio::time::timeout(std::time::Duration::from_secs(12), fut)
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(30), fut)
         .await??;
 
     if !resp.status().is_success() {
@@ -276,7 +276,7 @@ async fn serper_search(client: &Client, query: &str, api_key: &str, search_type:
 
 async fn yandex_search(client: &Client, query: &str, user: &str, api_key: &str) -> Result<Vec<SearchResultItem>, Box<dyn Error>> {
     let url = format!(
-        "https://yandex.com/search/xml?user={}&key={}&l10n=en&filter=none&query={}",
+        "https://yandex.com/search/xml?user={}&key={}&l10n=en&filter=strict&query={}",
         urlencoding::encode(user),
         urlencoding::encode(api_key),
         urlencoding::encode(query)
@@ -396,7 +396,7 @@ async fn duckduckgo_search(client: &Client, query: &str) -> Result<Vec<SearchRes
 }
 
 #[command]
-async fn douban_cover(title: String, kind: Option<String>, state: State<'_, AppState>) -> Result<String, String> {
+async fn douban_cover(title: String, _kind: Option<String>, state: State<'_, AppState>) -> Result<String, String> {
     let q = urlencoding::encode(&title);
     // Prefer movie search, then book
     let urls = vec![
@@ -516,16 +516,21 @@ async fn web_search(query: String, config: SearchConfig, state: State<'_, AppSta
 #[command]
 async fn test_search_provider(config: SearchConfig, state: State<'_, AppState>) -> Result<String, String> {
     let start = std::time::Instant::now();
+    
+    // Use dynamic client based on config (like web_search)
+    let local_client = client_with_proxy(config.proxy_url.clone(), config.use_system_proxy.clone());
+    let client = local_client.as_ref().unwrap_or(&state.proxy_client);
+
     let q = "test";
     let res = match config.provider.as_str() {
         "google" => {
             if let (Some(key), Some(cx)) = (&config.api_key, &config.cx) {
-                google_search(&state.proxy_client, q, key, cx, Some("text")).await
+                google_search(client, q, key, cx, Some("text")).await
             } else { Err("Missing Google API Key or CX".into()) }
         },
         "serper" => {
             if let Some(key) = &config.api_key {
-                serper_search(&state.proxy_client, q, key, Some("text")).await
+                serper_search(client, q, key, Some("text")).await
             } else { Err("Missing Serper API Key".into()) }
         },
         "yandex" => {
@@ -817,6 +822,56 @@ fn export_collection(
     Ok(out_path.to_string_lossy().to_string())
 }
 
+#[command]
+async fn bangumi_search(query: String, subject_type: Option<u32>, token: Option<String>, state: State<'_, AppState>) -> Result<String, String> {
+    let mut url = format!("https://api.bgm.tv/search/subject/{}?responseGroup=large", urlencoding::encode(&query));
+    if let Some(t) = subject_type {
+        url.push_str(&format!("&type={}", t));
+    }
+
+    let mut builder = state.proxy_client.get(&url)
+        .header("User-Agent", "MediaTracker-Rust/1.0 (https://github.com/yourrepo)")
+        .header("Accept", "application/json");
+
+    if let Some(tok) = token {
+        if !tok.is_empty() {
+            builder = builder.header("Authorization", format!("Bearer {}", tok));
+        }
+    }
+
+    let resp = builder.send().await.map_err(|e| e.to_string())?;
+    
+    if !resp.status().is_success() {
+        return Err(format!("Bangumi Error: {}", resp.status()));
+    }
+    
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    Ok(body)
+}
+
+#[command]
+async fn bangumi_details(id: u64, token: Option<String>, state: State<'_, AppState>) -> Result<String, String> {
+    let url = format!("https://api.bgm.tv/v0/subjects/{}", id);
+    let mut builder = state.proxy_client.get(&url)
+        .header("User-Agent", "MediaTracker-Rust/1.0 (https://github.com/yourrepo)")
+        .header("Accept", "application/json");
+
+    if let Some(tok) = token {
+        if !tok.is_empty() {
+            builder = builder.header("Authorization", format!("Bearer {}", tok));
+        }
+    }
+
+    let resp = builder.send().await.map_err(|e| e.to_string())?;
+    
+    if !resp.status().is_success() {
+        return Err(format!("Bangumi Error: {}", resp.status()));
+    }
+    
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    Ok(body)
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -857,6 +912,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             web_search, 
+            bangumi_search,
+            bangumi_details,
             ai_chat,
             wiki_pageimages,
             douban_cover,

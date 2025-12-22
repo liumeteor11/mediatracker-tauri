@@ -2,21 +2,88 @@ import React, { useState, useEffect } from 'react';
 import { useCollectionStore } from '../store/useCollectionStore';
 import { MediaCard } from '../components/MediaCard';
 import { CollectionCategory, MediaItem } from '../types/types';
-import { Filter, Search as SearchIcon, X, Download, Upload, MoreHorizontal } from 'lucide-react';
+import { Filter, Search as SearchIcon, X, Download, Upload, MoreHorizontal, RefreshCw } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
+import { checkUpdates, repairMediaItem } from '../services/aiService';
 
 export const CollectionPage: React.FC = () => {
   const { t } = useTranslation();
-  const { collection, moveCategory, importCollection } = useCollectionStore();
+  const { collection, moveCategory, importCollection, updateItem } = useCollectionStore();
   const [filter, setFilter] = useState<CollectionCategory | 'All'>('All');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showMenu, setShowMenu] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const menuRef = React.useRef<HTMLDivElement>(null);
+
+  const handleRefresh = async () => {
+      setIsRefreshing(true);
+      try {
+          const now = Date.now();
+          let updatedCount = 0;
+          let repairedCount = 0;
+
+          // 1. Repair missing metadata (posters, dates)
+          // Process in chunks to avoid overwhelming APIs
+          const itemsToRepair = collection.filter(item => 
+              !item.posterUrl || 
+              item.posterUrl.includes('placehold.co') || 
+              !item.releaseDate
+          );
+          
+          if (itemsToRepair.length > 0) {
+              toast.info(t('collection.repairing_metadata', { count: itemsToRepair.length }) || `Updating metadata for ${itemsToRepair.length} items...`);
+              
+              // Process sequentially or in small batches
+              for (const item of itemsToRepair) {
+                  try {
+                      const updates = await repairMediaItem(item);
+                      if (updates) {
+                          updateItem(item.id, updates);
+                          repairedCount++;
+                      }
+                  } catch (e) {
+                      console.error(`Failed to repair ${item.title}`, e);
+                  }
+              }
+          }
+
+          // 2. Check for updates on ongoing items
+          const ongoingItems = collection.filter(item => item.isOngoing && item.notificationEnabled !== false);
+          
+          if (ongoingItems.length > 0) {
+             const updates = await checkUpdates(ongoingItems);
+             updates.forEach(update => {
+                const original = collection.find(i => i.id === update.id);
+                if (!original) return;
+                const changed = update.latestUpdateInfo !== original.latestUpdateInfo;
+                updateItem(update.id, {
+                  latestUpdateInfo: update.latestUpdateInfo,
+                  isOngoing: update.isOngoing,
+                  lastCheckedAt: now,
+                  hasNewUpdate: changed ? true : original.hasNewUpdate
+                });
+                if (changed) updatedCount++;
+             });
+          }
+
+          if (updatedCount > 0 || repairedCount > 0) {
+              toast.success(t('collection.refresh_success', { updated: updatedCount, repaired: repairedCount }) || `Updated ${updatedCount} items, repaired ${repairedCount} items`);
+          } else {
+              toast.info(t('collection.refresh_no_changes') || "No new updates found");
+          }
+
+      } catch (error) {
+          console.error(error);
+          toast.error(t('collection.refresh_error') || "Failed to refresh collection");
+      } finally {
+          setIsRefreshing(false);
+      }
+  };
 
   const getCategoryLabel = (cat: string) => {
     switch (cat) {
@@ -136,6 +203,20 @@ export const CollectionPage: React.FC = () => {
                 />
             </div>
             
+            <button
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className={clsx(
+                    "p-2 rounded-lg border transition-colors flex items-center justify-center",
+                    isRefreshing
+                        ? "bg-theme-surface border-theme-border text-theme-subtext cursor-wait"
+                        : "bg-theme-surface border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent"
+                )}
+                title={t('collection.refresh_tooltip') || "Refresh collection & Fix metadata"}
+            >
+                <RefreshCw className={clsx("w-5 h-5", isRefreshing && "animate-spin")} />
+            </button>
+
             <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0 no-scrollbar">
                 {(['All', ...Object.values(CollectionCategory)] as const).map((cat) => (
                     <button

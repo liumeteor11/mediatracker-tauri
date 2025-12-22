@@ -63,7 +63,16 @@ export const Navbar: React.FC = () => {
     <nav className="backdrop-blur-md border-b sticky top-0 z-50 transition-colors duration-300 bg-theme-surface/90 border-theme-border text-theme-text">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          <Link to="/" className="flex-shrink-0 flex items-center gap-2">
+          <Link 
+            to="/" 
+            className="flex-shrink-0 flex items-center gap-2"
+            onClick={(e) => {
+                if (location.pathname === '/') {
+                    e.preventDefault();
+                    window.dispatchEvent(new CustomEvent('reset-search'));
+                }
+            }}
+          >
             <div className="w-8 h-8 rounded-theme flex items-center justify-center transition-colors bg-theme-accent text-theme-bg">
               <Library className="w-5 h-5" />
             </div>

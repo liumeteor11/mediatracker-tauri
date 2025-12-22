@@ -1,3 +1,7 @@
+import { searchTMDB, getTMDBPosterUrl } from './tmdbService';
+import { searchBangumi } from './bangumiService';
+import { usePluginStore } from '../store/usePluginStore';
+import { PluginExecutor } from './pluginService';
 import OpenAI from "openai";
 import { MediaType, MediaItem } from "../types/types";
 import { v4 as uuidv4 } from 'uuid';
@@ -94,6 +98,27 @@ const FRANCHISE_ALIASES: Record<string, string[]> = {
 
 const prefetchedImages = new Map<string, string>();
 
+const checkImage = async (url: string): Promise<boolean> => {
+    if (!url) return false;
+    return new Promise((resolve) => {
+        const img = new Image();
+        let timer: any = null;
+        img.onload = () => {
+            if (timer) clearTimeout(timer);
+            resolve(true);
+        };
+        img.onerror = () => {
+            if (timer) clearTimeout(timer);
+            resolve(false);
+        };
+        timer = setTimeout(() => {
+            img.src = "";
+            resolve(false);
+        }, 5000);
+        img.src = url;
+    });
+};
+
 const fetchPosterFromOMDB = async (title: string, year: string): Promise<string | undefined> => {
   const s = useAIStore.getState();
   const key = (s.getDecryptedOmdbKey && s.getDecryptedOmdbKey()) || OMDB_API_KEY;
@@ -104,10 +129,18 @@ const fetchPosterFromOMDB = async (title: string, year: string): Promise<string 
     const response = await fetch(url);
     const data = await response.json();
     if (data.Response === "True" && data.Poster && data.Poster !== "N/A") {
-      return data.Poster;
+      const isValid = await checkImage(data.Poster);
+      if (isValid) return data.Poster;
     }
   } catch (error) {}
   return undefined;
+};
+
+const isSafeContent = (text: string): boolean => {
+    const lower = text.toLowerCase();
+    const nsfwKeywords = ['porn', 'xxx', 'jav', 'hentai', 'erotic', 'sex', '18+', 'adult', 'nude', 'naked', 'uncensored'];
+    const cnNsfw = ['色情', '成人', '乱伦', '强奸', '裸体', '三级', 'av', '女优', '无码', '偷拍'];
+    return !nsfwKeywords.some(k => lower.includes(k)) && !cnNsfw.some(k => lower.includes(k));
 };
 
 export const performClientSideSearch = async (
@@ -150,8 +183,8 @@ export const performClientSideSearch = async (
         variants.add(base);
         if (shortOrNumeric) {
             variants.add(isChinese 
-                ? `${base} 电影 OR 电视剧 OR 小说 OR 漫画 OR 专辑 -新闻 -评测 -发布会 -价格 -手机 -iPhone -Apple -三星 -华为`
-                : `${base} movie OR tv series OR novel OR comic OR album -news -review -price -iphone -apple -samsung -huawei`);
+                ? `${base} 电影 OR 电视剧 OR 小说 OR 漫画 OR 专辑 -新闻 -评测 -发布会 -价格 -手机 -iPhone -Apple -三星 -华为 -色情 -成人`
+                : `${base} movie OR tv series OR novel OR comic OR album -news -review -price -iphone -apple -samsung -huawei -porn -xxx`);
         }
         const hasSeq = /(^|\s)(1|2|第一|第二|续集)($|\s)/.test(base);
         if (!hasSeq) {
@@ -173,8 +206,8 @@ export const performClientSideSearch = async (
         const isAllSearch = !preferredType || preferredType === 'All';
         if (isAllSearch) {
             variants.add(isChinese 
-                ? `${base} 电影 OR 电视剧 OR 小说 OR 漫画 OR 专辑`
-                : `${base} movie OR tv series OR novel OR comic OR album`
+                ? `${base} 电影 OR 电视剧 OR 小说 OR 漫画 OR 专辑 -色情 -成人`
+                : `${base} movie OR tv series OR novel OR comic OR album -porn -xxx`
             );
         }
         const qList = Array.from(variants).slice(0, 4);
@@ -249,12 +282,14 @@ export const performClientSideSearch = async (
 
         const isMediaCandidate = (title: string, snippet: string): boolean => {
             const text = `${title} ${snippet}`.toLowerCase();
+            if (!isSafeContent(text)) return false; // NSFW Filter
             const positives = isChinese 
-                ? ['电影','电视剧','短剧','漫画','小说','书籍','专辑','音乐','原声','ost']
-                : ['movie','film','tv series','season','episode','novel','book','comic','manga','album','music','soundtrack','ost'];
+                ? ['电影','电视剧','短剧','漫画','小说','书籍','专辑','音乐','原声','ost','动漫','动画','综艺','纪录片','剧集','番剧']
+                : ['movie','film','tv series','season','episode','novel','book','comic','manga','album','music','soundtrack','ost','anime','animation','documentary','drama'];
             if (effType === 'All') {
-                const hasYear = /(19\d{2}|20\d{2})/.test(text);
-                return positives.some(k => text.includes(k)) || hasYear;
+                // Stricter check: require at least one media keyword even if a year is present.
+                // This prevents generic year-based results (e.g. "2025 Trends") from being treated as media.
+                return positives.some(k => text.includes(k));
             }
             return positives.some(k => text.includes(k));
         };
@@ -273,42 +308,85 @@ export const performClientSideSearch = async (
                     proxy_url: getProxyUrl(),
                     use_system_proxy: useSystemProxy
                 };
-                let merged: any[] = [];
+                
                 const topN = (effType === MediaType.MOVIE || effType === MediaType.TV_SERIES) ? 3 : 2;
                 const ordered = [...precisionQueries.slice(0, topN), ...qList];
                 const uniq = new Map<string, any>();
-                for (const qv of ordered) {
+                
+                // Parallel Execution
+                const searchPromises = ordered.map(async (qv) => {
                     const start = performance.now();
-                    const resultStr = await invoke<string>("web_search", { query: qv, config: rustConfig });
                     try {
-                        const arr = JSON.parse(resultStr);
-                        if (Array.isArray(arr)) {
-                            merged = merged.concat(arr);
+                        // Retry logic wrapped in a function or loop
+                        let resultStr = "";
+                        for (let i = 0; i < 2; i++) {
+                             try {
+                                 resultStr = await invoke<string>("web_search", { query: qv, config: rustConfig });
+                                 if (resultStr) break;
+                             } catch (e) {
+                                 if (i === 1) throw e;
+                                 await new Promise(r => setTimeout(r, 1000));
+                             }
                         }
-                    } catch {}
-                    try {
-                        useAIStore.getState().appendLog({
-                            id: uuidv4(),
-                            ts: Date.now(),
-                            channel: 'search',
-                            provider: searchProvider,
-                            query: qv,
-                            request: { config: { provider: rustConfig.provider, cx: rustConfig.cx, user: rustConfig.user, search_type: rustConfig.search_type } },
-                            response: resultStr,
-                            durationMs: Math.round(performance.now() - start),
-                            searchType: 'text'
-                        });
-                    } catch {}
-                    const filteredStep = (effType === 'All') ? merged : merged.filter((it: any) => isMediaCandidate(it.title, it.snippet));
-                    for (const it of filteredStep) {
-                        const pr = processSearchResult(it.title || '', it.snippet || '');
-                        const key = `${pr.title}|${pr.year}`;
-                        if (!uniq.has(key)) uniq.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
+                        
+                        try {
+                            useAIStore.getState().appendLog({
+                                id: uuidv4(),
+                                ts: Date.now(),
+                                channel: 'search',
+                                provider: searchProvider,
+                                query: qv,
+                                request: { config: { provider: rustConfig.provider, cx: rustConfig.cx, user: rustConfig.user, search_type: rustConfig.search_type } },
+                                response: resultStr,
+                                durationMs: Math.round(performance.now() - start),
+                                searchType: 'text'
+                            });
+                        } catch {}
+                        
+                        if (resultStr) {
+                            const arr = JSON.parse(resultStr);
+                            if (Array.isArray(arr)) return arr;
+                        }
+                    } catch (e) {
+                        console.warn(`Search failed for query: ${qv}`, e);
                     }
+                    return [];
+                });
+
+                const resultsArrays = await Promise.all(searchPromises);
+                const allResults = resultsArrays.flat();
+                
+                const filteredStep = (effType === 'All') ? allResults : allResults.filter((it: any) => isMediaCandidate(it.title || '', it.snippet || ''));
+                
+                // Process and Score Results
+                const scoredResults = filteredStep.map((it: any) => {
+                    const pr = processSearchResult(it.title || '', it.snippet || '');
+                    let score = 0;
+                    // Exact title match bonus
+                    if (pr.title.toLowerCase().includes(base.toLowerCase())) score += 10;
+                    if (pr.title.toLowerCase() === base.toLowerCase()) score += 20;
+                    // Year presence bonus
+                    if (pr.year) score += 5;
+                    // Authoritative domain bonus (simple check)
+                    if (it.link && precisionDomains.some(d => it.link.includes(d.replace('site:', '')))) score += 15;
+                    
+                    return { ...it, processed: pr, score };
+                });
+                
+                // Sort by score descending
+                scoredResults.sort((a: any, b: any) => b.score - a.score);
+
+                for (const it of scoredResults) {
+                    const pr = it.processed;
+                    const key = `${pr.title}|${pr.year}`;
+                    if (!uniq.has(key)) uniq.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
                     if (uniq.size >= 8) break;
                 }
-                const out = Array.from(uniq.values()).slice(0, 8);
+                
+                const out = Array.from(uniq.values());
                 if (out.length > 0) return JSON.stringify(out);
+                
+                // Fallback to DuckDuckGo if no results
                 const ddgConfig = {
                     provider: 'duckduckgo',
                     api_key: undefined,
@@ -318,14 +396,12 @@ export const performClientSideSearch = async (
                     proxy_url: useAIStore.getState().getProxyUrl(),
                     use_system_proxy: useAIStore.getState().useSystemProxy
                 };
-                let ddgMerged: any[] = [];
-                const uniqD = new Map<string, any>();
-                for (const qv of ordered) {
+                
+                const ddgPromises = ordered.map(async (qv) => {
                     const start = performance.now();
-                    let resultStr = "";
                     try {
-                        resultStr = await invoke<string>("web_search", { query: qv, config: ddgConfig });
-                        try {
+                        const resultStr = await invoke<string>("web_search", { query: qv, config: ddgConfig });
+                         try {
                             useAIStore.getState().appendLog({
                                 id: uuidv4(),
                                 ts: Date.now(),
@@ -338,23 +414,39 @@ export const performClientSideSearch = async (
                                 searchType: 'text'
                             });
                         } catch {}
-                        try {
-                            const arr = JSON.parse(resultStr);
-                            if (Array.isArray(arr)) {
-                                ddgMerged = ddgMerged.concat(arr);
-                            }
-                        } catch {}
+                        if (resultStr) {
+                             const arr = JSON.parse(resultStr);
+                             if (Array.isArray(arr)) return arr;
+                        }
                     } catch {}
-                    const filteredStep = (effType === 'All') ? ddgMerged : ddgMerged.filter((it: any) => isMediaCandidate(it.title, it.snippet));
-                    for (const it of filteredStep) {
-                        const pr = processSearchResult(it.title || '', it.snippet || '');
-                        const key = `${pr.title}|${pr.year}`;
-                        if (!uniqD.has(key)) uniqD.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
-                    }
+                    return [];
+                });
+
+                const ddgResultsArrays = await Promise.all(ddgPromises);
+                const allDDGResults = ddgResultsArrays.flat();
+                
+                const filteredDDG = (effType === 'All') ? allDDGResults : allDDGResults.filter((it: any) => isMediaCandidate(it.title || '', it.snippet || ''));
+                
+                 const scoredDDG = filteredDDG.map((it: any) => {
+                    const pr = processSearchResult(it.title || '', it.snippet || '');
+                    let score = 0;
+                    if (pr.title.toLowerCase().includes(base.toLowerCase())) score += 10;
+                    if (pr.title.toLowerCase() === base.toLowerCase()) score += 20;
+                    if (pr.year) score += 5;
+                    return { ...it, processed: pr, score };
+                });
+                scoredDDG.sort((a: any, b: any) => b.score - a.score);
+
+                const uniqD = new Map<string, any>();
+                for (const it of scoredDDG) {
+                    const pr = it.processed;
+                    const key = `${pr.title}|${pr.year}`;
+                    if (!uniqD.has(key)) uniqD.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
                     if (uniqD.size >= 8) break;
                 }
-                const outD = Array.from(uniqD.values()).slice(0, 8);
+                const outD = Array.from(uniqD.values());
                 if (outD.length > 0) return JSON.stringify(outD);
+
             } catch (tauriError) {
                 console.error("Tauri search failed:", tauriError);
                 try {
@@ -371,6 +463,7 @@ export const performClientSideSearch = async (
                     });
                 } catch {}
                 // Fall through to web-mode Wikipedia fallback
+                return "";
             }
         }
         
@@ -386,6 +479,10 @@ export const performClientSideSearch = async (
                 const start = performance.now();
                 const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(qv)}`;
                 const res = await fetchWithTimeout(url, { timeoutMs: 12000 });
+                if (res.status === 429) {
+                    console.warn("Google Search 429 (Too Many Requests). Stopping.");
+                    break;
+                }
                 if (res.ok) {
                     const data = await res.json();
                     if (data.items) {
@@ -441,6 +538,10 @@ export const performClientSideSearch = async (
                     },
                     body: JSON.stringify({ q: qv })
                 , timeoutMs: 12000 });
+                if (response.status === 429) {
+                    console.warn("Serper Search 429 (Too Many Requests). Stopping.");
+                    break;
+                }
                 if (response.ok) {
                     const data = await response.json();
                     if (data.organic) {
@@ -478,57 +579,61 @@ export const performClientSideSearch = async (
         }
     }
 
-    try {
-        let mergedDDG: any[] = [];
-        const orderedD = [...precisionQueries.slice(0, 3), ...qList];
-        const uniqD = new Map<string, any>();
-        for (const qv of orderedD) {
-            const start = performance.now();
-            let items: any[] = [];
-            try {
-                const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(qv)}&format=json&no_redirect=1&no_html=1`;
-                const res = await fetchWithTimeout(url, { timeoutMs: 8000 });
-                if (res.ok) {
-                    const data = await res.json();
-                    const rt = Array.isArray(data?.RelatedTopics) ? data.RelatedTopics : [];
-                    const results = Array.isArray(data?.Results) ? data.Results : [];
-                    for (const r of results) {
-                        const t = r?.Text || '';
-                        const u = r?.FirstURL || '';
-                        if (t && u) items.push({ title: t, snippet: t, link: u, image: undefined });
+    // Fallback: DuckDuckGo (Web Mode Only - Tauri handles this above via Rust to avoid CORS)
+    if (!isTauriEnv) {
+        try {
+            let mergedDDG: any[] = [];
+            const orderedD = [...precisionQueries.slice(0, 3), ...qList];
+            const uniqD = new Map<string, any>();
+            for (const qv of orderedD) {
+                const start = performance.now();
+                let items: any[] = [];
+                try {
+                    // Note: This often fails due to CORS if not proxied
+                    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(qv)}&format=json&no_redirect=1&no_html=1`;
+                    const res = await fetchWithTimeout(url, { timeoutMs: 8000 });
+                    if (res.ok) {
+                        const data = await res.json();
+                        const rt = Array.isArray(data?.RelatedTopics) ? data.RelatedTopics : [];
+                        const results = Array.isArray(data?.Results) ? data.Results : [];
+                        for (const r of results) {
+                            const t = r?.Text || '';
+                            const u = r?.FirstURL || '';
+                            if (t && u) items.push({ title: t, snippet: t, link: u, image: undefined });
+                        }
+                        for (const r of rt) {
+                            const t = r?.Text || '';
+                            const u = r?.FirstURL || '';
+                            if (t && u) items.push({ title: t, snippet: t, link: u, image: undefined });
+                        }
                     }
-                    for (const r of rt) {
-                        const t = r?.Text || '';
-                        const u = r?.FirstURL || '';
-                        if (t && u) items.push({ title: t, snippet: t, link: u, image: undefined });
-                    }
+                } catch {}
+                mergedDDG = mergedDDG.concat(items);
+                try {
+                    useAIStore.getState().appendLog({
+                        id: uuidv4(),
+                        ts: Date.now(),
+                        channel: 'search',
+                        provider: 'duckduckgo',
+                        query: qv,
+                        request: { url: 'https://api.duckduckgo.com', params: { q: qv } },
+                        response: mergedDDG.slice(-Math.max(0, Math.min(10, mergedDDG.length))),
+                        durationMs: Math.round(performance.now() - start),
+                        searchType: 'text'
+                    });
+                } catch {}
+                const filteredD = (effType === 'All') ? mergedDDG : mergedDDG.filter((it: any) => isMediaCandidate(it.title, it.snippet));
+                for (const it of filteredD) {
+                    const pr = processSearchResult(it.title || '', it.snippet || '');
+                    const key = `${pr.title}|${pr.year}`;
+                    if (!uniqD.has(key)) uniqD.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
                 }
-            } catch {}
-            mergedDDG = mergedDDG.concat(items);
-            try {
-                useAIStore.getState().appendLog({
-                    id: uuidv4(),
-                    ts: Date.now(),
-                    channel: 'search',
-                    provider: 'duckduckgo',
-                    query: qv,
-                    request: { url: 'https://api.duckduckgo.com', params: { q: qv } },
-                    response: mergedDDG.slice(-Math.max(0, Math.min(10, mergedDDG.length))),
-                    durationMs: Math.round(performance.now() - start),
-                    searchType: 'text'
-                });
-            } catch {}
-            const filteredD = (effType === 'All') ? mergedDDG : mergedDDG.filter((it: any) => isMediaCandidate(it.title, it.snippet));
-            for (const it of filteredD) {
-                const pr = processSearchResult(it.title || '', it.snippet || '');
-                const key = `${pr.title}|${pr.year}`;
-                if (!uniqD.has(key)) uniqD.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
+                if (uniqD.size >= 8) break;
             }
-            if (uniqD.size >= 8) break;
-        }
-        const outD = Array.from(uniqD.values()).slice(0, 8);
-        if (outD.length > 0) return JSON.stringify(outD);
-    } catch {}
+            const outD = Array.from(uniqD.values()).slice(0, 8);
+            if (outD.length > 0) return JSON.stringify(outD);
+        } catch {}
+    }
         
         
     } catch (e) {
@@ -582,8 +687,14 @@ export const testAuthoritativeDomain = async (domain: string, sampleQuery: strin
             const apiKey = getDecryptedGoogleKey();
             if (apiKey && googleSearchCx) {
                 const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(query)}`;
-                const res = await fetchWithTimeout(url, { timeoutMs: 12000 });
-                if (!res.ok) return { ok: false, count: 0, items: [], error: String(res.status) };
+                let res;
+                try {
+                    await apiLimiter.acquire();
+                    res = await fetchWithTimeout(url, { timeoutMs: 12000 });
+                } finally {
+                    apiLimiter.release();
+                }
+                if (!res || !res.ok) return { ok: false, count: 0, items: [], error: res ? String(res.status) : 'network_error' };
                 const data = await res.json();
                 const items = Array.isArray(data.items) ? data.items.map((item: any) => ({
                     title: item.title,
@@ -1024,10 +1135,129 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
 
   const isChinese = i18n.language.startsWith('zh');
 
-  let searchContext = "";
-  try {
-    searchContext = await performClientSideSearch(query, true, type);
-  } catch {}
+  // Parallel Execution: TMDB, Bangumi, Plugins, and AI Search Context
+  const [tmdbRes, bangumiRes, pluginRes, searchContext] = await Promise.all([
+      // TMDB Search
+      (async () => {
+          try {
+              if (!type || type === 'All' || type === MediaType.MOVIE || type === MediaType.TV_SERIES) {
+                  const t = (type === MediaType.MOVIE) ? 'movie' : (type === MediaType.TV_SERIES) ? 'tv' : 'multi';
+                  return await searchTMDB(query, t as any);
+              }
+          } catch {}
+          return [];
+      })(),
+      // Bangumi Search
+      (async () => {
+           try {
+               let bType = undefined;
+               // Bangumi types: 1=book, 2=anime(tv), 3=music, 4=game, 6=real
+               if (type === MediaType.BOOK) bType = 1;
+               if (type === MediaType.TV_SERIES || type === MediaType.COMIC) bType = 2; 
+               if (type === MediaType.MUSIC) bType = 3;
+               return await searchBangumi(query, bType);
+           } catch {}
+           return [];
+      })(),
+      // Plugin Search
+      (async () => {
+          try {
+              const { getEnabledPlugins } = usePluginStore.getState();
+              const plugins = getEnabledPlugins();
+              if (plugins.length === 0) return [];
+              
+              const results = await Promise.all(plugins.map(async p => {
+                  try {
+                      const executor = new PluginExecutor(p);
+                      return await executor.executeSearch(query);
+                  } catch (e) {
+                      console.error(`Plugin ${p.name} failed:`, e);
+                      return [];
+                  }
+              }));
+              return results.flat();
+          } catch (e) {
+              console.error("Plugin search error:", e);
+              return [];
+          }
+      })(),
+      // AI Search Context
+      (async () => {
+          try {
+            return await performClientSideSearch(query, true, type);
+          } catch { return ""; }
+      })()
+  ]);
+
+  // Convert Plugin Results
+  const pluginItems: MediaItem[] = pluginRes.map((item: any) => {
+      const normalizeType = (t: string | undefined): MediaType => {
+          const s = (t || '').toLowerCase();
+          if (s.includes('movie') || s.includes('film')) return MediaType.MOVIE;
+          if (s.includes('tv') || s.includes('series')) return MediaType.TV_SERIES;
+          if (s.includes('book') || s.includes('novel')) return MediaType.BOOK;
+          if (s.includes('comic') || s.includes('manga')) return MediaType.COMIC;
+          if (s.includes('music') || s.includes('album')) return MediaType.MUSIC;
+          if (s.includes('short')) return MediaType.SHORT_DRAMA;
+          return MediaType.OTHER;
+      };
+
+      return {
+          id: uuidv4(),
+          title: item.title,
+          directorOrAuthor: item.directorOrAuthor || "",
+          description: item.description || "",
+          releaseDate: item.year || "",
+          type: normalizeType(item.type),
+          isOngoing: false,
+          posterUrl: item.poster,
+          rating: item.rating,
+          status: 'To Watch',
+          addedAt: new Date().toISOString()
+      };
+  });
+
+  // Convert TMDB Results
+  const tmdbItems: MediaItem[] = tmdbRes
+    .filter((item: any) => item.media_type !== 'person')
+    .map((item: any) => ({
+      id: uuidv4(),
+      title: item.title || item.name || query,
+      directorOrAuthor: "", 
+      description: item.overview || "",
+      releaseDate: item.release_date || item.first_air_date || "",
+      type: item.media_type === 'movie' ? MediaType.MOVIE : MediaType.TV_SERIES,
+      isOngoing: false,
+      posterUrl: getTMDBPosterUrl(item.poster_path) || undefined,
+      rating: item.vote_average ? `${item.vote_average.toFixed(1)}/10` : undefined,
+      status: 'To Watch',
+      addedAt: new Date().toISOString()
+  }));
+
+  // Convert Bangumi Results
+  const bangumiItems: MediaItem[] = bangumiRes.map((item: any) => {
+      let mType = MediaType.OTHER;
+      if (item.type === 1) mType = MediaType.BOOK;
+      else if (item.type === 2) mType = MediaType.TV_SERIES; 
+      else if (item.type === 3) mType = MediaType.MUSIC;
+      else if (item.type === 6) mType = MediaType.TV_SERIES;
+      
+      return {
+          id: uuidv4(),
+          title: item.name_cn || item.name,
+          directorOrAuthor: "",
+          description: item.summary || "",
+          releaseDate: item.date || "",
+          type: mType,
+          isOngoing: false,
+          posterUrl: item.images?.large || item.images?.common,
+          rating: item.score ? `${item.score}/10` : undefined,
+          status: 'To Watch',
+          addedAt: new Date().toISOString()
+      };
+  });
+
+  // Prefetch images from search context
   try {
     if (searchContext) {
       const parsedSC = JSON.parse(searchContext);
@@ -1069,7 +1299,6 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
           userPrompt += `\n[PREFER] Use the web search tool; if unavailable, rely on the following candidate search results or internal knowledge to return a valid JSON array:\n${searchContext}\nReturn ONLY a valid JSON array. Check metadata/pagemap for accurate dates. If nothing matches, return an empty array.`;
       }
   } else {
-      // Standard prompt for other providers
       if (isChinese) {
           userPrompt = `搜索符合以下查询的媒体作品: "${query}"。`;
           if (type && type !== 'All') {
@@ -1096,97 +1325,94 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
     { role: "user", content: userPrompt }
   ];
 
-  // Force search to allow the AI to verify dates if needed
-  const text = await callAI(messages, 0.1, { forceSearch: true });
-  if (!text) {
-    try {
-      const fb = await createFallbackItemsFromContext(searchContext);
-      if (fb.length > 0) return fb;
-    } catch {}
-    return [];
-  }
-
-  // Improved JSON extraction
-  let jsonStr = "";
-  const jsonArrayMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
-  if (jsonArrayMatch) {
-      jsonStr = jsonArrayMatch[0];
-  } else {
-      jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
-  }
-
-  let rawData: Omit<MediaItem, 'id' | 'posterUrl'>[] = [];
-
-  // Quick check if it looks like JSON
-  if (!jsonStr.startsWith('[') && !jsonStr.startsWith('{')) {
-      console.warn("AI returned non-JSON response:", text);
-      try {
-        const fb = await createFallbackItemsFromContext(searchContext);
-        if (fb.length > 0) return fb;
-      } catch {}
-      return [];
-  }
-
+  let aiItems: MediaItem[] = [];
   try {
-      rawData = JSON.parse(jsonStr);
-  } catch (e) {
-      console.error("Failed to parse JSON:", e);
-      // Attempt to recover if it's a truncated JSON array
-      const lastBracket = jsonStr.lastIndexOf('}');
-      if (lastBracket > 0) {
-        try {
-          const recovered = jsonStr.substring(0, lastBracket + 1) + ']';
-          rawData = JSON.parse(recovered);
-        } catch (retryError) {
-          console.error("Failed to recover JSON:", retryError);
-          try {
-            const fb = await createFallbackItemsFromContext(searchContext);
-            if (fb.length > 0) return fb;
-          } catch {}
-          return [];
+    const text = await callAI(messages, 0.1, { forceSearch: true });
+    if (text) {
+        let jsonStr = "";
+        const jsonArrayMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
+        if (jsonArrayMatch) {
+            jsonStr = jsonArrayMatch[0];
+        } else {
+            jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
         }
-      } else {
+
+        let rawData: any[] = [];
+        if (jsonStr.startsWith('[') || jsonStr.startsWith('{')) {
+            try {
+                rawData = JSON.parse(jsonStr);
+            } catch (e) {
+                const lastBracket = jsonStr.lastIndexOf('}');
+                if (lastBracket > 0) {
+                    try {
+                        rawData = JSON.parse(jsonStr.substring(0, lastBracket + 1) + ']');
+                    } catch {}
+                }
+            }
+        }
+
+        if (rawData.length > 0) {
+             aiItems = rawData.map((item) => {
+                const id = uuidv4();
+                const placeholder = getPlaceholder(item.type || 'Media');
+                const posterUrl = prefetchedImages.get(item.title.toLowerCase()) || undefined;
+                const normalizeType = (v: any, title: string, desc?: string): MediaType => {
+                    const s = String(v || '').toLowerCase();
+                    if (s.includes('novel') || s.includes('book') || s.includes('小说') || s.includes('书')) return MediaType.BOOK;
+                    if (s.includes('album') || s.includes('music') || s.includes('专辑') || s.includes('音乐')) return MediaType.MUSIC;
+                    if (s.includes('tv') || s.includes('series') || s.includes('season') || s.includes('电视剧') || s.includes('剧集')) return MediaType.TV_SERIES;
+                    if (s.includes('comic') || s.includes('manga') || s.includes('漫画')) return MediaType.COMIC;
+                    if (s.includes('short') || s.includes('短剧')) return MediaType.SHORT_DRAMA;
+                    if (s.includes('movie') || s.includes('film') || s.includes('电影')) return MediaType.MOVIE;
+                    const inferred = processSearchResult(title, desc || '');
+                    return inferred.type || MediaType.MOVIE;
+                };
+                const normalizedType = normalizeType((item as any).type, item.title, (item as any).description);
+                return {
+                    ...item,
+                    type: normalizedType,
+                    id,
+                    posterUrl: posterUrl || placeholder,
+                    userRating: 0,
+                    status: 'To Watch',
+                    addedAt: new Date().toISOString()
+                } as MediaItem;
+            });
+        }
+    }
+    
+    if (aiItems.length === 0) {
         try {
-          const fb = await createFallbackItemsFromContext(searchContext);
-          if (fb.length > 0) return fb;
+            aiItems = await createFallbackItemsFromContext(searchContext) as MediaItem[];
         } catch {}
-        return [];
-      }
+    }
+  } catch (e) {
+      console.error("AI Search Failed", e);
   }
 
-  const results = rawData.map((item) => {
-    const id = uuidv4();
-    const placeholder = getPlaceholder(item.type || 'Media');
-    const posterUrl = prefetchedImages.get(item.title.toLowerCase()) || undefined;
-    const normalizeType = (v: any, title: string, desc?: string): MediaType => {
-      const s = String(v || '').toLowerCase();
-      if (s.includes('novel') || s.includes('book') || s.includes('小说') || s.includes('书')) return MediaType.BOOK;
-      if (s.includes('album') || s.includes('music') || s.includes('专辑') || s.includes('音乐')) return MediaType.MUSIC;
-      if (s.includes('tv') || s.includes('series') || s.includes('season') || s.includes('电视剧') || s.includes('剧集')) return MediaType.TV_SERIES;
-      if (s.includes('comic') || s.includes('manga') || s.includes('漫画')) return MediaType.COMIC;
-      if (s.includes('short') || s.includes('短剧')) return MediaType.SHORT_DRAMA;
-      if (s.includes('movie') || s.includes('film') || s.includes('电影')) return MediaType.MOVIE;
-      const inferred = processSearchResult(title, desc || '');
-      return inferred.type || MediaType.MOVIE;
-    };
-    const normalizedType = normalizeType((item as any).type, item.title, (item as any).description);
-    return {
-      ...item,
-      type: normalizedType,
-      id,
-      posterUrl: posterUrl || placeholder,
-      userRating: 0,
-      status: 'To Watch',
-      addedAt: new Date().toISOString()
-    } as MediaItem;
+  // Merge Priority: Plugins > TMDB > Bangumi > AI
+  const allItems = [...pluginItems, ...tmdbItems, ...bangumiItems, ...aiItems];
+  const uniqueItems = new Map<string, MediaItem>();
+
+  allItems.forEach(item => {
+      const normTitle = item.title.trim().toLowerCase();
+      // Relaxed de-duplication: title + year
+      // If no year, just title
+      let key = normTitle;
+      if (item.releaseDate && item.releaseDate.length >= 4) {
+          key = `${normTitle}|${item.releaseDate.substring(0, 4)}`;
+      }
+      
+      if (!uniqueItems.has(key)) {
+          uniqueItems.set(key, item);
+      }
   });
 
-  const allowedTypes = new Set<string>(Object.values(MediaType).filter((t) => t !== MediaType.OTHER));
-  const filtered = results.filter(r => allowedTypes.has(r.type));
+  const filtered = Array.from(uniqueItems.values()).filter(r => {
+      const allowedTypes = new Set<string>(Object.values(MediaType).filter((t) => t !== MediaType.OTHER));
+      return allowedTypes.has(r.type);
+  });
 
-  if (filtered.length === 0) {
-      return await createFallbackItemsFromContext(searchContext);
-  }
   try {
     localStorage.setItem(cacheKey, JSON.stringify(filtered));
     localStorage.setItem(cacheTsKey, Date.now().toString());
@@ -1265,6 +1491,47 @@ export const checkUpdates = async (items: MediaItem[]): Promise<{ id: string; la
   }).filter(Boolean) as { id: string; latestUpdateInfo: string; isOngoing: boolean }[];
 
   return results;
+};
+
+export const repairMediaItem = async (item: MediaItem): Promise<Partial<MediaItem> | null> => {
+    // Check what's missing
+    const isPosterMissing = !item.posterUrl || item.posterUrl.includes('placehold.co');
+    const isDateMissing = !item.releaseDate;
+    
+    if (!isPosterMissing && !isDateMissing) return null;
+
+    let updates: Partial<MediaItem> = {};
+
+    if (isPosterMissing) {
+        const year = item.releaseDate ? item.releaseDate.split('-')[0] : '';
+        const url = await fetchPosterFromSearch(item.title, year, item.type);
+        if (url && !url.includes('placehold.co')) {
+             updates.posterUrl = url;
+        }
+    }
+
+    if (isDateMissing || !updates.posterUrl && isPosterMissing) {
+        // We can use searchMedia to find the item and get its date
+        try {
+             // Use more specific search
+             const results = await searchMedia(item.title, item.type);
+             // Find best match
+             const match = results.find(r => r.title.toLowerCase() === item.title.toLowerCase());
+             if (match) {
+                 if (!item.releaseDate && match.releaseDate) {
+                     updates.releaseDate = match.releaseDate;
+                 }
+                 if ((!item.posterUrl || item.posterUrl.includes('placehold.co')) && match.posterUrl && !match.posterUrl.includes('placehold.co')) {
+                     updates.posterUrl = match.posterUrl;
+                 }
+                 if (!item.description && match.description) {
+                     updates.description = match.description;
+                 }
+             }
+        } catch {}
+    }
+
+    return Object.keys(updates).length > 0 ? updates : null;
 };
 
 
@@ -1365,7 +1632,9 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                     api_key: apiKey,
                     cx: googleSearchCx,
                     user: yandexSearchLogin,
-                    search_type: "image"
+                    search_type: "image",
+                    proxy_url: useAIStore.getState().getProxyUrl(),
+                    use_system_proxy: useAIStore.getState().useSystemProxy
                 };
                 
                 const start = performance.now();
@@ -1430,7 +1699,18 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                 const apiKey = getDecryptedGoogleKey();
                 if (apiKey && googleSearchCx) {
                     const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(query)}`;
-                    const res = await fetchWithTimeout(url, { timeoutMs: 10000 });
+                    
+                    let res;
+                    try {
+                        await apiLimiter.acquire();
+                        res = await fetchWithTimeout(url, { timeoutMs: 10000 });
+                    } finally {
+                        apiLimiter.release();
+                    }
+
+                    if (res.status === 429) {
+                         console.warn("Google Custom Search quota exceeded (429).");
+                    }
                     if (res.ok) {
                         const data = await res.json();
                         if (data.items) {
@@ -1517,7 +1797,17 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                .sort((a: string, b: string) => (scoreDomain(b) + scoreSizeHint(b)) - (scoreDomain(a) + scoreSizeHint(a)));
             if (candidates.length > 0) {
                 const nonAmazon = candidates.filter((u: string) => !u.toLowerCase().includes('m.media-amazon.com'));
-                return nonAmazon.length > 0 ? nonAmazon[0] : candidates[0];
+                
+                // Prioritize non-Amazon images and validate them
+                for (const url of nonAmazon) {
+                    if (await checkImage(url)) return url;
+                }
+
+                // Fallback to Amazon images and validate them
+                const others = candidates.filter((u: string) => u.toLowerCase().includes('m.media-amazon.com'));
+                for (const url of others) {
+                    if (await checkImage(url)) return url;
+                }
             }
         }
 

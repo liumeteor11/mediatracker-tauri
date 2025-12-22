@@ -10,7 +10,8 @@
     "error": "错误",
     "select_theme": "选择主题",
     "theme": "主题",
-    "save_success": "保存成功"
+    "save_success": "保存成功",
+    "close": "关闭"
   },
   "nav": {
     "dashboard": "仪表盘",
@@ -27,6 +28,10 @@
     "model": "模型",
     "enable_search": "启用联网搜索",
     "search_provider": "搜索提供商",
+    "search_provider_google": "Google Custom Search",
+    "search_provider_serper": "Serper.dev",
+    "search_provider_yandex": "Yandex XML",
+    "search_provider_duckduckgo": "DuckDuckGo (无需 Key)",
     "google_api_key": "Google 搜索 API 密钥",
     "google_cx": "Google 搜索引擎 ID (CX)",
     "serper_api_key": "Serper API 密钥",
@@ -80,6 +85,8 @@
     "get_yandex_key": "获取 Yandex XML 密钥",
     "omdb_key_label": "OMDB API 密钥",
     "omdb_key_optional_note": "非必需，仅作为海报备用源",
+    "tmdb_key_label": "TMDB API Key",
+    "tmdb_key_optional_note": "可选；用于获取更准确的元数据和海报",
     "ddg_info": "DuckDuckGo 搜索不需要 API 密钥。它是免费的，但可能会较慢或有速率限制。",
     "test_connection_btn": "测试连接",
     "testing_btn": "测试中...",
@@ -120,8 +127,33 @@
       "proxy_help_item_auth": "认证：凭据由服务商或管理员提供；多数本地代理无需认证可留空。",
       "proxy_help_item_examples": "示例：HTTP 127.0.0.1:7890（Clash）；SOCKS5 127.0.0.1:1080",
       "proxy_help_item_test": "点击“测试代理连接”验证并查看延迟。",
-      "proxy_help_close": "关闭"
-    },
+      "proxy_help_close": "关闭",
+    "proxy_port_placeholder": "端口 (例如 7890)",
+    "proxy_username_placeholder": "用户名 (可选)",
+    "proxy_password_placeholder": "密码 (可选)",
+    "metadata_sources": "元数据源",
+    "bangumi_token_label": "Bangumi 访问令牌 (Access Token)",
+    "bangumi_token_note": "填写令牌以获得更高的速率限制和访问用户收藏"
+  },
+  "import": {
+    "title": "导入媒体",
+    "btn_label": "导入",
+    "source_label": "来源平台",
+    "file_label": "CSV 文件",
+    "upload_btn": "上传文件",
+    "drag_drop": "或拖拽文件到此处",
+    "guide_title": "导入指南",
+    "start_btn": "开始导入",
+    "success_msg": "成功导入 {{count}} 个条目",
+    "failed_msg": "导入失败",
+    "completed": "导入完成",
+    "summary": "成功导入 {{success}} 个条目。{{failed}} 个失败。",
+    "errors": "错误详情",
+    "help_trakt": "Trakt: 在设置中导出您的历史记录。",
+    "help_letterboxd": "Letterboxd: 在设置中导出您的数据。",
+    "help_douban": "豆瓣: 使用浏览器扩展将您的兴趣导出为 CSV。",
+    "file_limit": "CSV 文件最大 10MB"
+  },
   "dashboard": {
     "title": "仪表盘",
     "total_collection": "总收藏",
@@ -148,6 +180,15 @@
     "no_logs": "暂无日志",
     "expand": "展开",
     "collapse": "收起",
+    "copy": "复制",
+    "yearly_report": "年度观影报告",
+    "items_added": "添加条目",
+    "most_active_month": "最活跃月份",
+    "favorite_category": "最爱类别",
+    "monthly_activity": "每月活动",
+    "year_selector": "选择年份",
+    "last_search": "最近搜索",
+    "no_recent_search": "暂无最近搜索",
     "copied": "已复制"
   },
   "search_page": {
@@ -292,5 +333,30 @@
     "markdown_supported": "支持 Markdown",
     "chars": "字符",
     "markdown_placeholder": "在此输入您的评论 (支持 Markdown)..."
+  },
+  "plugin_manager": {
+    "title": "插件管理",
+    "new_plugin": "新建插件",
+    "no_plugins": "暂无安装插件。",
+    "name_label": "名称",
+    "version_label": "版本",
+    "description_label": "描述",
+    "script_label": "脚本 (JavaScript)",
+    "script_hint": "可用对象: context.fetch, context.console",
+    "test_query_placeholder": "测试查询词...",
+    "run_test": "运行测试",
+    "save_plugin": "保存插件",
+    "no_description": "暂无描述",
+    "validation_error": "名称和脚本为必填项",
+    "update_success": "插件已更新",
+    "add_success": "插件已添加",
+    "name_placeholder": "我的插件",
+    "description_placeholder": "这个插件的功能是什么？"
+  },
+  "share_card": {
+    "title": "分享卡片",
+    "my_review": "我的评论",
+    "download": "保存图片",
+    "branding": "MediaTracker"
   }
 }

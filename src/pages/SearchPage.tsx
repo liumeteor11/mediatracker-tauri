@@ -46,6 +46,17 @@ export const SearchPage: React.FC = () => {
       } catch {}
     }; 
   }, []);
+
+  useEffect(() => {
+    const handleReset = () => {
+        setQuery('');
+        loadTrending();
+        setIsTrending(true);
+    };
+    window.addEventListener('reset-search', handleReset);
+    return () => window.removeEventListener('reset-search', handleReset);
+  }, []);
+
   const getSearchCacheKeys = (q: string) => {
     const langKey = i18n.language.split('-')[0];
     const types: Array<MediaType | 'All'> = ['All', MediaType.MOVIE, MediaType.TV_SERIES, MediaType.BOOK, MediaType.COMIC, MediaType.SHORT_DRAMA, MediaType.MUSIC];
@@ -161,6 +172,7 @@ export const SearchPage: React.FC = () => {
     setLoading(true);
     setError(null);
     setIsTrending(false);
+    toast.info(t('search_page.searching_wait') || "Searching, please wait...");
     const startTs = performance.now();
     
     try {
@@ -355,15 +367,37 @@ export const SearchPage: React.FC = () => {
           <input
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+                const val = e.target.value;
+                setQuery(val);
+                if (val.trim() === '') {
+                    loadTrending();
+                    setIsTrending(true);
+                }
+            }}
             placeholder={t('search_page.input_placeholder')}
-            className="relative w-full pl-12 pr-32 py-4 rounded-full border-2 focus:outline-none focus:ring-2 shadow-xl text-lg transition-all bg-theme-surface border-theme-border text-theme-text focus:border-theme-accent focus:ring-theme-accent/20 placeholder-theme-subtext"
+            className="relative w-full pl-12 pr-40 py-4 rounded-full border-2 focus:outline-none focus:ring-2 shadow-xl text-lg transition-all bg-theme-surface border-theme-border text-theme-text focus:border-theme-accent focus:ring-theme-accent/20 placeholder-theme-subtext"
           />
           <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-6 h-6 text-theme-subtext" />
+            
+            {query && (
+                <button
+                    type="button"
+                    onClick={() => {
+                        setQuery('');
+                        loadTrending();
+                        setIsTrending(true);
+                    }}
+                    className="absolute right-36 top-1/2 transform -translate-y-1/2 p-2 rounded-full text-theme-subtext hover:bg-theme-bg transition-colors z-20"
+                >
+                    <X className="w-5 h-5" />
+                </button>
+            )}
+
             <button 
               type="submit"
               disabled={loading || !query.trim()}
-              className="absolute right-2 top-2 bottom-2 px-6 rounded-full font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 bg-theme-accent text-theme-bg hover:bg-theme-accent-hover hover:shadow-lg border-2 border-theme-accent focus:outline-none focus:ring-2 focus:ring-theme-accent"
+              className="absolute right-2 top-2 bottom-2 px-6 rounded-full font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 bg-theme-accent text-theme-bg hover:bg-theme-accent-hover hover:shadow-lg border-2 border-theme-accent focus:outline-none focus:ring-2 focus:ring-theme-accent z-20"
             >
               {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : t('search_page.search_btn')}
             </button>

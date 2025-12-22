@@ -2,15 +2,148 @@ import React, { useMemo, useState } from 'react';
 import { useCollectionStore } from '../store/useCollectionStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { AIConfigPanel } from '../components/AIConfigPanel';
+import { ImportMediaModal } from '../components/ImportMediaModal';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
-import { CollectionCategory, MediaType } from '../types/types';
+import { CollectionCategory, MediaType, MediaItem } from '../types/types';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
-import { Bell, RefreshCw } from 'lucide-react';
+import { Bell, Upload } from 'lucide-react';
 import { useAIStore } from '../store/useAIStore';
 import { toast } from 'react-toastify';
-import { checkUpdates, testAuthoritativeDomain } from '../services/aiService';
+import { testAuthoritativeDomain } from '../services/aiService';
 import { AIIOLogEntry } from '../types/types';
+
+const YearlyReport: React.FC<{ collection: MediaItem[] }> = ({ collection }) => {
+    const { t } = useTranslation();
+    const [year, setYear] = useState(new Date().getFullYear());
+    
+    // Generate last 5 years options
+    const yearOptions = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
+
+    const { monthlyData, totalAdded, topMonth, topCategory } = useMemo(() => {
+        // Initialize months
+        const months = Array(12).fill(0).map((_, i) => {
+             // Create a date object for the month name
+             const d = new Date();
+             d.setMonth(i);
+             return { 
+                name: d.toLocaleString(undefined, { month: 'short' }), 
+                monthIndex: i,
+                count: 0 
+            };
+        });
+        
+        let total = 0;
+        const categoryCounts: Record<string, number> = {};
+
+        collection.forEach(item => {
+            // Use savedAt or addedAt
+            let date: Date | null = null;
+            if (item.savedAt) {
+                date = new Date(item.savedAt);
+            } else if (item.addedAt) {
+                date = new Date(item.addedAt);
+            }
+
+            if (date && date.getFullYear() === year) {
+                months[date.getMonth()].count++;
+                total++;
+                const cat = item.type;
+                categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+            }
+        });
+
+        // Find top month
+        const topMonthItem = months.reduce((prev, current) => (prev.count > current.count) ? prev : current);
+        const topMonthName = topMonthItem.count > 0 ? topMonthItem.name : '-';
+        
+        // Find top category
+        let topCat = '-';
+        let maxCatCount = 0;
+        Object.entries(categoryCounts).forEach(([cat, count]) => {
+            if (count > maxCatCount) {
+                maxCatCount = count;
+                topCat = cat;
+            }
+        });
+
+        // Localize top category if possible
+        // We can just use the key and let the user localize it mentally or duplicate logic
+        // For simplicity, we just return the raw type key here
+        return { monthlyData: months, totalAdded: total, topMonth: topMonthName, topCategory: topCat };
+    }, [collection, year]);
+
+    const chartStyles = {
+        text: 'var(--text-secondary)',
+        barFill: 'var(--accent-primary)',
+        tooltipBg: 'var(--bg-surface)',
+        tooltipBorder: 'var(--border-color)',
+        tooltipText: 'var(--text-primary)',
+    };
+
+    return (
+        <div className="p-6 rounded-theme shadow-theme border bg-theme-surface border-theme-border mb-8">
+            <div className="flex items-center justify-between mb-6">
+                <h3 className="text-lg font-bold text-theme-text">{t('dashboard.yearly_report')}</h3>
+                <select 
+                    value={year} 
+                    onChange={(e) => setYear(Number(e.target.value))}
+                    className="bg-theme-bg border border-theme-border rounded px-3 py-1 text-sm text-theme-text focus:outline-none focus:border-theme-accent"
+                >
+                    {yearOptions.map(y => (
+                        <option key={y} value={y}>{y}</option>
+                    ))}
+                </select>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div className="bg-theme-bg/50 p-4 rounded-lg border border-theme-border/50">
+                    <div className="text-sm text-theme-subtext">{t('dashboard.items_added')}</div>
+                    <div className="text-2xl font-bold text-theme-text mt-1">{totalAdded}</div>
+                </div>
+                <div className="bg-theme-bg/50 p-4 rounded-lg border border-theme-border/50">
+                    <div className="text-sm text-theme-subtext">{t('dashboard.most_active_month')}</div>
+                    <div className="text-2xl font-bold text-theme-text mt-1">{topMonth}</div>
+                </div>
+                <div className="bg-theme-bg/50 p-4 rounded-lg border border-theme-border/50">
+                    <div className="text-sm text-theme-subtext">{t('dashboard.favorite_category')}</div>
+                    <div className="text-2xl font-bold text-theme-text mt-1 truncate" title={topCategory}>{topCategory === '-' ? '-' : t(`search_page.filter_${topCategory === 'TV Series' ? 'tv' : topCategory.toLowerCase().replace(' ', '_')}s`) || topCategory}</div>
+                </div>
+            </div>
+
+            <div className="h-[300px] w-full">
+                <h4 className="text-sm font-medium text-theme-subtext mb-4">{t('dashboard.monthly_activity')}</h4>
+                <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={monthlyData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-color)" opacity={0.5} />
+                        <XAxis 
+                            dataKey="name" 
+                            tick={{fontSize: 12, fill: chartStyles.text}} 
+                            axisLine={false}
+                            tickLine={false}
+                        />
+                        <YAxis 
+                            allowDecimals={false} 
+                            tick={{fontSize: 12, fill: chartStyles.text}}
+                            axisLine={false}
+                            tickLine={false}
+                        />
+                        <Tooltip 
+                            cursor={{fill: 'var(--bg-secondary)', opacity: 0.5}}
+                            contentStyle={{ 
+                                backgroundColor: chartStyles.tooltipBg,
+                                borderColor: chartStyles.tooltipBorder,
+                                color: chartStyles.tooltipText,
+                                borderRadius: '8px'
+                            }}
+                        />
+                        <Bar dataKey="count" fill={chartStyles.barFill} radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                </ResponsiveContainer>
+            </div>
+        </div>
+    );
+};
 
 // Helper to get colors from CSS variables would be ideal, but for now we can use a map or just standard colors that work on both
 // or rely on the fact that we can pass CSS variables to some SVG props.
@@ -21,7 +154,7 @@ export const DashboardPage: React.FC = () => {
   const { theme } = useThemeStore();
   const { t } = useTranslation();
   const stats = getStats();
-  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const lastSearchDurationMs = useAIStore(s => s.lastSearchDurationMs);
   const lastSearchAt = useAIStore(s => s.lastSearchAt);
   const lastSearchQuery = useAIStore(s => s.lastSearchQuery);
@@ -36,46 +169,6 @@ export const DashboardPage: React.FC = () => {
   const toggleExpand = (id: string) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
   const copyText = async (text: string) => {
     try { await navigator.clipboard.writeText(text); toast.success(t('dashboard.copied') || '已复制'); } catch {}
-  };
-
-  // ... (keep existing charts logic)
-
-  const handleCheckUpdates = async () => {
-    setIsCheckingUpdates(true);
-    try {
-      const now = Date.now();
-      const ongoingItems = collection.filter(item => item.isOngoing && item.notificationEnabled !== false);
-      if (ongoingItems.length === 0) {
-        toast.info(t('dashboard.no_ongoing_items'));
-        return;
-      }
-
-      const updates = await checkUpdates(ongoingItems);
-      let updatedCount = 0;
-      updates.forEach(update => {
-        const original = collection.find(i => i.id === update.id);
-        if (!original) return;
-        const changed = update.latestUpdateInfo !== original.latestUpdateInfo;
-        updateItem(update.id, {
-          latestUpdateInfo: update.latestUpdateInfo,
-          isOngoing: update.isOngoing,
-          lastCheckedAt: now,
-          hasNewUpdate: changed ? true : original.hasNewUpdate
-        });
-        if (changed) updatedCount++;
-      });
-
-      if (updatedCount > 0) {
-        toast.success(t('dashboard.updates_found', { count: updatedCount }));
-      } else {
-        toast.info(t('dashboard.no_new_updates'));
-      }
-    } catch (error) {
-      console.error(error);
-      toast.error(t('dashboard.update_check_failed'));
-    } finally {
-      setIsCheckingUpdates(false);
-    }
   };
 
   const pieData = [
@@ -127,19 +220,6 @@ export const DashboardPage: React.FC = () => {
     <div className="space-y-8">
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold text-theme-accent">{t('dashboard.title')}</h1>
-        <button
-            onClick={handleCheckUpdates}
-            disabled={isCheckingUpdates}
-            className={clsx(
-                "flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors",
-                isCheckingUpdates 
-                    ? "bg-theme-surface text-theme-subtext cursor-wait border border-theme-border"
-                    : "bg-theme-accent text-theme-bg hover:bg-theme-accent-hover shadow-lg shadow-theme-accent/20"
-            )}
-        >
-            <RefreshCw className={clsx("w-4 h-4", isCheckingUpdates && "animate-spin")} />
-            {isCheckingUpdates ? t('dashboard.checking_updates') : t('dashboard.check_updates')}
-        </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -176,6 +256,10 @@ export const DashboardPage: React.FC = () => {
           <h3 className="text-sm font-medium text-theme-subtext mb-2">{t('dashboard.authoritative_domains')}</h3>
           <AuthoritativeDomainsPanel />
         </div>
+      </div>
+
+      <div className="mb-8">
+        <YearlyReport collection={collection} />
       </div>
 
       {/* AI Configuration Panel */}
@@ -313,6 +397,7 @@ export const DashboardPage: React.FC = () => {
              )}
         </div>
       </div>
+      {isImportModalOpen && <ImportMediaModal onClose={() => setIsImportModalOpen(false)} />}
     </div>
   );
 };

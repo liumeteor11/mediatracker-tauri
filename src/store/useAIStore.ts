@@ -9,7 +9,7 @@ const SECRET_KEY = import.meta.env.VITE_SECRET_KEY || 'media-tracker-ai-config-s
 
 
 export type AIProvider = 'moonshot' | 'openai' | 'deepseek' | 'qwen' | 'google' | 'mistral' | 'custom';
-export type SearchProvider = 'google' | 'serper' | 'yandex';
+export type SearchProvider = 'google' | 'serper' | 'yandex' | 'duckduckgo';
 
 interface AIConfigState {
   provider: AIProvider;
@@ -28,6 +28,10 @@ interface AIConfigState {
   yandexSearchApiKey: string;
   yandexSearchLogin: string;
   omdbApiKey: string;
+  tmdbApiKey: string;
+  bangumiToken: string;
+  enableTmdb: boolean;
+  enableBangumi: boolean;
   trendingPrompt: string;
   lastSearchDurationMs: number | null;
   lastSearchAt: string | null;
@@ -55,12 +59,14 @@ interface AIConfigState {
   removeDomain: (type: 'movie_tv' | 'book' | 'comic' | 'music', domain: string) => void;
   
   setProvider: (provider: AIProvider) => void;
-  setConfig: (config: Partial<Omit<AIConfigState, 'setProvider' | 'setConfig' | 'getDecryptedApiKey' | 'getDecryptedGoogleKey' | 'getDecryptedSerperKey' | 'getDecryptedYandexKey' | 'getDecryptedOmdbKey'>>) => void;
+  setConfig: (config: Partial<Omit<AIConfigState, 'setProvider' | 'setConfig' | 'getDecryptedApiKey' | 'getDecryptedGoogleKey' | 'getDecryptedSerperKey' | 'getDecryptedYandexKey' | 'getDecryptedOmdbKey' | 'getDecryptedTmdbKey' | 'getDecryptedBangumiToken'>>) => void;
   getDecryptedApiKey: () => string;
   getDecryptedGoogleKey: () => string;
   getDecryptedSerperKey: () => string;
   getDecryptedYandexKey: () => string;
   getDecryptedOmdbKey: () => string;
+  getDecryptedTmdbKey: () => string;
+  getDecryptedBangumiToken: () => string;
   getProxyUrl: () => string;
   logs: AIIOLogEntry[];
   appendLog: (entry: AIIOLogEntry) => void;
@@ -114,6 +120,10 @@ Ensure data is accurate.`,
       yandexSearchApiKey: '',
       yandexSearchLogin: '',
       omdbApiKey: '',
+      tmdbApiKey: '',
+      bangumiToken: '',
+      enableTmdb: true,
+      enableBangumi: true,
       trendingPrompt: '',
       lastSearchDurationMs: null,
       lastSearchAt: null,
@@ -206,6 +216,8 @@ Ensure data is accurate.`,
         if (config.serperApiKey) updates.serperApiKey = encrypt(config.serperApiKey);
         if (config.yandexSearchApiKey) updates.yandexSearchApiKey = encrypt(config.yandexSearchApiKey);
         if (config.omdbApiKey) updates.omdbApiKey = encrypt(config.omdbApiKey);
+        if (config.tmdbApiKey) updates.tmdbApiKey = encrypt(config.tmdbApiKey);
+        if (config.bangumiToken) updates.bangumiToken = encrypt(config.bangumiToken);
         if (config.proxyPassword) updates.proxyPassword = encrypt(config.proxyPassword);
         
         if (typeof config.baseUrl !== 'undefined') {
@@ -218,6 +230,8 @@ Ensure data is accurate.`,
       getDecryptedSerperKey: () => decrypt(get().serperApiKey),
       getDecryptedYandexKey: () => decrypt(get().yandexSearchApiKey),
       getDecryptedOmdbKey: () => decrypt(get().omdbApiKey),
+      getDecryptedTmdbKey: () => decrypt(get().tmdbApiKey),
+      getDecryptedBangumiToken: () => decrypt(get().bangumiToken),
       // Helper getters
       // Note: username stored in plain (non-sensitive), password encrypted
       getProxyUrl: (): string => {
@@ -307,6 +321,10 @@ Ensure data is accurate.`,
         yandexSearchApiKey: state.yandexSearchApiKey,
         yandexSearchLogin: state.yandexSearchLogin,
         omdbApiKey: state.omdbApiKey,
+        tmdbApiKey: state.tmdbApiKey,
+        bangumiToken: state.bangumiToken,
+        enableTmdb: state.enableTmdb,
+        enableBangumi: state.enableBangumi,
         lastSearchDurationMs: state.lastSearchDurationMs,
         lastSearchAt: state.lastSearchAt,
         lastSearchQuery: state.lastSearchQuery,
