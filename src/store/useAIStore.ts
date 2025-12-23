@@ -41,6 +41,7 @@ interface AIConfigState {
     book: string[];
     comic: string[];
     music: string[];
+    poster: string[];
   };
   
   // Proxy Configuration
@@ -55,8 +56,8 @@ interface AIConfigState {
   trendingCache: any[];
   setTrendingCache: (items: any[]) => void;
   setAuthoritativeDomains: (domains: Partial<AIConfigState['authoritativeDomains']>) => void;
-  addDomain: (type: 'movie_tv' | 'book' | 'comic' | 'music', domain: string) => void;
-  removeDomain: (type: 'movie_tv' | 'book' | 'comic' | 'music', domain: string) => void;
+  addDomain: (type: 'movie_tv' | 'book' | 'comic' | 'music' | 'poster', domain: string) => void;
+  removeDomain: (type: 'movie_tv' | 'book' | 'comic' | 'music' | 'poster', domain: string) => void;
   
   setProvider: (provider: AIProvider) => void;
   setConfig: (config: Partial<Omit<AIConfigState, 'setProvider' | 'setConfig' | 'getDecryptedApiKey' | 'getDecryptedGoogleKey' | 'getDecryptedSerperKey' | 'getDecryptedYandexKey' | 'getDecryptedOmdbKey' | 'getDecryptedTmdbKey' | 'getDecryptedBangumiToken'>>) => void;
@@ -132,7 +133,8 @@ Ensure data is accurate.`,
         movie_tv: ['imdb.com','themoviedb.org','tvmaze.com','wikipedia.org','zh.wikipedia.org','douban.com'],
         book: ['goodreads.com','wikipedia.org','zh.wikipedia.org','douban.com'],
         comic: ['bgm.tv','bangumi.tv','wikipedia.org','zh.wikipedia.org'],
-        music: ['discogs.com','musicbrainz.org','wikipedia.org','zh.wikipedia.org']
+        music: ['discogs.com','musicbrainz.org','wikipedia.org','zh.wikipedia.org'],
+        poster: ['moviepostersgallery.com','impawards.com','goldposter.com']
       },
       useSystemProxy: true,
       proxyProtocol: 'http',
@@ -149,7 +151,16 @@ Ensure data is accurate.`,
         set({ authoritativeDomains: { ...current, ...domains } });
       },
       addDomain: (type, domain) => {
-        const d = domain.trim().toLowerCase().replace(/^site:/,'');
+        const raw = domain.trim().replace(/^site:/i,'');
+        if (!raw) return;
+        let d = raw.toLowerCase();
+        if (d.includes('://')) {
+          try {
+            const u = new URL(raw);
+            d = (u.hostname || '').toLowerCase();
+          } catch {}
+        }
+        d = d.replace(/^www\./,'').split('/')[0].trim();
         if (!d) return;
         const cur = get().authoritativeDomains;
         const arr = cur[type] || [];
@@ -158,7 +169,16 @@ Ensure data is accurate.`,
         set({ authoritativeDomains: next });
       },
       removeDomain: (type, domain) => {
-        const d = domain.trim().toLowerCase().replace(/^site:/,'');
+        const raw = domain.trim().replace(/^site:/i,'');
+        if (!raw) return;
+        let d = raw.toLowerCase();
+        if (d.includes('://')) {
+          try {
+            const u = new URL(raw);
+            d = (u.hostname || '').toLowerCase();
+          } catch {}
+        }
+        d = d.replace(/^www\./,'').split('/')[0].trim();
         const cur = get().authoritativeDomains;
         const arr = cur[type] || [];
         const next = { ...cur, [type]: arr.filter(x => x !== d) };

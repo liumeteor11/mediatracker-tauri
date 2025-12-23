@@ -451,7 +451,7 @@ export const DashboardPage: React.FC = () => {
 const AuthoritativeDomainsPanel: React.FC = () => {
   const { authoritativeDomains, addDomain, removeDomain } = useAIStore();
   const { t } = useTranslation();
-  const [active, setActive] = useState<'movie_tv'|'book'|'comic'|'music'>('movie_tv');
+  const [active, setActive] = useState<'movie_tv'|'book'|'comic'|'music'|'poster'>('movie_tv');
   const [newDomain, setNewDomain] = useState('');
   const [testing, setTesting] = useState<string | null>(null);
   const list = authoritativeDomains[active] || [];
@@ -484,6 +484,7 @@ const AuthoritativeDomainsPanel: React.FC = () => {
         <button className={clsx('px-2 py-1 text-xs rounded-md border-2 transition-colors', active==='book'?'bg-theme-accent text-theme-bg border-theme-accent':'bg-theme-surface text-theme-subtext border-theme-border hover:text-theme-text')} onClick={()=>setActive('book')}>{t('search_page.filter_books')}</button>
         <button className={clsx('px-2 py-1 text-xs rounded-md border-2 transition-colors', active==='comic'?'bg-theme-accent text-theme-bg border-theme-accent':'bg-theme-surface text-theme-subtext border-theme-border hover:text-theme-text')} onClick={()=>setActive('comic')}>{t('search_page.filter_comics')}</button>
         <button className={clsx('px-2 py-1 text-xs rounded-md border-2 transition-colors', active==='music'?'bg-theme-accent text-theme-bg border-theme-accent':'bg-theme-surface text-theme-subtext border-theme-border hover:text-theme-text')} onClick={()=>setActive('music')}>{t('search_page.filter_music')}</button>
+        <button className={clsx('px-2 py-1 text-xs rounded-md border-2 transition-colors', active==='poster'?'bg-theme-accent text-theme-bg border-theme-accent':'bg-theme-surface text-theme-subtext border-theme-border hover:text-theme-text')} onClick={()=>setActive('poster')}>{t('dashboard.poster_sources')}</button>
       </div>
       
       <div className="flex gap-2">

@@ -92,28 +92,40 @@ export const SearchPage: React.FC = () => {
     loadTrending();
   }, []);
 
+  const getTrendingPromptKey = () => {
+    const langKey = i18n.language.split('-')[0];
+    const promptKey = (trendingPrompt || '').trim();
+    return `${langKey}::${promptKey}`;
+  };
+
   const loadTrending = async (forceRefresh = false) => {
     setLoading(true);
     setError(null);
+    if (forceRefresh) {
+      toast.info(t('search_page.refreshing_toast'));
+    }
     
     try {
       // 1. Check local storage if not forcing refresh
       if (!forceRefresh) {
         const cachedData = localStorage.getItem('media_tracker_trending_data');
         const cachedTs = localStorage.getItem('media_tracker_trending_ts');
+        const cachedPromptKey = localStorage.getItem('media_tracker_trending_prompt_key');
+        const currentPromptKey = getTrendingPromptKey();
         
         if (cachedData && cachedTs) {
             const now = Date.now();
             const lastRefresh = parseInt(cachedTs, 10);
             const sevenDays = 7 * 24 * 60 * 60 * 1000; // 7 days in ms
             
-            if (now - lastRefresh < sevenDays) {
+            if (now - lastRefresh < sevenDays && cachedPromptKey === currentPromptKey) {
                 try {
                     const parsedData = JSON.parse(cachedData);
                     if (Array.isArray(parsedData) && parsedData.length > 0) {
-                         setResults(parsedData);
+                         const limited = parsedData.slice(0, 4);
+                         setResults(limited);
                          setIsTrending(true);
-                         hydratePosters(parsedData);
+                         hydratePosters(limited, { persistTrending: true });
                          setLoading(false);
                          return;
                     }
@@ -129,13 +141,17 @@ export const SearchPage: React.FC = () => {
       
       // 3. Save to local storage
       if (trending.length > 0) {
-        setResults(trending);
+        const limited = trending.slice(0, 4);
+        setResults(limited);
         setIsTrending(true);
-        localStorage.setItem('media_tracker_trending_data', JSON.stringify(trending));
+        localStorage.setItem('media_tracker_trending_data', JSON.stringify(limited));
         localStorage.setItem('media_tracker_trending_ts', Date.now().toString());
-        hydratePosters(trending);
+        localStorage.setItem('media_tracker_trending_prompt_key', getTrendingPromptKey());
         if (forceRefresh) {
-             toast.success(t('search_page.trending_updated'));
+             await hydratePosters(limited, { force: true, persistTrending: true });
+             toast.success(t('search_page.refresh_done'));
+        } else {
+             hydratePosters(limited, { persistTrending: true });
         }
       } else {
          const cachedData = localStorage.getItem('media_tracker_trending_data');
@@ -145,8 +161,12 @@ export const SearchPage: React.FC = () => {
                 if (Array.isArray(parsedData) && parsedData.length > 0) {
                     setResults(parsedData);
                     setIsTrending(true);
-                    hydratePosters(parsedData);
-                    if (forceRefresh) toast.error(t('search_page.trending_refresh_failed'));
+                    if (forceRefresh) {
+                      await hydratePosters(parsedData, { force: true, persistTrending: true });
+                      toast.error(t('search_page.trending_refresh_failed'));
+                    } else {
+                      hydratePosters(parsedData, { persistTrending: true });
+                    }
                 } else {
                     if (forceRefresh) setError(t('search_page.trending_refresh_failed'));
                 }
@@ -160,6 +180,7 @@ export const SearchPage: React.FC = () => {
       
     } catch (err) {
       setError(t('search_page.trending_load_failed'));
+      if (forceRefresh) toast.error(t('search_page.trending_refresh_failed'));
     } finally {
       setLoading(false);
     }
@@ -172,7 +193,7 @@ export const SearchPage: React.FC = () => {
     setLoading(true);
     setError(null);
     setIsTrending(false);
-    toast.info(t('search_page.searching_wait') || "Searching, please wait...");
+    toast.info(t('search_page.searching_wait'));
     const startTs = performance.now();
     
     try {
@@ -187,13 +208,18 @@ export const SearchPage: React.FC = () => {
         const hasKey = !!cfg.getDecryptedApiKey();
         if (!hasKey) {
           setError(t('search_page.network_unavailable'));
+          toast.error(t('search_page.network_unavailable'));
         } else {
           setError(t('search_page.no_results_found'));
+          toast.info(t('search_page.no_results_found'));
         }
+      } else {
+        toast.success(t('search_page.search_done', { count: data.length }));
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       setError(`${t('search_page.search_error')} ${errorMsg}`);
+      toast.error(t('search_page.search_error'));
     } finally {
       setLoading(false);
     }
@@ -262,25 +288,56 @@ export const SearchPage: React.FC = () => {
     } catch {}
   };
 
-  const hydratePosters = async (items: MediaItem[]) => {
-    const queue = items.filter(i => !i.customPosterUrl && (!i.posterUrl || i.posterUrl.includes('placehold.co')));
+  const hydratePosters = async (
+    items: MediaItem[],
+    opts: { force?: boolean; persistTrending?: boolean } = {}
+  ) => {
+    const force = !!opts.force;
+    const persistTrending = !!opts.persistTrending;
+    const queue = items.filter(i => !i.customPosterUrl && (force || !i.posterUrl || i.posterUrl.includes('placehold.co')));
+    const mergedById = new Map<string, MediaItem>(items.map(i => [i.id, i]));
+
+    const persist = (arr: MediaItem[]) => {
+      if (!persistTrending) return;
+      try {
+        localStorage.setItem('media_tracker_trending_data', JSON.stringify(arr));
+        localStorage.setItem('media_tracker_trending_ts', Date.now().toString());
+        localStorage.setItem('media_tracker_trending_prompt_key', getTrendingPromptKey());
+      } catch {}
+    };
+
+    const applyUpdate = (id: string, patch: Partial<MediaItem>) => {
+      const cur = mergedById.get(id);
+      if (!cur) return;
+      const next = { ...cur, ...patch } as MediaItem;
+      mergedById.set(id, next);
+      setResults(prev => {
+        const mapped = prev.map(r => r.id === id ? { ...r, ...patch } : r);
+        try {
+          if (!isTrendingRef.current && queryRef.current.trim()) {
+            writeSearchCache(queryRef.current, selectedTypeRef.current, mapped);
+          }
+        } catch {}
+        if (persistTrending) persist(mapped);
+        return isMountedRef.current ? mapped : prev;
+      });
+    };
+
     const worker = async () => {
       while (queue.length > 0) {
         const item = queue.shift()!;
         const year = item.releaseDate ? item.releaseDate.split('-')[0] : '';
         try {
           const url = await fetchPosterFromSearch(item.title, year, item.type);
-          if (url) {
-            setResults(prev => {
-              const mapped = prev.map(r => r.id === item.id ? { ...r, posterUrl: url } : r);
-              try { writeSearchCache(query, selectedType, mapped); } catch {}
-              return isMountedRef.current ? mapped : prev;
-            });
-          }
+          if (url) applyUpdate(item.id, { posterUrl: url });
         } catch {}
       }
     };
+
     await Promise.all([worker(), worker(), worker()]);
+    const finalArr = items.map(i => mergedById.get(i.id) || i);
+    persist(finalArr);
+    return finalArr;
   };
 
   useEffect(() => {

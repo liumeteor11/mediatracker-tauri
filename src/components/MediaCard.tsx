@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Star, Clock, Calendar, Heart, Check, Bookmark, MoreVertical, Info, Bell, BellOff, RefreshCw, Edit, Trash2, User, Users, Plus, Minus, ChevronsUp, Share2 } from 'lucide-react';
-import { MediaItem, CollectionCategory } from '../types/types';
+import { MediaItem, CollectionCategory, MediaType } from '../types/types';
 import clsx from 'clsx';
 import { useThemeStore } from '../store/useThemeStore';
 import { useCollectionStore } from '../store/useCollectionStore';
@@ -9,6 +9,8 @@ import { EditMediaModal } from './EditMediaModal';
 import { ShareCardModal } from './ShareCardModal';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
+import { toast } from 'react-toastify';
+import { checkUpdates, repairMediaItem } from '../services/aiService';
 
 const smartIncrement = (str: string): string => {
     const match = str.match(/(\d+)(?!.*\d)/);
@@ -64,6 +66,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
   const { t } = useTranslation();
   const [imgLoading, setImgLoading] = useState(true);
   const [imgFailed, setImgFailed] = useState(false);
+  const [isBackRefreshing, setIsBackRefreshing] = useState(false);
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.matchMedia('(max-width: 768px)').matches);
@@ -97,6 +100,85 @@ export const MediaCard: React.FC<MediaCardProps> = ({
       setImgSrc('https://placehold.co/600x400/1a1a1a/FFF?text=Image+Error');
       setImgFailed(true);
       setImgLoading(false);
+  };
+
+  const norm = (v?: string) => (v || '').trim();
+  const isUnknownText = (v?: string) => {
+      const s = norm(v);
+      if (!s) return true;
+      const low = s.toLowerCase();
+      return low === 'unknown' || s === '未知' || low === 'n/a' || low === 'na' || s === '-';
+  };
+
+  const handleBackRefresh = async (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (isBackRefreshing) return;
+
+      setIsBackRefreshing(true);
+      try {
+          const now = Date.now();
+
+          const isPosterMissing =
+              !item.posterUrl ||
+              item.posterUrl.includes('placehold.co') ||
+              item.posterUrl.includes('No+Image') ||
+              item.posterUrl.includes('Image+Error');
+          const isInfoMissing =
+              isPosterMissing ||
+              isUnknownText(item.releaseDate) ||
+              isUnknownText(item.directorOrAuthor) ||
+              isUnknownText(item.description) ||
+              (!item.cast || item.cast.length === 0);
+
+          let repaired = false;
+          let updated = false;
+
+          if (isInfoMissing) {
+              const patch = await repairMediaItem(item);
+              if (patch) {
+                  updateItem(item.id, patch);
+                  repaired = true;
+              }
+          }
+
+          const isEpisodic =
+              item.type === MediaType.TV_SERIES ||
+              item.type === MediaType.COMIC ||
+              item.type === MediaType.BOOK ||
+              item.type === MediaType.SHORT_DRAMA;
+
+          // Always check updates for episodic content on manual refresh, or if ongoing
+          const shouldCheckUpdates = item.isOngoing || isEpisodic;
+
+          if (shouldCheckUpdates) {
+              const updates = await checkUpdates([item]);
+              const update = updates.find(u => u.id === item.id);
+              if (update) {
+                  const changed = update.latestUpdateInfo !== item.latestUpdateInfo;
+                  updateItem(item.id, {
+                      latestUpdateInfo: update.latestUpdateInfo,
+                      isOngoing: update.isOngoing,
+                      lastCheckedAt: now,
+                      hasNewUpdate: changed ? true : item.hasNewUpdate
+                  });
+                  updated = true;
+              } else {
+                  updateItem(item.id, { lastCheckedAt: now });
+              }
+          }
+
+          if (repaired || updated) {
+              toast.success(t('media_card.refresh_success'));
+          } else {
+              toast.info(t('media_card.refresh_no_changes'));
+          }
+      } catch (err) {
+          console.error(err);
+          toast.error(t('media_card.refresh_error'));
+      } finally {
+          setIsBackRefreshing(false);
+      }
   };
 
   return (
@@ -159,7 +241,6 @@ export const MediaCard: React.FC<MediaCardProps> = ({
                 alt={item.title}
                 onError={handleImageError}
                 onLoad={() => setImgLoading(false)}
-                referrerPolicy="no-referrer"
                 className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                 loading="lazy"
               />
@@ -201,10 +282,34 @@ export const MediaCard: React.FC<MediaCardProps> = ({
           </div>
 
           {/* Back Side */}
-          <div className="absolute inset-0 backface-hidden rotate-y-180 rounded-theme overflow-hidden p-5 flex flex-col border-2 bg-theme-surface border-theme-border text-theme-text">
+          <div className="absolute inset-0 backface-hidden rotate-y-180 rounded-theme overflow-hidden flex flex-col border-2 bg-theme-surface border-theme-border text-theme-text">
             {/* Spotlight Effect */}
             <div className="absolute inset-0 pointer-events-none bg-gradient-to-tr from-theme-accent/5 via-transparent to-transparent opacity-50" />
             
+            {/* Background Image (Added for visual appeal) */}
+            <div className="absolute inset-0 z-0 opacity-25 pointer-events-none select-none overflow-hidden">
+                <img src={imgSrc} className="w-full h-full object-cover filter blur-sm scale-105" alt="" />
+                <div className="absolute inset-0 bg-gradient-to-t from-theme-surface via-transparent to-theme-surface/50" />
+            </div>
+
+            {variant === 'collection' && (
+              <button
+                type="button"
+                onClick={handleBackRefresh}
+                disabled={isBackRefreshing}
+                className={clsx(
+                  "absolute top-3 right-3 z-20 p-2 rounded-full border transition-colors",
+                  "bg-theme-bg/60 backdrop-blur-md border-theme-border text-theme-subtext hover:text-theme-text hover:border-theme-accent",
+                  isBackRefreshing && "opacity-60 cursor-not-allowed"
+                )}
+                aria-label={t('media_card.refresh')}
+                title={t('media_card.refresh_tooltip')}
+              >
+                <RefreshCw className={clsx("w-4 h-4", isBackRefreshing && "animate-spin")} />
+              </button>
+            )}
+
+            <div className="relative z-10 flex flex-col h-full p-4">
             <h3 className="text-lg 2xl:text-xl font-bold mb-3 text-theme-accent">
               {item.title}
             </h3>
@@ -271,23 +376,6 @@ export const MediaCard: React.FC<MediaCardProps> = ({
                     <span className="text-[10px] 2xl:text-xs font-bold uppercase tracking-wider text-theme-accent">{t('media_card.tracking')}</span>
                     
                     <div className="flex gap-2">
-                        {/* Manual Toggle for testing */}
-                        <button 
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                updateItem(item.id, { hasNewUpdate: !item.hasNewUpdate });
-                            }}
-                            className={clsx(
-                                "transition-colors",
-                                item.hasNewUpdate 
-                                ? "text-red-500"
-                                : "text-theme-subtext"
-                            )}
-                            title="Toggle Update Status (Test)"
-                        >
-                            <RefreshCw className="w-3.5 h-3.5 2xl:w-4 2xl:h-4" />
-                        </button>
-
                         <button 
                         onClick={(e) => {
                             e.stopPropagation();
@@ -354,7 +442,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
 
             {/* Actions */}
             {variant === 'collection' ? (
-              <div className="mt-4 flex gap-2">
+              <div className="mt-4 flex gap-2 relative z-10">
                 <button
                   type="button"
                   onClick={(e) => {
@@ -420,6 +508,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
                 </div>
               )
             )}
+            </div>
           </div>
         </motion.div>
       </motion.div>

@@ -61,6 +61,12 @@ struct SearchResultItem {
     metadata: Option<Value>, // Extra metadata (e.g. pagemap from Google)
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct FetchPageConfig {
+    proxy_url: Option<String>,
+    use_system_proxy: Option<bool>,
+}
+
 fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) -> Option<Client> {
     if let Some(url) = proxy_url {
         if !url.is_empty() {
@@ -149,7 +155,7 @@ fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) 
 
 async fn google_search(client: &Client, query: &str, api_key: &str, cx: &str, search_type: Option<&str>) -> Result<Vec<SearchResultItem>, Box<dyn Error>> {
     let mut url = format!(
-        "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}&safe=active&num=8",
+        "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}&safe=active&num=4",
         api_key,
         cx,
         urlencoding::encode(query)
@@ -161,9 +167,18 @@ async fn google_search(client: &Client, query: &str, api_key: &str, cx: &str, se
     
     let fut = client.get(&url).send();
     let resp = tokio::time::timeout(std::time::Duration::from_secs(30), fut)
-        .await??
-        .json::<Value>()
-        .await?;
+        .await??;
+
+    if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err("Google Search Quota Exceeded (429). Please check your API key billing/quota.".into());
+    }
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("Google API Error ({}): {}", status, text).into());
+    }
+
+    let resp = resp.json::<Value>().await?;
     
     let mut results = Vec::new();
     if let Some(items) = resp["items"].as_array() {
@@ -209,11 +224,14 @@ async fn serper_search(client: &Client, query: &str, api_key: &str, search_type:
         .post(url)
         .header("X-API-KEY", api_key)
         .header("Content-Type", "application/json")
-        .json(&serde_json::json!({ "q": query, "safe": "active" }))
+        .json(&serde_json::json!({ "q": query, "safe": "active", "num": 4 }))
         .send();
     let resp = tokio::time::timeout(std::time::Duration::from_secs(30), fut)
         .await??;
 
+    if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err("Serper Search Quota Exceeded (429). Please check your API key billing/quota.".into());
+    }
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
@@ -351,11 +369,14 @@ async fn yandex_search(client: &Client, query: &str, user: &str, api_key: &str) 
 }
 
 async fn duckduckgo_search(client: &Client, query: &str) -> Result<Vec<SearchResultItem>, Box<dyn Error>> {
+    // Try API first (Instant Answer)
     let url = format!(
         "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
         urlencoding::encode(query)
     );
-    let fut = client.get(&url).send();
+    let fut = client.get(&url)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .send();
     let resp = tokio::time::timeout(std::time::Duration::from_secs(8), fut)
         .await??
         .json::<Value>()
@@ -392,7 +413,205 @@ async fn duckduckgo_search(client: &Client, query: &str) -> Result<Vec<SearchRes
         }
     }
 
+    let need_html = results.is_empty() || query.to_ascii_lowercase().contains("site:");
+    if need_html {
+        if let Ok(mut extra) = duckduckgo_html_search(client, query).await {
+            let mut seen = std::collections::HashSet::<String>::new();
+            for r in results.iter() {
+                seen.insert(r.link.to_string());
+            }
+            extra.retain(|r| !r.link.is_empty() && !seen.contains(&r.link));
+            results.extend(extra);
+        }
+    }
+
     Ok(results)
+}
+
+async fn duckduckgo_html_search(client: &Client, query: &str) -> Result<Vec<SearchResultItem>, Box<dyn Error>> {
+    let url = format!(
+        "https://html.duckduckgo.com/html/?q={}",
+        urlencoding::encode(query)
+    );
+    let fut = client.get(&url)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .header("Referer", "https://html.duckduckgo.com/")
+        .send();
+        
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(10), fut).await??;
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("DuckDuckGo HTML Error ({}): {}", status, text).into());
+    }
+    let body = resp.text().await.unwrap_or_default();
+    let lower = body.to_ascii_lowercase();
+
+    let mut results = Vec::new();
+    // Try multiple class names: result__a (old), result__url, or generic link finding
+    // Simplified parsing: find blocks that look like results
+    
+    // Pattern 1: class="result__a" (classic)
+    let mut pos: usize = 0;
+    while results.len() < 6 {
+        // Look for result title link
+        let found = match lower[pos..].find("result__a") {
+            Some(i) => pos + i,
+            None => break,
+        };
+        
+        let tail_lower = &lower[found..];
+        let href_key = "href=\"";
+        let href_start = match tail_lower.find(href_key) {
+            Some(i) => found + i + href_key.len(),
+            None => {
+                pos = found + 10;
+                continue;
+            }
+        };
+        
+        let rest = &body[href_start..];
+        let end = rest.find('"').unwrap_or_else(|| rest.len());
+        let href_raw = &rest[..end];
+
+        // Decode DDG redirect (uddg=...)
+        let link = if let Some(p) = href_raw.find("uddg=") {
+            let rest2 = &href_raw[p + 5..];
+            let end2 = rest2.find('&').unwrap_or_else(|| rest2.len());
+            let enc = &rest2[..end2];
+            urlencoding::decode(enc).unwrap_or_else(|_| enc.into()).to_string()
+        } else if href_raw.starts_with("http://") || href_raw.starts_with("https://") {
+            href_raw.to_string()
+        } else {
+            String::new()
+        };
+
+        if !link.is_empty() {
+             // Try to find title
+             let mut title = String::new();
+             if let Some(gt) = rest[end..].find('>') {
+                 let after_tag = &rest[end + gt + 1..];
+                 if let Some(lt) = after_tag.find("</a>") {
+                     title = after_tag[..lt].trim().to_string();
+                     // Remove HTML tags from title if any
+                     if let Some(idx) = title.find('<') {
+                         title = title[..idx].to_string(); // Simple truncation
+                     }
+                 }
+             }
+             
+             // Try to find snippet (result__snippet)
+             let mut snippet = String::new();
+             if let Some(snip_idx) = lower[href_start..].find("result__snippet") {
+                 let snip_start = href_start + snip_idx;
+                 let snip_rest = &body[snip_start..];
+                 if let Some(gt) = snip_rest.find('>') {
+                     let after_tag = &snip_rest[gt+1..];
+                     if let Some(lt) = after_tag.find('<') {
+                         snippet = after_tag[..lt].trim().to_string();
+                     }
+                 }
+             }
+
+            results.push(SearchResultItem {
+                title,
+                snippet,
+                link,
+                image: None,
+                metadata: None,
+            });
+        }
+
+        pos = href_start + end;
+    }
+
+    Ok(results)
+}
+
+fn extract_meta_image(body: &str) -> Option<String> {
+    let lower = body.to_ascii_lowercase();
+    let needles = [
+        r#"property="og:image""#,
+        r#"property='og:image'"#,
+        r#"name="og:image""#,
+        r#"name='og:image'"#,
+        r#"property="og:image:url""#,
+        r#"property='og:image:url'"#,
+        r#"property="og:image:secure_url""#,
+        r#"property='og:image:secure_url'"#,
+        r#"name="twitter:image""#,
+        r#"name='twitter:image'"#,
+        r#"property="twitter:image""#,
+        r#"property='twitter:image'"#,
+    ];
+
+    for needle in needles.iter() {
+        if let Some(i) = lower.find(needle) {
+            let meta_start = lower[..i].rfind("<meta").unwrap_or(i);
+            let tail = &lower[meta_start..];
+            let end_rel = tail.find('>').unwrap_or_else(|| tail.len());
+            let tag_lower = &lower[meta_start..meta_start + end_rel];
+            let tag = &body[meta_start..meta_start + end_rel];
+            if let Some(v) = extract_meta_content(tag, tag_lower) {
+                if !v.is_empty() {
+                    return Some(v);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_meta_content(tag: &str, tag_lower: &str) -> Option<String> {
+    let k = "content=";
+    let i = tag_lower.find(k)?;
+    let mut rest = &tag[i + k.len()..];
+    let mut rest_lower = &tag_lower[i + k.len()..];
+
+    if rest.starts_with('"') || rest.starts_with('\'') {
+        let q = rest.chars().next().unwrap();
+        rest = &rest[1..];
+        rest_lower = &rest_lower[1..];
+        let end = rest_lower.find(q)?;
+        return Some(rest[..end].to_string());
+    }
+
+    let mut end = rest_lower.len();
+    for (idx, ch) in rest_lower.char_indices() {
+        if ch.is_whitespace() || ch == '>' {
+            end = idx;
+            break;
+        }
+    }
+    Some(rest[..end].trim().to_string())
+}
+
+fn resolve_url(base: &str, v: &str) -> String {
+    let s = v.trim();
+    if s.is_empty() {
+        return String::new();
+    }
+    if s.starts_with("http://") || s.starts_with("https://") {
+        return s.to_string();
+    }
+    if s.starts_with("//") {
+        let scheme = if base.starts_with("http://") { "http:" } else { "https:" };
+        return format!("{}{}", scheme, s);
+    }
+    if s.starts_with('/') {
+        if let Some(p) = base.find("://") {
+            let after = &base[p + 3..];
+            let host_end = after.find('/').unwrap_or_else(|| after.len());
+            let root = &base[..p + 3 + host_end];
+            return format!("{}{}", root, s);
+        }
+        return format!("https://{}", s.trim_start_matches('/'));
+    }
+    if let Some(pos) = base.rfind('/') {
+        return format!("{}{}", &base[..pos + 1], s);
+    }
+    s.to_string()
 }
 
 #[command]
@@ -465,6 +684,49 @@ async fn douban_cover(title: String, _kind: Option<String>, state: State<'_, App
     Ok(serde_json::json!({ "ok": false }).to_string())
 }
 
+#[command]
+async fn fetch_og_image(url: String, config: Option<FetchPageConfig>, state: State<'_, AppState>) -> Result<String, String> {
+    let target = url.trim().to_string();
+    if target.is_empty() {
+        return Ok(serde_json::json!({ "ok": false, "error": "empty url" }).to_string());
+    }
+
+    let (proxy_url, use_system_proxy) = config
+        .as_ref()
+        .map(|c| (c.proxy_url.clone(), c.use_system_proxy.clone()))
+        .unwrap_or((None, None));
+
+    let local_client = client_with_proxy(proxy_url, use_system_proxy);
+    let client = local_client.as_ref().unwrap_or(&state.proxy_client);
+
+    let fut = client.get(&target).send();
+    let resp = match tokio::time::timeout(std::time::Duration::from_secs(12), fut).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
+            return Ok(serde_json::json!({ "ok": false, "url": target, "error": e.to_string() }).to_string());
+        }
+        Err(_) => {
+            return Ok(serde_json::json!({ "ok": false, "url": target, "error": "timeout" }).to_string());
+        }
+    };
+
+    let status = resp.status().as_u16();
+    if !resp.status().is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        return Ok(serde_json::json!({ "ok": false, "url": target, "status": status, "error": text }).to_string());
+    }
+
+    let body = resp.text().await.unwrap_or_default();
+    if let Some(img) = extract_meta_image(&body) {
+        let abs = resolve_url(&target, &img);
+        if !abs.is_empty() {
+            return Ok(serde_json::json!({ "ok": true, "url": target, "image": abs }).to_string());
+        }
+    }
+
+    Ok(serde_json::json!({ "ok": false, "url": target }).to_string())
+}
+
 
 #[command]
 async fn web_search(query: String, config: SearchConfig, state: State<'_, AppState>) -> Result<String, String> {
@@ -474,41 +736,76 @@ async fn web_search(query: String, config: SearchConfig, state: State<'_, AppSta
     let local_client = client_with_proxy(config.proxy_url.clone(), config.use_system_proxy.clone());
     let client = local_client.as_ref().unwrap_or(&state.proxy_client);
     let search_type = config.search_type.as_deref();
+
+    fn clean_opt<'a>(v: Option<&'a str>) -> Option<&'a str> {
+        let s = v?.trim();
+        if s.is_empty() {
+            return None;
+        }
+        let l = s.to_ascii_lowercase();
+        if l == "undefined" || l == "null" {
+            return None;
+        }
+        Some(s)
+    }
+
+    let api_key = clean_opt(config.api_key.as_deref());
+    let cx = clean_opt(config.cx.as_deref());
+    let user = clean_opt(config.user.as_deref());
     
     let result = match config.provider.as_str() {
         "google" => {
-            if let (Some(key), Some(cx)) = (&config.api_key, &config.cx) {
+            if let (Some(key), Some(cx)) = (api_key, cx) {
                 google_search(client, &query, key, cx, search_type).await
             } else {
-                return Err("Missing Google API Key or CX".to_string());
+                if search_type == Some("image") {
+                    Ok(Vec::new())
+                } else {
+                    duckduckgo_search(client, &query).await
+                }
             }
         },
         "serper" => {
-            if let Some(key) = &config.api_key {
+            if let Some(key) = api_key {
                 serper_search(client, &query, key, search_type).await
             } else {
-                return Err("Missing Serper API Key".to_string());
+                if search_type == Some("image") {
+                    Ok(Vec::new())
+                } else {
+                    duckduckgo_search(client, &query).await
+                }
             }
         },
         "yandex" => {
             if search_type == Some("image") {
                 return Err("Yandex image search not supported".to_string());
             }
-            if let (Some(key), Some(user)) = (&config.api_key, &config.user) {
+            if let (Some(key), Some(user)) = (api_key, user) {
                 yandex_search(&state.direct_client, &query, user, key).await
             } else {
-                return Err("Missing Yandex API Key or User".to_string());
+                duckduckgo_search(client, &query).await
             }
         },
         "duckduckgo" => duckduckgo_search(client, &query).await,
         _ => Err("Unsupported search provider".into()),
     };
+    let result: Result<Vec<SearchResultItem>, String> = result.map_err(|e| e.to_string());
 
     match result {
         Ok(items) => serde_json::to_string(&items).map_err(|e| e.to_string()),
-        Err(e) => {
-            println!("Search error (Provider: {}): {:?}", config.provider, e);
-            Err(format!("Search failed: {}", e))
+        Err(msg) => {
+            let provider = config.provider.clone();
+            if search_type != Some("image")
+                && config.provider.as_str() != "duckduckgo"
+                && !msg.contains("429")
+                && !msg.to_lowercase().contains("quota exceeded")
+            {
+                if let Ok(items) = duckduckgo_search(client, &query).await {
+                    return serde_json::to_string(&items).map_err(|e| e.to_string());
+                }
+            }
+            println!("Search error (Provider: {}): {}", provider, msg);
+            Err(format!("Search failed: {}", msg))
         }
     }
 }
@@ -924,6 +1221,7 @@ fn main() {
             ai_chat,
             wiki_pageimages,
             douban_cover,
+            fetch_og_image,
             test_proxy,
             test_search_provider,
             test_omdb,
