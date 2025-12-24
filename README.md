@@ -6,6 +6,8 @@ Cross‑platform desktop app to search, collect and track media (movies, TV, boo
 
 ## Features
 - AI search and trending with first-screen return
+- **Manual Media Entry**: Create custom cards directly without searching
+- **Enhanced Editing**: Edit metadata including director, description, release date, cast, and custom posters
 - Async poster hydration; 2‑hour local cache
 - Offline‑friendly: return from context, verify async
 - Collections (Favorites / To Watch / Watched) & ongoing tracking
