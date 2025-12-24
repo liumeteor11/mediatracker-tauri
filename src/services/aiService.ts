@@ -423,7 +423,8 @@ export const performClientSideSearch = async (
                 const resultsArrays = await Promise.all(searchPromises);
                 const allResults = resultsArrays.flat();
                 
-                const filteredStep = (effType === 'All') ? allResults : allResults.filter((it: any) => isMediaCandidate(it.title || '', it.snippet || ''));
+                // Filter out NSFW content, but be lenient on keywords as LLM will filter relevance
+                const filteredStep = allResults.filter((it: any) => isSafeContent(`${it.title} ${it.snippet}`));
                 
                 // Process and Score Results
                 const scoredResults = filteredStep.map((it: any) => {
@@ -1488,7 +1489,7 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
           }
           userPrompt += `\n[限制] 仅返回作品（小说、电影、电视剧、短剧、漫画、音乐专辑）。严禁返回新闻、产品评测、对比、参数、价格、手机/电子产品相关条目。`;
           userPrompt += `\n[系列] 若查询为系列作品（如第一部/第二部/续集），请分别返回各部作品，并给出准确年份。`;
-          userPrompt += `\n[优先] 使用联网搜索工具 (web_search) 获取最新信息；如网络不可用或搜索无结果，请基于已有知识返回有效 JSON：\n${searchContext}\n请尽力补全缺失的元数据（导演、主演、简介、上映日期）。若无法确认具体日期，可返回年份。`;
+          userPrompt += `\n[优先] 使用联网搜索工具 (web_search) 获取最新信息；如网络不可用或搜索无结果，请基于已有知识返回有效 JSON：\n${searchContext}\n请尽力补全缺失的元数据（导演、主演、简介（尽量详细，不少于50字）、上映日期）。若无法确认具体日期，可返回年份。`;
       } else {
           userPrompt = `Search for media works matching the query: "${query}".`;
           if (type && type !== 'All') {
@@ -1497,7 +1498,7 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
               userPrompt += ` (books, movies, TV series, comics, short dramas)`;
           }
           userPrompt += `\n[Constraint] Only return works (novels, movies, TV series, short dramas, comics, music albums). Do NOT include news, product reviews, comparisons, specs, prices, or phone/electronics items.`;
-          userPrompt += `\n[PREFER] Use the web search tool; if unavailable or no results, rely on your internal knowledge to return a valid JSON array:\n${searchContext}\nPlease do your best to fill in missing metadata (Director, Cast, Description, Release Date). If exact date is unknown, year is acceptable.`;
+          userPrompt += `\n[PREFER] Use the web search tool; if unavailable or no results, rely on your internal knowledge to return a valid JSON array:\n${searchContext}\nPlease do your best to fill in missing metadata (Director, Cast, Description (detailed, >50 words), Release Date). If exact date is unknown, year is acceptable.`;
       }
   } else {
       if (isChinese) {
@@ -1516,7 +1517,7 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
           } else {
               userPrompt += ` (books, movies, TV series, comics, short dramas)`;
           }
-          userPrompt += `\nUse your web search tool or refer to the following search results to verify info:\n${searchContext}\nIf search results are insufficient, please use your internal knowledge to complete the metadata. Return ONLY a valid JSON array.`;
+          userPrompt += `\nUse your web search tool or refer to the following search results to verify info:\n${searchContext}\nIf search results are insufficient, please use your internal knowledge to complete the metadata (especially detailed description). Return ONLY a valid JSON array.`;
       }
   }
 
@@ -1715,7 +1716,9 @@ export const repairMediaItem = async (item: MediaItem): Promise<Partial<MediaIte
         item.posterUrl.includes('Image+Error');
     const isDateMissing = isUnknownText(item.releaseDate);
     const isDirectorMissing = isUnknownText(item.directorOrAuthor);
-    const isDescMissing = isUnknownText(item.description);
+    const currentDesc = norm(item.description);
+    const isDescShort = !isUnknownText(currentDesc) && currentDesc.length < 50;
+    const isDescMissing = isUnknownText(currentDesc) || isDescShort;
     const isCastMissing = !item.cast || item.cast.length === 0;
 
     if (!isPosterMissing && !isDateMissing && !isDirectorMissing && !isDescMissing && !isCastMissing) return null;

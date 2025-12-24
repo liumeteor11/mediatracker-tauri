@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useCollectionStore } from '../store/useCollectionStore';
 import { MediaCard } from '../components/MediaCard';
 import { CollectionCategory, MediaItem } from '../types/types';
-import { Filter, Search as SearchIcon, X, Download, Upload, MoreHorizontal, RefreshCw } from 'lucide-react';
+import { Filter, Search as SearchIcon, X, Download, Upload, MoreHorizontal, RefreshCw, Plus } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 import { checkUpdates, repairMediaItem } from '../services/aiService';
+import { AddMediaModal } from '../components/AddMediaModal';
 
 import { save } from '@tauri-apps/plugin-dialog';
 
@@ -22,6 +23,7 @@ export const CollectionPage: React.FC = () => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showMenu, setShowMenu] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const menuRef = React.useRef<HTMLDivElement>(null);
 
@@ -249,6 +251,14 @@ export const CollectionPage: React.FC = () => {
                 <RefreshCw className={clsx("w-5 h-5", isRefreshing && "animate-spin")} />
             </button>
 
+            <button
+                onClick={() => setIsAddModalOpen(true)}
+                className="p-2 rounded-lg border bg-theme-surface border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent transition-colors flex items-center justify-center"
+                title={t('collection.add_manual_tooltip') || "Add Manually"}
+            >
+                <Plus className="w-5 h-5" />
+            </button>
+
             <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0 no-scrollbar">
                 {(['All', ...Object.values(CollectionCategory)] as const).map((cat) => (
                     <button
@@ -368,6 +378,10 @@ export const CollectionPage: React.FC = () => {
           </>
         )}
       </AnimatePresence>
+
+      {isAddModalOpen && (
+        <AddMediaModal onClose={() => setIsAddModalOpen(false)} />
+      )}
     </div>
   );
 };

@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import Cropper, { Point, Area } from 'react-easy-crop';
 import { MediaItem } from '../types/types';
-import { X, Upload, Save, Trash2, RotateCcw, FileText, Image as ImageIcon, Bold, Italic, Link as LinkIcon, List, Eye, EyeOff, Columns } from 'lucide-react';
+import { X, Upload, Save, Trash2, RotateCcw, FileText, Image as ImageIcon, Bold, Italic, Link as LinkIcon, List, Eye, EyeOff, Columns, Info } from 'lucide-react';
 import { useCollectionStore } from '../store/useCollectionStore';
 import clsx from 'clsx';
 import { toast } from 'react-toastify';
@@ -40,9 +40,13 @@ const cleanInitialContent = (content: string | undefined): string => {
 export const EditMediaModal: React.FC<EditMediaModalProps> = ({ item, onClose, onDelete }) => {
   const { t } = useTranslation();
   const { updateItem } = useCollectionStore();
-  const [activeTab, setActiveTab] = useState<'review' | 'cover'>('review');
+  const [activeTab, setActiveTab] = useState<'info' | 'review' | 'cover'>('info');
   // Clean content on init
   const [reviewContent, setReviewContent] = useState(() => cleanInitialContent(item.userReview));
+  const [editDirector, setEditDirector] = useState(item.directorOrAuthor || '');
+  const [editDescription, setEditDescription] = useState(item.description || '');
+  const [editReleaseDate, setEditReleaseDate] = useState(item.releaseDate || '');
+  const [editCast, setEditCast] = useState(item.cast ? item.cast.join(', ') : '');
   const [isSaving, setIsSaving] = useState(false);
   const [viewMode, setViewMode] = useState<'edit' | 'split' | 'preview'>('edit');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -126,6 +130,10 @@ export const EditMediaModal: React.FC<EditMediaModalProps> = ({ item, onClose, o
     try {
       const updates: Partial<MediaItem> = {
         userReview: reviewContent,
+        directorOrAuthor: editDirector,
+        description: editDescription,
+        releaseDate: editReleaseDate,
+        cast: editCast.split(',').map(c => c.trim()).filter(Boolean),
         lastEditedAt: Date.now(),
       };
 
@@ -207,6 +215,18 @@ export const EditMediaModal: React.FC<EditMediaModalProps> = ({ item, onClose, o
         {/* Tabs */}
         <div className="flex items-center px-6 border-b border-theme-border bg-theme-bg/50">
           <button
+            onClick={() => setActiveTab('info')}
+            className={clsx(
+              "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
+              activeTab === 'info'
+                ? "border-theme-accent text-theme-accent"
+                : "border-transparent text-theme-subtext hover:text-theme-text"
+            )}
+          >
+            <Info className="w-4 h-4" />
+            {t('edit_modal.tab_info') || 'Info'}
+          </button>
+          <button
             onClick={() => setActiveTab('review')}
             className={clsx(
               "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
@@ -234,6 +254,54 @@ export const EditMediaModal: React.FC<EditMediaModalProps> = ({ item, onClose, o
 
         {/* Content */}
         <div className="flex-1 p-6 overflow-y-auto bg-theme-bg relative">
+          {activeTab === 'info' && (
+             <div className="flex flex-col gap-4 h-full">
+                <div className="space-y-2">
+                    <label className="text-sm font-medium text-theme-subtext">{t('media_card.director_author') || 'Director / Author'}</label>
+                    <input
+                        type="text"
+                        value={editDirector}
+                        onChange={(e) => setEditDirector(e.target.value)}
+                        className="w-full p-3 rounded-xl border bg-theme-surface border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent focus:border-transparent outline-none transition-all"
+                        placeholder={t('media_card.director_placeholder') || 'Enter director or author name...'}
+                    />
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium text-theme-subtext">{t('media_card.release_date') || 'Release Date'}</label>
+                        <input
+                            type="text"
+                            value={editReleaseDate}
+                            onChange={(e) => setEditReleaseDate(e.target.value)}
+                            className="w-full p-3 rounded-xl border bg-theme-surface border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent focus:border-transparent outline-none transition-all"
+                            placeholder={t('media_card.release_date_placeholder') || 'e.g. 2023-07-21'}
+                        />
+                    </div>
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium text-theme-subtext">{t('media_card.cast') || 'Cast & Crew'}</label>
+                        <input
+                            type="text"
+                            value={editCast}
+                            onChange={(e) => setEditCast(e.target.value)}
+                            className="w-full p-3 rounded-xl border bg-theme-surface border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent focus:border-transparent outline-none transition-all"
+                            placeholder={t('media_card.cast_placeholder') || 'Enter cast members, separated by commas...'}
+                        />
+                    </div>
+                </div>
+
+                <div className="space-y-2 flex-1 flex flex-col">
+                    <label className="text-sm font-medium text-theme-subtext">{t('media_card.description') || 'Description'}</label>
+                    <textarea
+                        value={editDescription}
+                        onChange={(e) => setEditDescription(e.target.value)}
+                        className="w-full flex-1 p-4 rounded-xl border bg-theme-surface border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent focus:border-transparent outline-none resize-none leading-relaxed"
+                        placeholder={t('media_card.description_placeholder') || 'Enter plot summary or description...'}
+                    />
+                </div>
+             </div>
+          )}
+
           {activeTab === 'review' && (
             <div className="h-full flex flex-col">
               {/* Toolbar */}

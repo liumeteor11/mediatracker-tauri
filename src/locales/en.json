@@ -238,7 +238,8 @@
     "import_error": "Failed to import collection",
     "export_tooltip": "Export Collection",
     "import_tooltip": "Import Collection",
-    "import_export_tooltip": "Import/Export Collection"
+    "import_export_tooltip": "Import/Export Collection",
+    "refresh_tooltip": "Refresh collection & Fix metadata"
   },
   "login": {
     "welcome": "Welcome Back",
@@ -291,7 +292,11 @@
     "action_towatch_title": "To Watch",
     "action_watched_title": "Watched",
     "image_loading": "Image loading, please wait",
-    "image_failed": "Image failed to load"
+    "image_failed": "Image failed to load",
+    "release_date": "Release Date",
+    "cast": "Cast & Crew",
+    "cast_placeholder": "Enter cast members, separated by commas...",
+    "release_date_placeholder": "e.g. 2023-07-21"
   },
   "media_type": {
     "Movie": "Movie",
@@ -304,6 +309,7 @@
   },
   "edit_modal": {
     "title": "Edit: {{title}}",
+    "tab_info": "Basic Info",
     "tab_review": "Review & Notes",
     "tab_cover": "Cover Image",
     "delete_card": "Delete Card",

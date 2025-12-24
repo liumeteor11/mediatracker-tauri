@@ -249,7 +249,24 @@
     "import_error": "导入收藏失败",
     "export_tooltip": "导出收藏",
     "import_tooltip": "导入收藏",
-    "import_export_tooltip": "导入/导出收藏"
+    "import_export_tooltip": "导入/导出收藏",
+    "refresh_tooltip": "刷新收藏并补全缺失信息",
+    "add_manual_tooltip": "手动添加卡片"
+  },
+  "add_modal": {
+    "header": "添加新条目",
+    "title_label": "标题",
+    "title_placeholder": "输入标题...",
+    "type_label": "类型",
+    "director_label": "导演/作者",
+    "director_placeholder": "例如：克里斯托弗·诺兰",
+    "year_label": "年份",
+    "poster_url_label": "海报 URL",
+    "poster_hint": "留空以使用自动生成的占位符。",
+    "description_label": "简介",
+    "description_placeholder": "输入简介...",
+    "title_required": "标题是必填项",
+    "success": "添加成功"
   },
   "login": {
     "welcome": "欢迎回来",
@@ -303,7 +320,18 @@
     "action_towatch_title": "想看",
     "action_watched_title": "看过",
     "image_loading": "图片加载中，请稍等",
-    "image_failed": "图片加载失败"
+    "image_failed": "图片加载失败",
+    "title": "标题",
+    "type": "类型",
+    "year": "年份",
+    "director_author": "导演/作者",
+    "description": "简介",
+    "director_placeholder": "输入导演或作者姓名...",
+    "description_placeholder": "输入剧情简介或描述...",
+    "release_date": "上映时间",
+    "cast": "剧组人员",
+    "cast_placeholder": "输入主演或剧组人员，用逗号分隔...",
+    "release_date_placeholder": "例如：2023-07-21"
   },
   "media_type": {
     "Movie": "电影",
@@ -316,6 +344,7 @@
   },
   "edit_modal": {
     "title": "编辑：{{title}}",
+    "tab_info": "基本信息",
     "tab_review": "评论与笔记",
     "tab_cover": "封面图片",
     "delete_card": "删除卡片",
