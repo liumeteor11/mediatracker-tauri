@@ -39,6 +39,7 @@ export const CollectionPage: React.FC = () => {
           const itemsToRepair = collection.filter(item => 
               !item.posterUrl || 
               item.posterUrl.includes('placehold.co') || 
+              item.posterUrl.toLowerCase().includes('m.media-amazon.com') ||
               !item.releaseDate
           );
           

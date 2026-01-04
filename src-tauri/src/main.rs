@@ -9,18 +9,30 @@ use tauri::{command, State, Manager};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use reqwest::Client;
+use std::collections::HashMap;
 use std::error::Error;
 use database::Database;
 use models::{MediaItem, UserPublic, UserRecord};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use std::time::Duration;
+use tokio::sync::RwLock;
 #[cfg(target_os = "windows")]
 use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+
+const SEARCH_CACHE_TTL_MS: u64 = 2 * 60 * 60 * 1000;
+const SEARCH_CACHE_MAX_ENTRIES: usize = 512;
+
+#[derive(Clone)]
+struct SearchCacheEntry {
+    ts_ms: u64,
+    payload: String,
+}
 
 struct AppState {
     proxy_client: Client,  // For Google/Serper/Images (Needs Proxy)
     direct_client: Client, // For Moonshot/Domestic APIs (No Proxy)
+    search_cache: RwLock<HashMap<String, SearchCacheEntry>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -153,9 +165,9 @@ fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) 
 }
 // --- Search Logic (Same as before) ---
 
-async fn google_search(client: &Client, query: &str, api_key: &str, cx: &str, search_type: Option<&str>) -> Result<Vec<SearchResultItem>, Box<dyn Error>> {
+async fn google_search(client: &Client, query: &str, api_key: &str, cx: &str, search_type: Option<&str>) -> Result<Vec<SearchResultItem>, Box<dyn Error + Send + Sync>> {
     let mut url = format!(
-        "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}&safe=active&num=4",
+        "https://www.googleapis.com/customsearch/v1?key={}&cx={}&q={}&safe=off&num=8",
         api_key,
         cx,
         urlencoding::encode(query)
@@ -199,7 +211,7 @@ async fn google_search(client: &Client, query: &str, api_key: &str, cx: &str, se
                  }
             }
 
-            let metadata = item["pagemap"].clone().into(); 
+            let metadata = item["pagemap"].clone(); 
             
             results.push(SearchResultItem {
                 title,
@@ -213,7 +225,7 @@ async fn google_search(client: &Client, query: &str, api_key: &str, cx: &str, se
     Ok(results)
 }
 
-async fn serper_search(client: &Client, query: &str, api_key: &str, search_type: Option<&str>) -> Result<Vec<SearchResultItem>, Box<dyn Error>> {
+async fn serper_search(client: &Client, query: &str, api_key: &str, search_type: Option<&str>) -> Result<Vec<SearchResultItem>, Box<dyn Error + Send + Sync>> {
     let url = if search_type == Some("image") {
         "https://google.serper.dev/images"
     } else {
@@ -224,7 +236,7 @@ async fn serper_search(client: &Client, query: &str, api_key: &str, search_type:
         .post(url)
         .header("X-API-KEY", api_key)
         .header("Content-Type", "application/json")
-        .json(&serde_json::json!({ "q": query, "safe": "active", "num": 4 }))
+        .json(&serde_json::json!({ "q": query, "safe": "off", "num": 8 }))
         .send();
     let resp = tokio::time::timeout(std::time::Duration::from_secs(30), fut)
         .await??;
@@ -259,42 +271,40 @@ async fn serper_search(client: &Client, query: &str, api_key: &str, search_type:
                 });
             }
         }
-    } else {
-        if let Some(organic) = resp["organic"].as_array() {
-            for item in organic {
-                let title = item["title"].as_str().unwrap_or("").to_string();
-                let snippet = item["snippet"].as_str().unwrap_or("").to_string();
-                let link = item["link"].as_str().unwrap_or("").to_string();
-                let date = item["date"].as_str().map(|s| s.to_string());
-                let attributes = item["attributes"].clone();
-                
-                let mut metadata = serde_json::Map::new();
-                if let Some(d) = date {
-                    metadata.insert("date".to_string(), Value::String(d));
-                }
-                if let Some(attrs) = attributes.as_object() {
-                    for (k, v) in attrs {
-                        metadata.insert(k.clone(), v.clone());
-                    }
-                }
-                
-                results.push(SearchResultItem {
-                    title,
-                    snippet,
-                    link,
-                    image: None,
-                    metadata: Some(Value::Object(metadata)),
-                });
+    } else if let Some(organic) = resp["organic"].as_array() {
+        for item in organic {
+            let title = item["title"].as_str().unwrap_or("").to_string();
+            let snippet = item["snippet"].as_str().unwrap_or("").to_string();
+            let link = item["link"].as_str().unwrap_or("").to_string();
+            let date = item["date"].as_str().map(|s| s.to_string());
+            let attributes = item["attributes"].clone();
+            
+            let mut metadata = serde_json::Map::new();
+            if let Some(d) = date {
+                metadata.insert("date".to_string(), Value::String(d));
             }
+            if let Some(attrs) = attributes.as_object() {
+                for (k, v) in attrs {
+                    metadata.insert(k.clone(), v.clone());
+                }
+            }
+            
+            results.push(SearchResultItem {
+                title,
+                snippet,
+                link,
+                image: None,
+                metadata: Some(Value::Object(metadata)),
+            });
         }
     }
     Ok(results)
 }
 
 
-async fn yandex_search(client: &Client, query: &str, user: &str, api_key: &str) -> Result<Vec<SearchResultItem>, Box<dyn Error>> {
+async fn yandex_search(client: &Client, query: &str, user: &str, api_key: &str) -> Result<Vec<SearchResultItem>, Box<dyn Error + Send + Sync>> {
     let url = format!(
-        "https://yandex.com/search/xml?user={}&key={}&l10n=en&filter=strict&query={}",
+        "https://yandex.com/search/xml?user={}&key={}&l10n=en&filter=none&query={}",
         urlencoding::encode(user),
         urlencoding::encode(api_key),
         urlencoding::encode(query)
@@ -368,7 +378,7 @@ async fn yandex_search(client: &Client, query: &str, user: &str, api_key: &str) 
     Ok(results)
 }
 
-async fn duckduckgo_search(client: &Client, query: &str) -> Result<Vec<SearchResultItem>, Box<dyn Error>> {
+async fn duckduckgo_search(client: &Client, query: &str) -> Result<Vec<SearchResultItem>, Box<dyn Error + Send + Sync>> {
     // Try API first (Instant Answer)
     let url = format!(
         "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
@@ -398,7 +408,7 @@ async fn duckduckgo_search(client: &Client, query: &str) -> Result<Vec<SearchRes
     }
 
     if let Some(related) = resp["RelatedTopics"].as_array() {
-        for rt in related.iter().take(5) {
+        for rt in related.iter().take(8) {
             let t = rt["Text"].as_str().unwrap_or("");
             let u = rt["FirstURL"].as_str().unwrap_or("");
             if !t.is_empty() && !u.is_empty() {
@@ -428,7 +438,7 @@ async fn duckduckgo_search(client: &Client, query: &str) -> Result<Vec<SearchRes
     Ok(results)
 }
 
-async fn duckduckgo_html_search(client: &Client, query: &str) -> Result<Vec<SearchResultItem>, Box<dyn Error>> {
+async fn duckduckgo_html_search(client: &Client, query: &str) -> Result<Vec<SearchResultItem>, Box<dyn Error + Send + Sync>> {
     let url = format!(
         "https://html.duckduckgo.com/html/?q={}",
         urlencoding::encode(query)
@@ -454,7 +464,7 @@ async fn duckduckgo_html_search(client: &Client, query: &str) -> Result<Vec<Sear
     
     // Pattern 1: class="result__a" (classic)
     let mut pos: usize = 0;
-    while results.len() < 6 {
+    while results.len() < 10 {
         // Look for result title link
         let found = match lower[pos..].find("result__a") {
             Some(i) => pos + i,
@@ -472,13 +482,13 @@ async fn duckduckgo_html_search(client: &Client, query: &str) -> Result<Vec<Sear
         };
         
         let rest = &body[href_start..];
-        let end = rest.find('"').unwrap_or_else(|| rest.len());
+        let end = rest.find('"').unwrap_or(rest.len());
         let href_raw = &rest[..end];
 
         // Decode DDG redirect (uddg=...)
         let link = if let Some(p) = href_raw.find("uddg=") {
             let rest2 = &href_raw[p + 5..];
-            let end2 = rest2.find('&').unwrap_or_else(|| rest2.len());
+            let end2 = rest2.find('&').unwrap_or(rest2.len());
             let enc = &rest2[..end2];
             urlencoding::decode(enc).unwrap_or_else(|_| enc.into()).to_string()
         } else if href_raw.starts_with("http://") || href_raw.starts_with("https://") {
@@ -550,7 +560,7 @@ fn extract_meta_image(body: &str) -> Option<String> {
         if let Some(i) = lower.find(needle) {
             let meta_start = lower[..i].rfind("<meta").unwrap_or(i);
             let tail = &lower[meta_start..];
-            let end_rel = tail.find('>').unwrap_or_else(|| tail.len());
+            let end_rel = tail.find('>').unwrap_or(tail.len());
             let tag_lower = &lower[meta_start..meta_start + end_rel];
             let tag = &body[meta_start..meta_start + end_rel];
             if let Some(v) = extract_meta_content(tag, tag_lower) {
@@ -602,7 +612,7 @@ fn resolve_url(base: &str, v: &str) -> String {
     if s.starts_with('/') {
         if let Some(p) = base.find("://") {
             let after = &base[p + 3..];
-            let host_end = after.find('/').unwrap_or_else(|| after.len());
+            let host_end = after.find('/').unwrap_or(after.len());
             let root = &base[..p + 3 + host_end];
             return format!("{}{}", root, s);
         }
@@ -630,7 +640,7 @@ async fn douban_cover(title: String, _kind: Option<String>, state: State<'_, App
             if let Some(idx) = body.find(k) {
                 // read until next quote
                 let tail = &body[idx..];
-                let end = tail.find('"').unwrap_or_else(|| tail.len());
+                let end = tail.find('"').unwrap_or(tail.len());
                 let url = &tail[..end];
                 if url.contains("/subject/") { return Some(url.to_string()); }
             }
@@ -693,7 +703,7 @@ async fn fetch_og_image(url: String, config: Option<FetchPageConfig>, state: Sta
 
     let (proxy_url, use_system_proxy) = config
         .as_ref()
-        .map(|c| (c.proxy_url.clone(), c.use_system_proxy.clone()))
+        .map(|c| (c.proxy_url.clone(), c.use_system_proxy))
         .unwrap_or((None, None));
 
     let local_client = client_with_proxy(proxy_url, use_system_proxy);
@@ -730,14 +740,14 @@ async fn fetch_og_image(url: String, config: Option<FetchPageConfig>, state: Sta
 
 #[command]
 async fn web_search(query: String, config: SearchConfig, state: State<'_, AppState>) -> Result<String, String> {
-    println!("Rust web_search called. Query: {}, Provider: {}, Type: {:?}", query, config.provider, config.search_type);
+    println!("Rust web_search called. Provider: {}, Type: {:?}", config.provider, config.search_type);
     
     // Choose HTTP client
-    let local_client = client_with_proxy(config.proxy_url.clone(), config.use_system_proxy.clone());
+    let local_client = client_with_proxy(config.proxy_url.clone(), config.use_system_proxy);
     let client = local_client.as_ref().unwrap_or(&state.proxy_client);
     let search_type = config.search_type.as_deref();
 
-    fn clean_opt<'a>(v: Option<&'a str>) -> Option<&'a str> {
+    fn clean_opt(v: Option<&str>) -> Option<&str> {
         let s = v?.trim();
         if s.is_empty() {
             return None;
@@ -752,28 +762,45 @@ async fn web_search(query: String, config: SearchConfig, state: State<'_, AppSta
     let api_key = clean_opt(config.api_key.as_deref());
     let cx = clean_opt(config.cx.as_deref());
     let user = clean_opt(config.user.as_deref());
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let cache_key = format!(
+        "p={};t={};cx={};u={};q={}",
+        config.provider,
+        search_type.unwrap_or("text"),
+        cx.unwrap_or(""),
+        user.unwrap_or(""),
+        query.trim()
+    );
+    {
+        let guard = state.search_cache.read().await;
+        if let Some(hit) = guard.get(&cache_key) {
+            if now_ms.saturating_sub(hit.ts_ms) <= SEARCH_CACHE_TTL_MS {
+                return Ok(hit.payload.clone());
+            }
+        }
+    }
     
     let result = match config.provider.as_str() {
         "google" => {
             if let (Some(key), Some(cx)) = (api_key, cx) {
                 google_search(client, &query, key, cx, search_type).await
+            } else if search_type == Some("image") {
+                Ok(Vec::new())
             } else {
-                if search_type == Some("image") {
-                    Ok(Vec::new())
-                } else {
-                    duckduckgo_search(client, &query).await
-                }
+                duckduckgo_search(client, &query).await
             }
         },
         "serper" => {
             if let Some(key) = api_key {
                 serper_search(client, &query, key, search_type).await
+            } else if search_type == Some("image") {
+                Ok(Vec::new())
             } else {
-                if search_type == Some("image") {
-                    Ok(Vec::new())
-                } else {
-                    duckduckgo_search(client, &query).await
-                }
+                duckduckgo_search(client, &query).await
             }
         },
         "yandex" => {
@@ -792,7 +819,25 @@ async fn web_search(query: String, config: SearchConfig, state: State<'_, AppSta
     let result: Result<Vec<SearchResultItem>, String> = result.map_err(|e| e.to_string());
 
     match result {
-        Ok(items) => serde_json::to_string(&items).map_err(|e| e.to_string()),
+        Ok(items) => {
+            let payload = serde_json::to_string(&items).map_err(|e| e.to_string())?;
+            {
+                let mut guard = state.search_cache.write().await;
+                guard.insert(cache_key, SearchCacheEntry { ts_ms: now_ms, payload: payload.clone() });
+                if guard.len() > SEARCH_CACHE_MAX_ENTRIES {
+                    let cutoff = now_ms.saturating_sub(SEARCH_CACHE_TTL_MS);
+                    guard.retain(|_, v| v.ts_ms >= cutoff);
+                    while guard.len() > SEARCH_CACHE_MAX_ENTRIES {
+                        if let Some(k) = guard.keys().next().cloned() {
+                            guard.remove(&k);
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            Ok(payload)
+        },
         Err(msg) => {
             let provider = config.provider.clone();
             if search_type != Some("image")
@@ -801,7 +846,12 @@ async fn web_search(query: String, config: SearchConfig, state: State<'_, AppSta
                 && !msg.to_lowercase().contains("quota exceeded")
             {
                 if let Ok(items) = duckduckgo_search(client, &query).await {
-                    return serde_json::to_string(&items).map_err(|e| e.to_string());
+                    let payload = serde_json::to_string(&items).map_err(|e| e.to_string())?;
+                    {
+                        let mut guard = state.search_cache.write().await;
+                        guard.insert(cache_key, SearchCacheEntry { ts_ms: now_ms, payload: payload.clone() });
+                    }
+                    return Ok(payload);
                 }
             }
             println!("Search error (Provider: {}): {}", provider, msg);
@@ -815,7 +865,7 @@ async fn test_search_provider(config: SearchConfig, state: State<'_, AppState>) 
     let start = std::time::Instant::now();
     
     // Use dynamic client based on config (like web_search)
-    let local_client = client_with_proxy(config.proxy_url.clone(), config.use_system_proxy.clone());
+    let local_client = client_with_proxy(config.proxy_url.clone(), config.use_system_proxy);
     let client = local_client.as_ref().unwrap_or(&state.proxy_client);
 
     let q = "test";
@@ -932,7 +982,7 @@ async fn ai_chat(messages: Vec<Value>, temperature: f32, tools: Option<Value>, c
         || base_url.contains("127.0.0.1");
         
     // Optional override via proxy_url
-    let local_client = client_with_proxy(config.proxy_url.clone(), config.use_system_proxy.clone());
+    let local_client = client_with_proxy(config.proxy_url.clone(), config.use_system_proxy);
     let client = if let Some(c) = local_client.as_ref() {
         c
     } else if use_direct {
@@ -1013,7 +1063,7 @@ async fn ai_chat(messages: Vec<Value>, temperature: f32, tools: Option<Value>, c
                 Ok(b) => String::from_utf8_lossy(&b).to_string(),
                 Err(_) => String::new(),
             };
-            if (status == 429 || (status >= 500 && status < 600)) && attempt < max_retries - 1 {
+            if (status == 429 || (500u16..600u16).contains(&status)) && attempt < max_retries - 1 {
                 let delay_ms = 2000u64 * (1u64 << attempt); // 2000, 4000, 8000
                 let reason = if status == 429 { "Rate limited (429)" } else { "Server error (5xx)" };
                 println!("{} Backing off for {} ms before retry {}...", reason, delay_ms, attempt + 2);
@@ -1036,7 +1086,7 @@ async fn test_proxy(config: ProxyTestConfig, state: State<'_, AppState>) -> Resu
     let start = std::time::Instant::now();
 
     // Build optional client with explicit proxy
-    let local_client = client_with_proxy(config.proxy_url.clone(), config.use_system_proxy.clone());
+    let local_client = client_with_proxy(config.proxy_url.clone(), config.use_system_proxy);
 
     let client = local_client.as_ref().unwrap_or(&state.proxy_client);
 
@@ -1204,7 +1254,7 @@ fn main() {
                 .build()
                 .unwrap_or_else(|_| Client::new());
             
-            app.manage(AppState { proxy_client, direct_client });
+            app.manage(AppState { proxy_client, direct_client, search_cache: RwLock::new(HashMap::new()) });
             
             if std::env::var("TAURI_OPEN_DEVTOOLS").unwrap_or_default() == "true" {
                 if let Some(w) = app.get_webview_window("main") {

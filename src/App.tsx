@@ -10,6 +10,7 @@ import 'react-toastify/dist/ReactToastify.css';
 import { useAuthStore } from './store/useAuthStore';
 import { useCollectionStore } from './store/useCollectionStore';
 import { checkUpdates } from './services/aiService';
+import { useTranslation } from 'react-i18next';
 
 // Protected Route Wrapper
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -21,6 +22,7 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 };
 
 const App: React.FC = () => {
+  const { t } = useTranslation();
   const { initialize } = useCollectionStore();
 
   // Initialize store on mount
@@ -67,7 +69,7 @@ const App: React.FC = () => {
         });
 
         if (updateCount > 0) {
-          toast.info(`Updated tracking info for ${updateCount} series.`);
+          toast.info(t('app.updated_tracking_info', { count: updateCount }));
         }
       }
     };
@@ -105,7 +107,7 @@ const App: React.FC = () => {
       </Layout>
 
       <ToastContainer
-          aria-label="通知提示"
+          aria-label={t('common.notifications')}
           position="bottom-right" 
           autoClose={3000} 
           hideProgressBar={false}

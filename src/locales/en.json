@@ -11,7 +11,11 @@
     "select_theme": "Select Theme",
     "theme": "Theme",
     "save_success": "Saved successfully",
-    "close": "Close"
+    "close": "Close",
+    "notifications": "Notifications"
+  },
+  "app": {
+    "updated_tracking_info": "Updated tracking info for {{count}} series."
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -124,8 +128,13 @@
       "proxy_help_item_auth": "Authentication: credentials come from your provider or admin; leave empty if not required.",
       "proxy_help_item_examples": "Examples: HTTP 127.0.0.1:7890 (Clash); SOCKS5 127.0.0.1:1080",
       "proxy_help_item_test": "Use 'Test Proxy Connection' to verify and measure latency.",
-      "proxy_help_close": "Close"
-    },
+      "proxy_help_close": "Close",
+    "bangumi_token_label": "Bangumi Access Token (Access Token)",
+    "bangumi_token_note": "Required for higher rate limits",
+    "bangumi_label": "Bangumi",
+    "get_bangumi_token": "Get Bangumi Token",
+    "get_tmdb_key": "Get TMDB API Key"
+  },
   "import": {
     "title": "Import Media",
     "btn_label": "Import",
@@ -180,7 +189,17 @@
     "most_active_month": "Peak Month",
     "favorite_category": "Favorite Category",
     "monthly_activity": "Monthly Activity",
-    "year_selector": "Select Year"
+    "year_selector": "Select Year",
+    "hide_chart": "Hide Chart",
+    "show_chart": "Show Chart",
+    "show_logs": "Show I/O Logs",
+    "domain_connected": "{{domain}} connected, returned {{count}} items",
+    "domain_failed": "{{domain}} test failed {{error}}",
+    "domain_placeholder": "e.g. imdb.com",
+    "add": "Add",
+    "delete": "Delete",
+    "test": "Test",
+    "no_domains": "No domains"
   },
   "search_page": {
     "title": "Discover Your Next Obsession",
@@ -206,6 +225,7 @@
     "no_results_found": "No results found. Please try a different query.",
     "network_unavailable": "Network unavailable or not configured: check connection or set AI Provider & API Key in Settings, or switch to DuckDuckGo search.",
     "search_error": "An error occurred while searching. Please check your API key.",
+    "search_taking_long": "Search is taking longer than expected, please wait...",
     "searching_wait": "Searching, please wait...",
     "search_done": "Search complete: {{count}} results",
     "added_to_collection": "Added \"{{title}}\" to {{category}}",

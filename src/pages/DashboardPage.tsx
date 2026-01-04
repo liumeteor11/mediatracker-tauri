@@ -124,7 +124,7 @@ const YearlyReport: React.FC<{ collection: MediaItem[] }> = ({ collection }) => 
                     className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-theme-border bg-theme-bg hover:bg-theme-surface hover:text-theme-accent transition-colors ml-auto md:ml-0"
                 >
                     <BarChart2 className="w-3.5 h-3.5" />
-                    {showChart ? (t('dashboard.hide_chart') || '隐藏图表') : (t('dashboard.show_chart') || '显示图表')}
+                    {showChart ? t('dashboard.hide_chart') : t('dashboard.show_chart')}
                     {showChart ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                 </button>
             </div>
@@ -189,7 +189,7 @@ export const DashboardPage: React.FC = () => {
   const [showLogs, setShowLogs] = useState(false);
   const toggleExpand = (id: string) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
   const copyText = async (text: string) => {
-    try { await navigator.clipboard.writeText(text); toast.success(t('dashboard.copied') || '已复制'); } catch {}
+    try { await navigator.clipboard.writeText(text); toast.success(t('dashboard.copied')); } catch {}
   };
 
   const pieData = [
@@ -261,7 +261,7 @@ export const DashboardPage: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
         <div className="p-3 rounded-theme shadow-sm border bg-theme-surface border-theme-border flex flex-col justify-center">
           <div className="flex items-center justify-between mb-2">
-             <h3 className="text-sm font-medium text-theme-subtext">{t('dashboard.last_search') || '最近搜索'}</h3>
+             <h3 className="text-sm font-medium text-theme-subtext">{t('dashboard.last_search')}</h3>
              <span className="text-xs text-theme-subtext">{lastSearchAt || ''}</span>
           </div>
           {lastSearchDurationMs != null ? (
@@ -270,7 +270,7 @@ export const DashboardPage: React.FC = () => {
                <span className="text-xs px-2 py-0.5 rounded-full bg-theme-accent/10 text-theme-accent">{lastSearchDurationMs}ms</span>
             </div>
           ) : (
-            <p className="text-sm text-theme-subtext text-center py-2">{t('dashboard.no_recent_search') || '暂无最近搜索'}</p>
+            <p className="text-sm text-theme-subtext text-center py-2">{t('dashboard.no_recent_search')}</p>
           )}
         </div>
         <div className="p-3 rounded-theme shadow-sm border bg-theme-surface border-theme-border">
@@ -295,7 +295,7 @@ export const DashboardPage: React.FC = () => {
                 className="w-full py-3 border-2 border-dashed border-theme-border rounded-theme text-theme-subtext hover:border-theme-accent hover:text-theme-accent hover:bg-theme-surface transition-all flex items-center justify-center gap-2 group"
             >
                 <Activity className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                <span className="font-medium">{t('dashboard.show_logs') || '展开输入输出日志'}</span>
+                <span className="font-medium">{t('dashboard.show_logs')}</span>
             </button>
         ) : (
             <div className="p-6 rounded-theme shadow-theme border bg-theme-surface border-theme-border relative animate-in fade-in slide-in-from-top-4">
@@ -310,24 +310,24 @@ export const DashboardPage: React.FC = () => {
                 <div className="flex items-center justify-between mb-4 pr-8">
                     <h3 className="text-lg font-bold text-theme-text flex items-center gap-2">
                         <Activity className="w-5 h-5 text-theme-accent" />
-                        {t('dashboard.io_logs') || '输入输出日志'}
+                        {t('dashboard.io_logs')}
                     </h3>
                     <div className="flex items-center gap-2">
                         <div className="flex gap-1">
-                        <button className={clsx('px-2 py-1 text-xs rounded-md border', logFilter==='all'?'bg-theme-accent text-theme-bg border-theme-accent':'bg-theme-surface text-theme-subtext border-theme-border hover:text-theme-text')} onClick={()=>setLogFilter('all')}>{t('dashboard.filter_all') || '全部'}</button>
-                        <button className={clsx('px-2 py-1 text-xs rounded-md border', logFilter==='ai'?'bg-theme-accent text-theme-bg border-theme-accent':'bg-theme-surface text-theme-subtext border-theme-border hover:text-theme-text')} onClick={()=>setLogFilter('ai')}>{t('dashboard.filter_ai') || '大模型'}</button>
-                        <button className={clsx('px-2 py-1 text-xs rounded-md border', logFilter==='search'?'bg-theme-accent text-theme-bg border-theme-accent':'bg-theme-surface text-theme-subtext border-theme-border hover:text-theme-text')} onClick={()=>setLogFilter('search')}>{t('dashboard.filter_search') || '搜索'}</button>
+                        <button className={clsx('px-2 py-1 text-xs rounded-md border', logFilter==='all'?'bg-theme-accent text-theme-bg border-theme-accent':'bg-theme-surface text-theme-subtext border-theme-border hover:text-theme-text')} onClick={()=>setLogFilter('all')}>{t('dashboard.filter_all')}</button>
+                        <button className={clsx('px-2 py-1 text-xs rounded-md border', logFilter==='ai'?'bg-theme-accent text-theme-bg border-theme-accent':'bg-theme-surface text-theme-subtext border-theme-border hover:text-theme-text')} onClick={()=>setLogFilter('ai')}>{t('dashboard.filter_ai')}</button>
+                        <button className={clsx('px-2 py-1 text-xs rounded-md border', logFilter==='search'?'bg-theme-accent text-theme-bg border-theme-accent':'bg-theme-surface text-theme-subtext border-theme-border hover:text-theme-text')} onClick={()=>setLogFilter('search')}>{t('dashboard.filter_search')}</button>
                         </div>
-                        <button className="px-2 py-1 text-xs rounded-md border-2 border-theme-accent bg-theme-accent text-theme-bg hover:bg-theme-accent-hover transition-colors" onClick={clearLogs}>{t('dashboard.clear_logs') || '清空日志'}</button>
+                        <button className="px-2 py-1 text-xs rounded-md border-2 border-theme-accent bg-theme-accent text-theme-bg hover:bg-theme-accent-hover transition-colors" onClick={clearLogs}>{t('dashboard.clear_logs')}</button>
                     </div>
                 </div>
                 {filteredLogs.length === 0 ? (
-                <div className="text-sm text-theme-subtext py-8 text-center bg-theme-bg/30 rounded-lg border border-theme-border/30 border-dashed">{t('dashboard.no_logs') || '暂无日志'}</div>
+                <div className="text-sm text-theme-subtext py-8 text-center bg-theme-bg/30 rounded-lg border border-theme-border/30 border-dashed">{t('dashboard.no_logs')}</div>
                 ) : (
                 <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
                     {filteredLogs.map((l: AIIOLogEntry) => {
                     const ts = new Date(l.ts || Date.now()).toLocaleString();
-                    const head = `${ts} | ${l.channel === 'ai' ? (t('dashboard.filter_ai') || '大模型') : (t('dashboard.filter_search') || '搜索')} | ${l.provider || '-'}${l.searchType ? ' · ' + l.searchType : ''}${l.model ? ' · ' + l.model : ''}`;
+                    const head = `${ts} | ${l.channel === 'ai' ? t('dashboard.filter_ai') : t('dashboard.filter_search')} | ${l.provider || '-'}${l.searchType ? ' · ' + l.searchType : ''}${l.model ? ' · ' + l.model : ''}`;
                     const reqStr = typeof l.request === 'string' ? l.request : JSON.stringify(l.request ?? {}, null, 2);
                     const resStr = typeof l.response === 'string' ? l.response : JSON.stringify(l.response ?? {}, null, 2);
                     const isExp = !!expanded[l.id];
@@ -337,7 +337,7 @@ export const DashboardPage: React.FC = () => {
                             <div className="text-xs font-mono text-theme-subtext truncate flex-1 mr-4" title={head}>{head}</div>
                             <div className="flex gap-2 flex-shrink-0">
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-theme-surface text-theme-subtext border border-theme-border/50">{(l.durationMs ?? 0) + 'ms'}</span>
-                            <button className={clsx('text-[11px] px-2 py-0.5 rounded border', 'bg-theme-surface text-theme-accent hover:bg-theme-accent hover:text-theme-bg transition-colors')} onClick={(e) => { e.stopPropagation(); toggleExpand(l.id); }}>{isExp ? (t('dashboard.collapse') || '收起') : (t('dashboard.expand') || '展开')}</button>
+                            <button className={clsx('text-[11px] px-2 py-0.5 rounded border', 'bg-theme-surface text-theme-accent hover:bg-theme-accent hover:text-theme-bg transition-colors')} onClick={(e) => { e.stopPropagation(); toggleExpand(l.id); }}>{isExp ? t('dashboard.collapse') : t('dashboard.expand')}</button>
                             </div>
                         </div>
                         {isExp && (
@@ -345,14 +345,14 @@ export const DashboardPage: React.FC = () => {
                                 <div className="bg-theme-surface/50 border border-theme-border/50 rounded p-2">
                                 <div className="flex items-center justify-between mb-1">
                                     <span className="text-xs text-theme-subtext">Request</span>
-                                    <button className="text-[11px] px-2 py-0.5 rounded border bg-theme-surface text-theme-accent hover:bg-theme-accent hover:text-theme-bg transition-colors" onClick={()=>copyText(reqStr)}>{t('dashboard.copy') || '复制'}</button>
+                                    <button className="text-[11px] px-2 py-0.5 rounded border bg-theme-surface text-theme-accent hover:bg-theme-accent hover:text-theme-bg transition-colors" onClick={()=>copyText(reqStr)}>{t('dashboard.copy')}</button>
                                 </div>
                                 <pre className="text-[11px] whitespace-pre-wrap break-all max-h-[300px] overflow-auto custom-scrollbar">{reqStr}</pre>
                                 </div>
                                 <div className="bg-theme-surface/50 border border-theme-border/50 rounded p-2">
                                 <div className="flex items-center justify-between mb-1">
                                     <span className="text-xs text-theme-subtext">Response</span>
-                                    <button className="text-[11px] px-2 py-0.5 rounded border bg-theme-surface text-theme-accent hover:bg-theme-accent hover:text-theme-bg transition-colors" onClick={()=>copyText(resStr)}>{t('dashboard.copy') || '复制'}</button>
+                                    <button className="text-[11px] px-2 py-0.5 rounded border bg-theme-surface text-theme-accent hover:bg-theme-accent hover:text-theme-bg transition-colors" onClick={()=>copyText(resStr)}>{t('dashboard.copy')}</button>
                                 </div>
                                 <pre className="text-[11px] whitespace-pre-wrap break-all max-h-[300px] overflow-auto custom-scrollbar">{resStr}</pre>
                                 </div>
@@ -468,9 +468,9 @@ const AuthoritativeDomainsPanel: React.FC = () => {
     try {
       const r = await testAuthoritativeDomain(domain);
       if (r.ok) {
-        toast.success(`${domain} 连接正常，返回 ${r.count} 项`);
+        toast.success(t('dashboard.domain_connected', { domain, count: r.count }));
       } else {
-        toast.error(`${domain} 测试失败 ${r.error ? '('+r.error+')' : ''}`);
+        toast.error(t('dashboard.domain_failed', { domain, error: r.error ? '(' + r.error + ')' : '' }));
       }
     } finally {
       setTesting(null);
@@ -490,12 +490,12 @@ const AuthoritativeDomainsPanel: React.FC = () => {
       <div className="flex gap-2">
         <input 
             className="flex-1 px-2 py-1 text-xs rounded-md border bg-theme-bg border-theme-border text-theme-text focus:outline-none focus:ring-1 focus:ring-theme-accent" 
-            placeholder="例如 imdb.com" 
+            placeholder={t('dashboard.domain_placeholder')} 
             value={newDomain} 
             onChange={e=>setNewDomain(e.target.value)} 
             onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
         />
-        <button className="px-2 py-1 text-xs rounded-md border-2 border-theme-accent bg-theme-accent text-theme-bg hover:bg-theme-accent-hover transition-colors" onClick={handleAdd}>添加</button>
+        <button className="px-2 py-1 text-xs rounded-md border-2 border-theme-accent bg-theme-accent text-theme-bg hover:bg-theme-accent-hover transition-colors" onClick={handleAdd}>{t('dashboard.add')}</button>
       </div>
 
       <div className="space-y-1 max-h-[150px] overflow-y-auto pr-1 custom-scrollbar">
@@ -503,13 +503,13 @@ const AuthoritativeDomainsPanel: React.FC = () => {
           <div key={d} className="flex items-center justify-between px-2 py-1 rounded-md border bg-theme-bg/50 border-theme-border/50 hover:border-theme-border transition-colors group">
             <span className="text-xs text-theme-text font-mono truncate max-w-[150px]" title={d}>{d}</span>
             <div className="flex gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
-              <button className={clsx('px-2 py-0.5 text-[10px] rounded border', 'bg-theme-surface text-theme-subtext hover:text-theme-text hover:border-theme-subtext transition-colors')} onClick={()=>removeDomain(active, d)}>删除</button>
-              <button className={clsx('px-2 py-0.5 text-[10px] rounded border transition-colors', testing===d?'bg-theme-surface text-theme-subtext cursor-wait':'bg-theme-surface text-theme-accent border-theme-accent/30 hover:bg-theme-accent hover:text-theme-bg')} onClick={()=>handleTest(d)}>{testing===d?'...':'测试'}</button>
+              <button className={clsx('px-2 py-0.5 text-[10px] rounded border', 'bg-theme-surface text-theme-subtext hover:text-theme-text hover:border-theme-subtext transition-colors')} onClick={()=>removeDomain(active, d)}>{t('dashboard.delete')}</button>
+              <button className={clsx('px-2 py-0.5 text-[10px] rounded border transition-colors', testing===d?'bg-theme-surface text-theme-subtext cursor-wait':'bg-theme-surface text-theme-accent border-theme-accent/30 hover:bg-theme-accent hover:text-theme-bg')} onClick={()=>handleTest(d)}>{testing===d?'...':t('dashboard.test')}</button>
             </div>
           </div>
         ))}
         {list.length===0 && (
-          <div className="text-xs text-theme-subtext py-2 text-center border border-dashed border-theme-border/50 rounded-md">暂无域名</div>
+          <div className="text-xs text-theme-subtext py-2 text-center border border-dashed border-theme-border/50 rounded-md">{t('dashboard.no_domains')}</div>
         )}
       </div>
     </div>

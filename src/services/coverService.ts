@@ -1,5 +1,7 @@
 import { MediaItem, MediaType } from '../types/types';
 import { fetchPosterFromSearch } from './aiService';
+import { searchTMDB, getTMDBPosterUrl } from './tmdbService';
+import { useAIStore } from '../store/useAIStore';
 
 const RETRY_COUNT = 3;
 const RETRY_DELAY = 2000;
@@ -54,8 +56,18 @@ export const fetchCover = async (item: MediaItem): Promise<string | undefined> =
 };
 
 const fetchMovieCover = async (item: MediaItem): Promise<string | undefined> => {
-    // Ideally would use TMDB here if key was available.
-    // For now, fallback to our robust multi-engine search.
+    const s = useAIStore.getState();
+    if (s.enableTmdb) {
+        const tmdbType: 'movie' | 'tv' =
+            item.type === MediaType.TV_SERIES || item.type === MediaType.SHORT_DRAMA ? 'tv' : 'movie';
+        const year = (item.releaseDate || '').trim().slice(0, 4);
+        const candidates = await searchTMDB(item.title, tmdbType);
+        const best = (year && /^\d{4}$/.test(year))
+            ? candidates.find(c => (c.release_date || c.first_air_date || '').startsWith(year))
+            : candidates[0];
+        const poster = best ? (getTMDBPosterUrl(best.poster_path) || undefined) : undefined;
+        if (poster) return poster;
+    }
     return fetchPosterFromSearch(item.title, item.releaseDate?.split('-')[0] || '', 'movie');
 };
 

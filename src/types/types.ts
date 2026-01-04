@@ -28,6 +28,9 @@ export interface MediaItem {
   posterUrl?: string; // URL for the poster image
   rating?: string; // e.g., "8.5/10"
   cast?: string[]; // Main actors (max 5)
+
+  tmdbId?: number;
+  tmdbMediaType?: 'movie' | 'tv';
   
   // Tracking fields
   userProgress?: string; // e.g. "S1E5" or "Chapter 10"

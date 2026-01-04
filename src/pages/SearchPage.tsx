@@ -1,57 +1,62 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Search, Loader2, TrendingUp, AlertCircle, RefreshCw, Edit, X, Save, RotateCcw } from 'lucide-react';
-import { searchMedia, getTrendingMedia, fetchPosterFromSearch, performClientSideSearch, processSearchResult, runBackgroundSearch, refreshTrendingCache } from '../services/aiService';
+import { searchMedia, getTrendingMedia, fetchPosterFromSearch, performClientSideSearch, processSearchResult, refreshTrendingCache } from '../services/aiService';
 import { MediaItem, CollectionCategory, MediaType } from '../types/types';
 import { MediaCard } from '../components/MediaCard';
 import { useCollectionStore } from '../store/useCollectionStore';
 import { useAIStore } from '../store/useAIStore';
+import { useSearchStore } from '../store/useSearchStore';
 import { toast } from 'react-toastify';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
+import { v4 as uuidv4 } from 'uuid';
 
 export const SearchPage: React.FC = () => {
   const { t, i18n } = useTranslation();
   const { trendingPrompt, setConfig } = useAIStore();
-  const [query, setQuery] = useState('');
-  const [selectedType, setSelectedType] = useState<MediaType | 'All'>('All');
-  const [results, setResults] = useState<MediaItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isTrending, setIsTrending] = useState(true);
+  
+  // Use global search store
+  const { 
+    query, results, searchLoading, trendingLoading, error, selectedType, isTrending, currentSearchId,
+    setQuery, setResults, setSearchLoading, setTrendingLoading, setError, setSelectedType, setIsTrending, setCurrentSearchId, resetSearch
+  } = useSearchStore();
+
+  const loading = searchLoading || trendingLoading;
   
   const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
   const [tempPrompt, setTempPrompt] = useState('');
 
   const { addToCollection } = useCollectionStore();
-  const isMountedRef = useRef(true);
-  const loadingRef = useRef(loading);
+  
+  // Refs to access latest state in async functions without dependencies
   const isTrendingRef = useRef(isTrending);
   const queryRef = useRef(query);
   const selectedTypeRef = useRef<MediaType | 'All'>(selectedType);
-  useEffect(() => { loadingRef.current = loading; }, [loading]);
+  const searchLoadingOpRef = useRef<string | null>(null);
+
   useEffect(() => { isTrendingRef.current = isTrending; }, [isTrending]);
   useEffect(() => { queryRef.current = query; }, [query]);
   useEffect(() => { selectedTypeRef.current = selectedType; }, [selectedType]);
-  useEffect(() => { 
-    return () => { 
-      isMountedRef.current = false; 
-      try {
-        if (loadingRef.current) {
-          if (!isTrendingRef.current && queryRef.current.trim()) {
-            runBackgroundSearch(queryRef.current, selectedTypeRef.current);
-          } else if (isTrendingRef.current) {
-            refreshTrendingCache();
-          }
-        }
-      } catch {}
-    }; 
-  }, []);
 
+  const startOp = () => {
+    const id = uuidv4();
+    setCurrentSearchId(id);
+    return id;
+  };
+
+  const cancelOps = () => {
+    setCurrentSearchId(null);
+  };
+
+  // Check if the operation is still the latest one
+  const isOpActive = (id: string) => useSearchStore.getState().currentSearchId === id;
+
+  // Handle reset-search event
   useEffect(() => {
     const handleReset = () => {
-        setQuery('');
-        loadTrending();
-        setIsTrending(true);
+        cancelOps(); // Cancel any ongoing operations
+        resetSearch(); // Reset store state
+        loadTrending(); // Load trending
     };
     window.addEventListener('reset-search', handleReset);
     return () => window.removeEventListener('reset-search', handleReset);
@@ -88,8 +93,11 @@ export const SearchPage: React.FC = () => {
     { label: t('search_page.filter_other'), value: MediaType.OTHER },
   ], [t]);
 
+  // Initial load of trending if no results
   useEffect(() => {
-    loadTrending();
+    if (results.length === 0 && isTrending && !loading) {
+        loadTrending();
+    }
   }, []);
 
   const getTrendingPromptKey = () => {
@@ -98,9 +106,13 @@ export const SearchPage: React.FC = () => {
     return `${langKey}::${promptKey}`;
   };
 
-  const loadTrending = async (forceRefresh = false) => {
-    setLoading(true);
-    setError(null);
+  const loadTrending = async (forceRefresh = false, opts: { silent?: boolean } = {}) => {
+    const opId = startOp();
+    const silent = !!opts.silent;
+    if (!silent) {
+      setTrendingLoading(true);
+    }
+    if (!silent) setError(null);
     if (forceRefresh) {
       toast.info(t('search_page.refreshing_toast'));
     }
@@ -123,10 +135,11 @@ export const SearchPage: React.FC = () => {
                     const parsedData = JSON.parse(cachedData);
                     if (Array.isArray(parsedData) && parsedData.length > 0) {
                          const limited = parsedData.slice(0, 4);
+                         if (!isOpActive(opId)) return;
                          setResults(limited);
                          setIsTrending(true);
-                         hydratePosters(limited, { persistTrending: true });
-                         setLoading(false);
+                         hydratePosters(limited, { persistTrending: true }, opId);
+                         if (!silent && isOpActive(opId)) setTrendingLoading(false);
                          return;
                     }
                 } catch (e) {
@@ -138,6 +151,7 @@ export const SearchPage: React.FC = () => {
 
       // 2. Fetch new data
       const trending = await getTrendingMedia();
+      if (!isOpActive(opId)) return;
       
       // 3. Save to local storage
       if (trending.length > 0) {
@@ -148,10 +162,10 @@ export const SearchPage: React.FC = () => {
         localStorage.setItem('media_tracker_trending_ts', Date.now().toString());
         localStorage.setItem('media_tracker_trending_prompt_key', getTrendingPromptKey());
         if (forceRefresh) {
-             await hydratePosters(limited, { force: true, persistTrending: true });
+             await hydratePosters(limited, { force: true, persistTrending: true }, opId);
              toast.success(t('search_page.refresh_done'));
         } else {
-             hydratePosters(limited, { persistTrending: true });
+             hydratePosters(limited, { persistTrending: true }, opId);
         }
       } else {
          const cachedData = localStorage.getItem('media_tracker_trending_data');
@@ -159,50 +173,70 @@ export const SearchPage: React.FC = () => {
             try {
                 const parsedData = JSON.parse(cachedData);
                 if (Array.isArray(parsedData) && parsedData.length > 0) {
+                    if (!isOpActive(opId)) return;
                     setResults(parsedData);
                     setIsTrending(true);
                     if (forceRefresh) {
-                      await hydratePosters(parsedData, { force: true, persistTrending: true });
+                      await hydratePosters(parsedData, { force: true, persistTrending: true }, opId);
                       toast.error(t('search_page.trending_refresh_failed'));
                     } else {
-                      hydratePosters(parsedData, { persistTrending: true });
+                      hydratePosters(parsedData, { persistTrending: true }, opId);
                     }
                 } else {
-                    if (forceRefresh) setError(t('search_page.trending_refresh_failed'));
+                    if (forceRefresh && isOpActive(opId)) setError(t('search_page.trending_refresh_failed'));
                 }
             } catch {
-                if (forceRefresh) setError(t('search_page.trending_refresh_failed'));
+                if (forceRefresh && isOpActive(opId)) setError(t('search_page.trending_refresh_failed'));
             }
          } else {
-            if (forceRefresh) setError(t('search_page.trending_refresh_failed'));
+            if (forceRefresh && isOpActive(opId)) setError(t('search_page.trending_refresh_failed'));
          }
       }
       
     } catch (err) {
-      setError(t('search_page.trending_load_failed'));
+      if (isOpActive(opId)) setError(t('search_page.trending_load_failed'));
       if (forceRefresh) toast.error(t('search_page.trending_refresh_failed'));
     } finally {
-      setLoading(false);
+      if (!silent && isOpActive(opId)) setTrendingLoading(false);
     }
   };
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query.trim()) return;
+    const q = query.trim();
+    if (!q) return;
+    const opId = startOp();
 
-    setLoading(true);
+    setSearchLoading(true);
+    searchLoadingOpRef.current = opId;
     setError(null);
     setIsTrending(false);
+    setResults([]);
     toast.info(t('search_page.searching_wait'));
     const startTs = performance.now();
     
+    // Timeout warning
+    const timeoutId = setTimeout(() => {
+        // Check if this operation is still the active one and still loading
+        if (isOpActive(opId) && useSearchStore.getState().searchLoading) {
+            toast.warn(t('search_page.search_taking_long') || "Search is taking longer than expected, please wait...");
+        }
+    }, 10000); // 10 seconds
+
     try {
-      const data = await searchMedia(query, selectedType);
-      setResults(data);
-      writeSearchCache(query, selectedType, data);
-      await Promise.all([hydratePosters(data), verifyResults(data, query)]);
+      const data = await searchMedia(q, selectedType);
+      clearTimeout(timeoutId);
+      
+      if (!isOpActive(opId)) return;
       const duration = Math.round(performance.now() - startTs);
-      useAIStore.getState().setConfig({ lastSearchDurationMs: duration, lastSearchAt: new Date().toISOString(), lastSearchQuery: query });
+      setResults(data);
+      writeSearchCache(q, selectedType, data);
+      useAIStore.getState().setConfig({ lastSearchDurationMs: duration, lastSearchAt: new Date().toISOString(), lastSearchQuery: q });
+      
+      const verifiedData = await verifyResults(data, q, opId);
+      const dataForHydration = verifiedData || data;
+      void hydratePosters(dataForHydration, {}, opId).catch(() => {});
+
       if (data.length === 0) {
         const cfg = useAIStore.getState();
         const hasKey = !!cfg.getDecryptedApiKey();
@@ -217,24 +251,31 @@ export const SearchPage: React.FC = () => {
         toast.success(t('search_page.search_done', { count: data.length }));
       }
     } catch (err) {
+      clearTimeout(timeoutId);
       const errorMsg = err instanceof Error ? err.message : String(err);
-      setError(`${t('search_page.search_error')} ${errorMsg}`);
+      if (isOpActive(opId)) setError(`${t('search_page.search_error')} ${errorMsg}`);
       toast.error(t('search_page.search_error'));
     } finally {
-      setLoading(false);
+      if (isOpActive(opId)) setSearchLoading(false);
     }
   };
 
-  const verifyResults = async (items: MediaItem[], q: string) => {
+  const verifyResults = async (items: MediaItem[], q: string, opId: string): Promise<MediaItem[] | undefined> => {
     try {
-      const ctx = await performClientSideSearch(q, true, items && items.length > 0 ? items[0].type : 'All');
-      if (!ctx) return;
+      const ctx = await performClientSideSearch(q, true, selectedTypeRef.current);
+      if (!ctx) return undefined;
       const arr = JSON.parse(ctx);
-      if (!Array.isArray(arr)) return;
+      if (!Array.isArray(arr)) return undefined;
       const idx = new Map<string, any>();
       for (const r of arr) {
         const p = processSearchResult(r.title || '', r.snippet || '');
-        idx.set(p.title.toLowerCase(), { raw: r, meta: p });
+        // Use a composite key if year is available to avoid mismatching remakes
+        const key = p.year ? `${p.title.toLowerCase()}|${p.year}` : p.title.toLowerCase();
+        idx.set(key, { raw: r, meta: p });
+        // Also index by title only as fallback if not already present
+        if (!idx.has(p.title.toLowerCase())) {
+            idx.set(p.title.toLowerCase(), { raw: r, meta: p });
+        }
       }
       const pickNames = (text: string) => {
         return text
@@ -243,9 +284,14 @@ export const SearchPage: React.FC = () => {
           .filter(Boolean)
           .slice(0, 5);
       };
-      setResults(prev => {
-        const mapped = prev.map(it => {
-          const rec = idx.get(it.title.toLowerCase());
+
+      const mapped = items.map(it => {
+          // Try exact match with year first
+          const year = it.releaseDate ? it.releaseDate.split('-')[0] : '';
+          let rec = idx.get(`${it.title.toLowerCase()}|${year}`);
+          // Fallback to title only match
+          if (!rec) rec = idx.get(it.title.toLowerCase());
+          
           if (!rec) return it;
           const { raw, meta } = rec;
           const snip: string = (raw.snippet || '').toString();
@@ -274,27 +320,46 @@ export const SearchPage: React.FC = () => {
             desc = snip.trim();
           }
           const next: MediaItem = { ...it };
-          if (y && (!next.releaseDate || next.releaseDate.length < 4 || next.releaseDate !== y)) {
-            next.releaseDate = y;
+          if (y) {
+            const cur = (next.releaseDate || '').trim();
+            const curIsFullDate = /^\d{4}-\d{2}-\d{2}$/.test(cur);
+            const curIsYearOnly = /^\d{4}$/.test(cur);
+            if (!cur || cur.length < 4) next.releaseDate = y;
+            else if (!curIsFullDate && curIsYearOnly && cur !== y) next.releaseDate = y;
           }
           if (director) next.directorOrAuthor = director;
           if (cast && cast.length > 0) next.cast = cast;
           if (desc) next.description = desc;
           return next;
-        });
-        try { writeSearchCache(q, selectedType, mapped); } catch {}
-        return isMountedRef.current ? mapped : prev;
       });
-    } catch {}
+
+      setResults(prev => {
+        if (!isOpActive(opId)) return prev;
+        // Merge with prev? Or just replace?
+        // Since we verify the *initial* items, and no other ops should be modifying results (except hydratePosters),
+        // we should be careful.
+        // hydratePosters modifies `posterUrl`.
+        // If we just replace with `mapped`, we lose `hydratePosters` changes if they happened concurrently?
+        // But we are now awaiting verifyResults BEFORE hydratePosters. So hydratePosters hasn't run yet.
+        // So replacing is safe.
+        return mapped;
+      });
+      try { writeSearchCache(q, selectedType, mapped); } catch {}
+      return mapped;
+    } catch {
+        return undefined;
+    }
   };
 
   const hydratePosters = async (
     items: MediaItem[],
     opts: { force?: boolean; persistTrending?: boolean } = {}
+    , opId?: string
   ) => {
+    const effOpId = opId ?? startOp();
     const force = !!opts.force;
     const persistTrending = !!opts.persistTrending;
-    const queue = items.filter(i => !i.customPosterUrl && (force || !i.posterUrl || i.posterUrl.includes('placehold.co')));
+    const queue = items.filter(i => !i.customPosterUrl && (force || !i.posterUrl || i.posterUrl.includes('placehold.co') || (i.posterUrl || '').toLowerCase().includes('m.media-amazon.com')));
     const mergedById = new Map<string, MediaItem>(items.map(i => [i.id, i]));
 
     const persist = (arr: MediaItem[]) => {
@@ -307,11 +372,13 @@ export const SearchPage: React.FC = () => {
     };
 
     const applyUpdate = (id: string, patch: Partial<MediaItem>) => {
+      if (!isOpActive(effOpId)) return;
       const cur = mergedById.get(id);
       if (!cur) return;
       const next = { ...cur, ...patch } as MediaItem;
       mergedById.set(id, next);
       setResults(prev => {
+        if (!isOpActive(effOpId)) return prev;
         const mapped = prev.map(r => r.id === id ? { ...r, ...patch } : r);
         try {
           if (!isTrendingRef.current && queryRef.current.trim()) {
@@ -319,16 +386,18 @@ export const SearchPage: React.FC = () => {
           }
         } catch {}
         if (persistTrending) persist(mapped);
-        return isMountedRef.current ? mapped : prev;
+        return mapped;
       });
     };
 
     const worker = async () => {
       while (queue.length > 0) {
+        if (!isOpActive(effOpId)) return;
         const item = queue.shift()!;
         const year = item.releaseDate ? item.releaseDate.split('-')[0] : '';
         try {
           const url = await fetchPosterFromSearch(item.title, year, item.type);
+          if (!isOpActive(effOpId)) return;
           if (url) applyUpdate(item.id, { posterUrl: url });
         } catch {}
       }
@@ -340,33 +409,18 @@ export const SearchPage: React.FC = () => {
     return finalArr;
   };
 
-  useEffect(() => {
-    const lastQ = useAIStore.getState().lastSearchQuery || '';
-    if (!lastQ.trim()) return;
-    const keys = getSearchCacheKeys(lastQ);
-    let best: { key: string; ts: number; type: MediaType | 'All' } | null = null;
-    for (const k of keys) {
-      try {
-        const tsStr = localStorage.getItem(k.tsKey);
-        const dataStr = localStorage.getItem(k.key);
-        if (tsStr && dataStr) {
-          const ts = parseInt(tsStr, 10);
-          if (!isNaN(ts)) {
-            if (!best || ts > best.ts) best = { key: k.key, ts, type: k.type };
-          }
-        }
-      } catch {}
+  const showCachedTrending = (): boolean => {
+    try {
+      const cachedData = localStorage.getItem('media_tracker_trending_data');
+      if (!cachedData) return false;
+      const parsedData = JSON.parse(cachedData);
+      if (!Array.isArray(parsedData) || parsedData.length === 0) return false;
+      setResults(parsedData.slice(0, 4));
+      return true;
+    } catch {
+      return false;
     }
-    if (best) {
-      try {
-        const arr = JSON.parse(localStorage.getItem(best.key) || '[]');
-        if (Array.isArray(arr) && arr.length > 0) {
-          setResults(arr);
-          setIsTrending(false);
-        }
-      } catch {}
-    }
-  }, []);
+  };
 
   const onAddToCollection = (item: MediaItem, category: CollectionCategory) => {
     addToCollection(item, category);
@@ -394,14 +448,6 @@ export const SearchPage: React.FC = () => {
   };
 
   const restoreDefault = () => {
-      // Set empty to clear custom prompt
-      setTempPrompt('');
-      // Also update the textarea visual to the default text immediately so they see what "Default" means? 
-      // No, standard behavior for "Restore Default" in a modal is usually to reset the form value to the default value.
-      // Here the "default value" for the CONFIG is "", but the visual representation is the default text.
-      // Let's set it to the default text, but if they save, we should maybe save ""?
-      // Actually, saving the default text explicitly is fine too.
-      // But to be cleaner, let's just set it to the default text.
       setTempPrompt(t('search_page.default_prompt'));
   };
 
@@ -428,36 +474,47 @@ export const SearchPage: React.FC = () => {
                 const val = e.target.value;
                 setQuery(val);
                 if (val.trim() === '') {
-                    loadTrending();
+                    cancelOps();
+                    setError(null);
+                    setSearchLoading(false);
+                    setTrendingLoading(false);
                     setIsTrending(true);
+                    if (!showCachedTrending()) loadTrending(false, { silent: true });
                 }
             }}
             placeholder={t('search_page.input_placeholder')}
             className="relative w-full pl-12 pr-40 py-4 rounded-full border-2 focus:outline-none focus:ring-2 shadow-xl text-lg transition-all bg-theme-surface border-theme-border text-theme-text focus:border-theme-accent focus:ring-theme-accent/20 placeholder-theme-subtext"
           />
           <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-6 h-6 text-theme-subtext" />
-            
+
+          <div className="absolute right-2 top-2 bottom-2 flex items-center gap-1 z-20">
             {query && (
-                <button
-                    type="button"
-                    onClick={() => {
-                        setQuery('');
-                        loadTrending();
-                        setIsTrending(true);
-                    }}
-                    className="absolute right-36 top-1/2 transform -translate-y-1/2 p-2 rounded-full text-theme-subtext hover:bg-theme-bg transition-colors z-20"
-                >
-                    <X className="w-5 h-5" />
-                </button>
+              <button
+                type="button"
+                onClick={() => {
+                  cancelOps();
+                  setQuery('');
+                  setError(null);
+                  setSearchLoading(false);
+                  setTrendingLoading(false);
+                  setIsTrending(true);
+                  if (!showCachedTrending()) loadTrending(false, { silent: true });
+                }}
+                className="p-2 rounded-full text-theme-subtext hover:bg-theme-bg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
             )}
 
             <button 
               type="submit"
-              disabled={loading || !query.trim()}
-              className="absolute right-2 top-2 bottom-2 px-6 rounded-full font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 bg-theme-accent text-theme-bg hover:bg-theme-accent-hover hover:shadow-lg border-2 border-theme-accent focus:outline-none focus:ring-2 focus:ring-theme-accent z-20"
+              disabled={searchLoading || !query.trim()}
+              className="h-full px-6 rounded-full font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 bg-theme-accent text-theme-bg hover:bg-theme-accent-hover hover:shadow-lg border-2 border-theme-accent focus:outline-none focus:ring-2 focus:ring-theme-accent flex items-center justify-center gap-2 min-w-[92px]"
             >
-              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : t('search_page.search_btn')}
+              {searchLoading && <Loader2 className="w-5 h-5 animate-spin" />}
+              <span>{t('search_page.search_btn')}</span>
             </button>
+          </div>
         </form>
 
         <div className="flex flex-wrap justify-center gap-2 mt-6 max-w-2xl mx-auto">
@@ -500,12 +557,12 @@ export const SearchPage: React.FC = () => {
 
                         <button
                             onClick={() => loadTrending(true)}
-                            disabled={loading}
+                            disabled={trendingLoading}
                             className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-theme-surface text-theme-accent hover:bg-theme-bg disabled:opacity-50 border-2 border-theme-accent focus:outline-none focus:ring-2 focus:ring-theme-accent"
                             title={t('search_page.refresh_tooltip')}
                         >
-                            <RefreshCw className={clsx("w-4 h-4", loading && "animate-spin")} />
-                            <span>{loading ? t('search_page.refreshing') : t('search_page.refresh')}</span>
+                            <RefreshCw className={clsx("w-4 h-4", trendingLoading && "animate-spin")} />
+                            <span>{trendingLoading ? t('search_page.refreshing') : t('search_page.refresh')}</span>
                         </button>
                     </div>
                 </div>
@@ -523,7 +580,7 @@ export const SearchPage: React.FC = () => {
             </div>
         )}
 
-        {loading ? (
+        {(searchLoading || (trendingLoading && results.length === 0)) ? (
            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {[1, 2, 3, 4].map((i) => (
                 <div key={i} className="rounded-xl aspect-[1/1.48] animate-pulse border p-4 bg-theme-surface border-theme-border">

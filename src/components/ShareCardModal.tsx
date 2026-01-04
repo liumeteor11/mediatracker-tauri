@@ -17,6 +17,25 @@ export const ShareCardModal: React.FC<ShareCardModalProps> = ({ item, onClose })
   const [isGenerating, setIsGenerating] = useState(false);
   const { theme } = useThemeStore();
 
+  const normalizeImgSrc = (value?: string): string | undefined => {
+    let s = String(value ?? '').trim();
+    if (!s) return undefined;
+    s = s
+      .replace(/^[<("'“‘\[]+/g, '')
+      .replace(/[>"'”’\].,;:)]+$/g, '')
+      .trim();
+    if (!s) return undefined;
+    const lower = s.toLowerCase();
+    if (lower === 'n/a' || lower === 'na' || lower === 'null' || lower === 'undefined') return undefined;
+    if (lower.includes('m.media-amazon.com/')) return undefined;
+    if (lower.includes('i.ebayimg.com/') || lower.includes('ebayimg.com/')) return undefined;
+    if (lower.startsWith('data:') || lower.startsWith('blob:')) return s;
+    if (lower.startsWith('http://') || lower.startsWith('https://')) return s;
+    if (s.startsWith('//')) return `https:${s}`;
+    if (/^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(s)) return `https://${s}`;
+    return s;
+  };
+
   const handleDownload = async () => {
     if (!cardRef.current) return;
     setIsGenerating(true);
@@ -68,10 +87,11 @@ export const ShareCardModal: React.FC<ShareCardModalProps> = ({ item, onClose })
             {/* Poster Image */}
             <div className="relative aspect-[2/3] w-full">
                 <img 
-                    src={item.customPosterUrl || item.posterUrl || 'https://placehold.co/600x900/1a1a1a/FFF?text=No+Image'} 
+                    src={normalizeImgSrc(item.customPosterUrl || item.posterUrl) || 'https://placehold.co/600x900/1a1a1a/FFF?text=No+Image'} 
                     alt={item.title}
                     className="w-full h-full object-cover"
                     crossOrigin="anonymous" 
+                    referrerPolicy="no-referrer"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent" />
                 

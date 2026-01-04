@@ -1,4 +1,4 @@
-import { searchTMDB, getTMDBPosterUrl } from './tmdbService';
+import { searchTMDB, getTMDBDetails, getTMDBPosterUrl } from './tmdbService';
 import { searchBangumi } from './bangumiService';
 import { usePluginStore } from '../store/usePluginStore';
 import { PluginExecutor } from './pluginService';
@@ -89,6 +89,53 @@ const resolveTauriSearchProvider = (input: {
   return { provider: 'duckduckgo' };
 };
 
+const resolveTauriSearchProviderList = (input: {
+  provider: any;
+  googleKey?: string;
+  googleCx?: string;
+  serperKey?: string;
+  yandexKey?: string;
+  yandexUser?: string;
+}): Array<{ provider: TauriSearchProvider; apiKey?: string; cx?: string; user?: string }> => {
+  const clean = (v?: string): string | undefined => {
+    const s = (v ?? '').trim();
+    if (!s) return undefined;
+    const l = s.toLowerCase();
+    if (l === 'undefined' || l === 'null') return undefined;
+    return s;
+  };
+
+  const requested = normalizeTauriSearchProvider(input.provider);
+  const googleKey = clean(input.googleKey);
+  const googleCx = clean(input.googleCx);
+  const serperKey = clean(input.serperKey);
+  const yandexKey = clean(input.yandexKey);
+  const yandexUser = clean(input.yandexUser);
+
+  const candidates: TauriSearchProvider[] = [requested, 'google', 'serper', 'yandex', 'duckduckgo'];
+  const uniq = Array.from(new Set(candidates));
+
+  const out: Array<{ provider: TauriSearchProvider; apiKey?: string; cx?: string; user?: string }> = [];
+  for (const p of uniq) {
+    if (p === 'google') {
+      if (googleKey && googleCx) out.push({ provider: 'google', apiKey: googleKey, cx: googleCx });
+      continue;
+    }
+    if (p === 'serper') {
+      if (serperKey) out.push({ provider: 'serper', apiKey: serperKey });
+      continue;
+    }
+    if (p === 'yandex') {
+      if (yandexKey && yandexUser) out.push({ provider: 'yandex', apiKey: yandexKey, user: yandexUser });
+      continue;
+    }
+    out.push({ provider: 'duckduckgo' });
+  }
+
+  if (out.length === 0) return [{ provider: 'duckduckgo' }];
+  return out;
+};
+
 const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit & { timeoutMs?: number } = {}) => {
   const ms = init.timeoutMs ?? 12000;
   const controller = new AbortController();
@@ -141,12 +188,40 @@ class Semaphore {
 
 // Limit concurrent requests to avoid rate limits
 const apiLimiter = new Semaphore(2);
+const searchLimiter = new Semaphore(4);
 
 const OMDB_API_KEY = import.meta.env.VITE_OMDB_API_KEY;
 
 // A curated list of placeholders to serve as "Posters" when real ones aren't found
 const getPlaceholder = (type: string = 'Media') => {
   return `https://placehold.co/600x900/1a1a1a/FFF?text=${encodeURIComponent(type)}`;
+};
+
+const normalizeImageUrl = (value: any): string | undefined => {
+  let s = String(value ?? '').trim();
+  if (!s) return undefined;
+  s = s
+    .replace(/^[<("'“‘\[]+/g, '')
+    .replace(/[>"'”’\].,;:)]+$/g, '')
+    .trim();
+  if (!s) return undefined;
+  const lower = s.toLowerCase();
+  if (lower === 'n/a' || lower === 'na' || lower === 'null' || lower === 'undefined') return undefined;
+  if (lower.includes('m.media-amazon.com/')) return undefined;
+  if (lower.includes('i.ebayimg.com/') || lower.includes('ebayimg.com/')) return undefined;
+  if (lower.startsWith('data:') || lower.startsWith('blob:')) return s;
+  if (lower.startsWith('http://') || lower.startsWith('https://')) return s;
+  if (s.startsWith('//')) return `https:${s}`;
+  if (/^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(s)) return `https://${s}`;
+  return s;
+};
+
+const isBlockedPosterUrl = (value?: string): boolean => {
+  const s = String(value ?? '').trim().toLowerCase();
+  if (!s) return true;
+  if (s.includes('placehold.co') || s.includes('no+image') || s.includes('image+error')) return true;
+  if (s.includes('m.media-amazon.com/')) return true;
+  return false;
 };
 
 const FRANCHISE_ALIASES: Record<string, string[]> = {
@@ -198,19 +273,16 @@ const fetchPosterFromOMDB = async (title: string, year: string): Promise<string 
     const response = await fetch(url);
     const data = await response.json();
     if (data.Response === "True" && data.Poster && data.Poster !== "N/A") {
-      const isValid = await checkImage(data.Poster);
-      if (isValid) return data.Poster;
+      const poster = normalizeImageUrl(data.Poster);
+      if (!poster) return undefined;
+      const isValid = await checkImage(poster);
+      if (isValid) return poster;
     }
   } catch (error) {}
   return undefined;
 };
 
-const isSafeContent = (text: string): boolean => {
-    const lower = text.toLowerCase();
-    const nsfwKeywords = ['porn', 'xxx', 'jav', 'hentai', 'erotic', 'sex', '18+', 'adult', 'nude', 'naked', 'uncensored'];
-    const cnNsfw = ['色情', '成人', '乱伦', '强奸', '裸体', '三级', 'av', '女优', '无码', '偷拍'];
-    return !nsfwKeywords.some(k => lower.includes(k)) && !cnNsfw.some(k => lower.includes(k));
-};
+const isSafeContent = (_text: string): boolean => true;
 
 export const performClientSideSearch = async (
     query: string,
@@ -334,7 +406,6 @@ export const performClientSideSearch = async (
 
         const isMediaCandidate = (title: string, snippet: string): boolean => {
             const text = `${title} ${snippet}`.toLowerCase();
-            if (!isSafeContent(text)) return false; // NSFW Filter
             const positives = isChinese 
                 ? ['电影','电视剧','短剧','漫画','小说','书籍','专辑','音乐','原声','ost','动漫','动画','综艺','纪录片','剧集','番剧']
                 : ['movie','film','tv series','season','episode','novel','book','comic','manga','album','music','soundtrack','ost','anime','animation','documentary','drama'];
@@ -351,7 +422,7 @@ export const performClientSideSearch = async (
             try {
                 // Map config to Rust struct naming conventions
                 const { useSystemProxy, getProxyUrl } = useAIStore.getState();
-                const eff = resolveTauriSearchProvider({
+                const providerList = resolveTauriSearchProviderList({
                     provider: searchProvider,
                     googleKey: getDecryptedGoogleKey(),
                     googleCx: googleSearchCx,
@@ -359,75 +430,120 @@ export const performClientSideSearch = async (
                     yandexKey: getDecryptedYandexKey(),
                     yandexUser: yandexSearchLogin
                 });
-                const rustConfig = {
-                    provider: eff.provider,
-                    api_key: eff.apiKey,
-                    cx: eff.cx,
-                    user: eff.user,
-                    search_type: "text",
-                    proxy_url: getProxyUrl(),
-                    use_system_proxy: useSystemProxy
-                };
+                const providers = providerList.slice(0, 3);
                 
                 const topN = (effType === MediaType.MOVIE || effType === MediaType.TV_SERIES) ? 3 : 2;
                 const ordered = [...precisionQueries.slice(0, topN), ...qList];
                 const uniq = new Map<string, any>();
                 
-                // Parallel Execution
-                const searchPromises = ordered.map(async (qv) => {
-                    const start = performance.now();
-                    try {
-                        // Retry logic wrapped in a function or loop
-                        let resultStr = "";
-                        for (let i = 0; i < 2; i++) {
-                             try {
-                                 resultStr = await invoke<string>("web_search", { query: qv, config: rustConfig });
-                                 if (resultStr) break;
-                             } catch (e: any) {
-                                 const errStr = e?.message || String(e);
-                                 if (errStr.includes("429")) {
-                                     console.warn("Google/Serper Quota Exceeded (429)");
-                                     showQuotaError("Quota Exceeded");
-                                     // Don't retry immediately if quota exceeded, just break/fail
-                                     throw e; 
-                                 }
-                                 if (i === 1) throw e;
-                                 await new Promise(r => setTimeout(r, 1000));
-                             }
-                        }
-                        
-                        try {
-                            useAIStore.getState().appendLog({
-                                id: uuidv4(),
-                                ts: Date.now(),
-                                channel: 'search',
-                                provider: rustConfig.provider,
-                                query: qv,
-                                request: { config: { provider: rustConfig.provider, cx: rustConfig.cx, user: rustConfig.user, search_type: rustConfig.search_type } },
-                                response: resultStr,
-                                durationMs: Math.round(performance.now() - start),
-                                searchType: 'text'
-                            });
-                        } catch {}
-                        
-                        if (resultStr) {
-                            const arr = JSON.parse(resultStr);
-                            if (Array.isArray(arr)) return arr;
-                        }
-                    } catch (e) {
-                        console.warn(`Search failed for query: ${qv}`, e);
-                    }
-                    return [];
+                const makeRustConfig = (
+                  p: { provider: TauriSearchProvider; apiKey?: string; cx?: string; user?: string },
+                  search_type: 'text' | 'image'
+                ) => ({
+                  provider: p.provider,
+                  api_key: p.apiKey,
+                  cx: p.cx,
+                  user: p.user,
+                  search_type,
+                  proxy_url: getProxyUrl(),
+                  use_system_proxy: useSystemProxy
                 });
 
-                const resultsArrays = await Promise.all(searchPromises);
+                const runTauriSearch = async (
+                  p: { provider: TauriSearchProvider; apiKey?: string; cx?: string; user?: string },
+                  qv: string
+                ): Promise<any[]> => {
+                  const cacheKey = `tauri_${p.provider}_${p.cx || ''}_${p.user || ''}_${qv}`;
+                  const cached = searchCache.get(cacheKey);
+                  if (cached && (Date.now() - cached.ts < CACHE_TTL)) {
+                    if (Array.isArray(cached.data)) return cached.data;
+                  }
+
+                  const rustConfig = makeRustConfig(p, 'text');
+                  const start = performance.now();
+                  let resultStr = "";
+                  await searchLimiter.acquire();
+                  try {
+                    for (let i = 0; i < 2; i++) {
+                      try {
+                        resultStr = await invoke<string>("web_search", { query: qv, config: rustConfig });
+                        if (resultStr) break;
+                      } catch (e: any) {
+                        const errStr = e?.message || String(e);
+                        if (errStr.includes("429")) {
+                          showQuotaError("Quota Exceeded");
+                          throw e;
+                        }
+                        if (i === 1) {
+                          try {
+                            useAIStore.getState().appendLog({
+                              id: uuidv4(),
+                              ts: Date.now(),
+                              channel: 'search',
+                              provider: rustConfig.provider,
+                              query: qv,
+                              request: { config: { provider: rustConfig.provider, cx: rustConfig.cx, user: rustConfig.user, search_type: rustConfig.search_type } },
+                              response: { error: errStr },
+                              durationMs: Math.round(performance.now() - start),
+                              searchType: 'text'
+                            });
+                          } catch {}
+                          return [];
+                        }
+                        await new Promise(r => setTimeout(r, 800));
+                      }
+                    }
+                  } finally {
+                    searchLimiter.release();
+                  }
+
+                  try {
+                    useAIStore.getState().appendLog({
+                      id: uuidv4(),
+                      ts: Date.now(),
+                      channel: 'search',
+                      provider: rustConfig.provider,
+                      query: qv,
+                      request: { config: { provider: rustConfig.provider, cx: rustConfig.cx, user: rustConfig.user, search_type: rustConfig.search_type } },
+                      response: resultStr,
+                      durationMs: Math.round(performance.now() - start),
+                      searchType: 'text'
+                    });
+                  } catch {}
+
+                  if (!resultStr) return [];
+                  try {
+                    const arr = JSON.parse(resultStr);
+                    if (Array.isArray(arr)) {
+                      searchCache.set(cacheKey, { ts: Date.now(), data: arr });
+                      return arr;
+                    }
+                  } catch {}
+                  return [];
+                };
+
+                const tasks: Array<{ p: { provider: TauriSearchProvider; apiKey?: string; cx?: string; user?: string }, qv: string }> = [];
+                const primary = providers[0] || { provider: 'duckduckgo' as const };
+                for (const qv of ordered) tasks.push({ p: primary, qv });
+                for (const p of providers.slice(1)) {
+                  tasks.push({ p, qv: base });
+                  if (qList.length > 1) tasks.push({ p, qv: qList[1] });
+                }
+
+                const taskUniq = new Map<string, { p: any, qv: string }>();
+                for (const tsk of tasks) {
+                  const k = `${tsk.p.provider}|${tsk.p.cx || ''}|${tsk.p.user || ''}|${tsk.qv}`;
+                  if (!taskUniq.has(k)) taskUniq.set(k, tsk);
+                }
+
+                const limitedTasks = Array.from(taskUniq.values()).slice(0, 6);
+                const resultsArrays = await Promise.all(limitedTasks.map(t => runTauriSearch(t.p, t.qv)));
                 const allResults = resultsArrays.flat();
-                
-                // Filter out NSFW content, but be lenient on keywords as LLM will filter relevance
-                const filteredStep = allResults.filter((it: any) => isSafeContent(`${it.title} ${it.snippet}`));
+
+                const candidateStep = (effType === 'All') ? allResults : allResults.filter((it: any) => isMediaCandidate(it.title || '', it.snippet || ''));
                 
                 // Process and Score Results
-                const scoredResults = filteredStep.map((it: any) => {
+                const scoredResults = candidateStep.map((it: any) => {
                     const pr = processSearchResult(it.title || '', it.snippet || '');
                     let score = 0;
                     // Exact title match bonus
@@ -448,7 +564,7 @@ export const performClientSideSearch = async (
                     const pr = it.processed;
                     const key = `${pr.title}|${pr.year}`;
                     if (!uniq.has(key)) uniq.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
-                    if (uniq.size >= 4) break;
+                    if (uniq.size >= 8) break;
                 }
                 
                 const out = Array.from(uniq.values());
@@ -510,7 +626,7 @@ export const performClientSideSearch = async (
                     const pr = it.processed;
                     const key = `${pr.title}|${pr.year}`;
                     if (!uniqD.has(key)) uniqD.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
-                    if (uniqD.size >= 4) break;
+                    if (uniqD.size >= 8) break;
                 }
                 const outD = Array.from(uniqD.values());
                 if (outD.length > 0) return JSON.stringify(outD);
@@ -557,7 +673,7 @@ export const performClientSideSearch = async (
                     fromCache = true;
                     status = 'cached';
                 } else {
-                    const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(qv)}&num=4`;
+                    const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(qv)}&num=8&safe=off`;
                     let res;
                     try {
                          // Optional: Add small delay to avoid burst
@@ -600,8 +716,8 @@ export const performClientSideSearch = async (
                         channel: 'search',
                         provider: 'google',
                         query: qv,
-                        request: { url: `https://www.googleapis.com/customsearch/v1?q=${encodeURIComponent(qv)}&num=4` },
-                        response: data ? (data.items || []).slice(0, 4) : { status },
+                        request: { url: `https://www.googleapis.com/customsearch/v1?q=${encodeURIComponent(qv)}&num=8` },
+                        response: data ? (data.items || []).slice(0, 8) : { status },
                         durationMs: Math.round(performance.now() - start),
                         searchType: 'text'
                     });
@@ -612,9 +728,9 @@ export const performClientSideSearch = async (
                     const key = `${pr.title}|${pr.year}`;
                     if (!uniq.has(key)) uniq.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
                 }
-                if (uniq.size >= 4) break;
+                if (uniq.size >= 8) break;
             }
-            const out = Array.from(uniq.values()).slice(0, 4);
+            const out = Array.from(uniq.values()).slice(0, 8);
             if (out.length > 0) return JSON.stringify(out);
             }
         }
@@ -635,7 +751,7 @@ export const performClientSideSearch = async (
                         'X-API-KEY': apiKey,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ q: qv, num: 4 })
+                    body: JSON.stringify({ q: qv, num: 8, safe: "off" })
                 , timeoutMs: 12000 });
                 if (response.status === 429) {
                     console.warn("Serper Search 429 (Too Many Requests). Stopping.");
@@ -660,7 +776,7 @@ export const performClientSideSearch = async (
                         channel: 'search',
                         provider: 'serper',
                         query: qv,
-                        request: { body: { q: qv, num: 4 } },
+                        request: { body: { q: qv, num: 8 } },
                         response: merged.slice(-Math.max(0, Math.min(10, merged.length))),
                         durationMs: Math.round(performance.now() - start),
                         searchType: 'text'
@@ -672,9 +788,9 @@ export const performClientSideSearch = async (
                     const key = `${pr.title}|${pr.year}`;
                     if (!uniq.has(key)) uniq.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
                 }
-                if (uniq.size >= 4) break;
+                if (uniq.size >= 8) break;
             }
-            const out = Array.from(uniq.values()).slice(0, 4);
+            const out = Array.from(uniq.values()).slice(0, 8);
             if (out.length > 0) return JSON.stringify(out);
         }
     }
@@ -728,9 +844,9 @@ export const performClientSideSearch = async (
                     const key = `${pr.title}|${pr.year}`;
                     if (!uniqD.has(key)) uniqD.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
                 }
-                if (uniqD.size >= 4) break;
+                if (uniqD.size >= 8) break;
             }
-            const outD = Array.from(uniqD.values()).slice(0, 4);
+            const outD = Array.from(uniqD.values()).slice(0, 8);
             if (outD.length > 0) return JSON.stringify(outD);
         } catch {}
     }
@@ -1412,7 +1528,7 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
           releaseDate: item.year || "",
           type: normalizeType(item.type),
           isOngoing: false,
-          posterUrl: item.poster,
+          posterUrl: normalizeImageUrl(item.poster),
           rating: item.rating,
           status: 'To Watch',
           addedAt: new Date().toISOString()
@@ -1431,6 +1547,8 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
       type: item.media_type === 'movie' ? MediaType.MOVIE : MediaType.TV_SERIES,
       isOngoing: false,
       posterUrl: getTMDBPosterUrl(item.poster_path) || undefined,
+      tmdbId: typeof item.id === 'number' ? item.id : undefined,
+      tmdbMediaType: item.media_type === 'movie' || item.media_type === 'tv' ? item.media_type : undefined,
       rating: item.vote_average ? `${item.vote_average.toFixed(1)}/10` : undefined,
       status: 'To Watch',
       addedAt: new Date().toISOString()
@@ -1443,17 +1561,22 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
       else if (item.type === 2) mType = MediaType.TV_SERIES; 
       else if (item.type === 3) mType = MediaType.MUSIC;
       else if (item.type === 6) mType = MediaType.TV_SERIES;
+
+      const releaseDate = String(item.date || item.air_date || '').trim();
+      const rawPoster = String(item.images?.large || item.images?.common || '').trim();
+      const posterUrl = rawPoster ? normalizeImageUrl(rawPoster.replace(/^http:\/\//i, 'https://')) : undefined;
+      const score = (typeof item.score === 'number' ? item.score : (typeof item.rating?.score === 'number' ? item.rating.score : undefined));
       
       return {
           id: uuidv4(),
           title: item.name_cn || item.name,
           directorOrAuthor: "",
           description: item.summary || "",
-          releaseDate: item.date || "",
+          releaseDate,
           type: mType,
           isOngoing: false,
-          posterUrl: item.images?.large || item.images?.common,
-          rating: item.score ? `${item.score}/10` : undefined,
+          posterUrl,
+          rating: (typeof score === 'number' && !Number.isNaN(score)) ? `${score}/10` : undefined,
           status: 'To Watch',
           addedAt: new Date().toISOString()
       };
@@ -1466,9 +1589,13 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
       if (Array.isArray(parsedSC)) {
         parsedSC.forEach((item: any) => {
           if (item.title && item.image) {
-            prefetchedImages.set(item.title.toLowerCase(), item.image);
+            const img = normalizeImageUrl(item.image);
+            if (!img) return;
+            if (img.toLowerCase().includes('tiktok.com/api/img')) return;
+            if (img.toLowerCase().includes('m.media-amazon.com')) return;
+            prefetchedImages.set(item.title.toLowerCase(), img);
             const { title } = processSearchResult(item.title, item.snippet || "");
-            prefetchedImages.set(title.toLowerCase(), item.image);
+            prefetchedImages.set(title.toLowerCase(), img);
           }
         });
       }
@@ -1593,28 +1720,173 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
       console.error("AI Search Failed", e);
   }
 
-  // Merge Priority: Plugins > TMDB > Bangumi > AI
+  const norm = (v?: string) => String(v || '').trim();
+  const isUnknownText = (v?: string) => {
+      const s = norm(v);
+      if (!s) return true;
+      const low = s.toLowerCase();
+      return low === 'unknown' || s === '未知' || low === 'n/a' || low === 'na' || s === '-';
+  };
+  const isFullDate = (v?: string) => /^\d{4}-\d{2}-\d{2}$/.test(norm(v));
+  const dateScore = (v?: string) => {
+      const s = norm(v);
+      if (!s || isUnknownText(s)) return 0;
+      if (/^\d{4}$/.test(s)) return 1;
+      if (/^\d{4}-\d{2}$/.test(s)) return 2;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return 3;
+      if (s.length >= 10) return 2;
+      if (s.length >= 4) return 1;
+      return 0;
+  };
+  const pickBetterDate = (a?: string, b?: string) => {
+      const sa = dateScore(a);
+      const sb = dateScore(b);
+      if (sb > sa) return norm(b);
+      return norm(a);
+  };
+  const pickText = (a?: string, b?: string) => {
+      const sa = norm(a);
+      const sb = norm(b);
+      if (isUnknownText(sa) && !isUnknownText(sb)) return sb;
+      if (!isUnknownText(sa) && isUnknownText(sb)) return sa;
+      if (!isUnknownText(sa) && !isUnknownText(sb)) {
+          if (sb.length > sa.length) return sb;
+          return sa;
+      }
+      return '';
+  };
+  const pickCast = (a?: string[], b?: string[]) => {
+      const ca = Array.isArray(a) ? a.filter(Boolean) : [];
+      const cb = Array.isArray(b) ? b.filter(Boolean) : [];
+      if (cb.length > ca.length) return cb.slice(0, 5);
+      return ca.slice(0, 5);
+  };
+  const mergeMediaItems = (base: MediaItem, incoming: MediaItem): MediaItem => {
+      const merged: MediaItem = { ...base };
+      merged.releaseDate = pickBetterDate(base.releaseDate, incoming.releaseDate);
+      merged.directorOrAuthor = pickText(base.directorOrAuthor, incoming.directorOrAuthor);
+
+      const incomingIsTMDB = !!incoming.tmdbId || incoming.tmdbMediaType === 'movie' || incoming.tmdbMediaType === 'tv';
+      if (incomingIsTMDB && !isUnknownText(incoming.description)) {
+          merged.description = isUnknownText(base.description) ? incoming.description : base.description;
+      } else {
+          merged.description = pickText(base.description, incoming.description);
+      }
+
+      const basePoster = norm(base.posterUrl);
+      const incomingPoster = norm(incoming.posterUrl);
+      const basePosterMissing = isBlockedPosterUrl(basePoster);
+      const incomingPosterMissing = isBlockedPosterUrl(incomingPoster);
+      merged.posterUrl = (basePosterMissing && !incomingPosterMissing) ? incoming.posterUrl : (base.posterUrl || incoming.posterUrl);
+      merged.rating = base.rating || incoming.rating;
+      merged.cast = pickCast(base.cast, incoming.cast);
+      merged.tmdbId = merged.tmdbId ?? incoming.tmdbId;
+      merged.tmdbMediaType = merged.tmdbMediaType ?? incoming.tmdbMediaType;
+      return merged;
+  };
+
+  // Merge Priority: Plugins > TMDB > Bangumi > AI (but fill gaps from lower-priority sources)
   const allItems = [...pluginItems, ...tmdbItems, ...bangumiItems, ...aiItems];
   const uniqueItems = new Map<string, MediaItem>();
 
-  allItems.forEach(item => {
+  for (const item of allItems) {
       const normTitle = item.title.trim().toLowerCase();
-      // Relaxed de-duplication: title + year
-      // If no year, just title
       let key = normTitle;
       if (item.releaseDate && item.releaseDate.length >= 4) {
           key = `${normTitle}|${item.releaseDate.substring(0, 4)}`;
       }
-      
-      if (!uniqueItems.has(key)) {
-          uniqueItems.set(key, item);
-      }
-  });
 
-  const filtered = Array.from(uniqueItems.values()).filter(r => {
+      const prev = uniqueItems.get(key);
+      if (!prev) uniqueItems.set(key, item);
+      else uniqueItems.set(key, mergeMediaItems(prev, item));
+  }
+
+  let filtered = Array.from(uniqueItems.values()).filter(r => {
       const allowedTypes = new Set<string>(Object.values(MediaType).filter((t) => t !== MediaType.OTHER));
       return allowedTypes.has(r.type);
   });
+
+  const enrichWithTMDB = async (items: MediaItem[]): Promise<MediaItem[]> => {
+      const wantsFullDate = (t: MediaType) => t === MediaType.MOVIE || t === MediaType.TV_SERIES || t === MediaType.SHORT_DRAMA;
+      const needsEnrich = (it: MediaItem) => {
+          if (!(it.type === MediaType.MOVIE || it.type === MediaType.TV_SERIES)) return false;
+          if (!it.tmdbId || !(it.tmdbMediaType === 'movie' || it.tmdbMediaType === 'tv')) return false;
+          const dateNeeded = wantsFullDate(it.type) && !isFullDate(it.releaseDate);
+          const directorNeeded = isUnknownText(it.directorOrAuthor);
+          const descNeeded = isUnknownText(it.description) || norm(it.description).length < 60;
+          const castNeeded = !it.cast || it.cast.length === 0;
+          return dateNeeded || directorNeeded || descNeeded || castNeeded;
+      };
+      const toPatch = items.filter(needsEnrich).slice(0, 10);
+      if (toPatch.length === 0) return items;
+
+      const byId = new Map(items.map(i => [i.id, i]));
+      const queue = [...toPatch];
+
+      const applyTMDBDetails = async (it: MediaItem) => {
+          const tmdbId = it.tmdbId;
+          const tmdbMediaType: 'movie' | 'tv' = it.tmdbMediaType as any;
+          if (!tmdbId) return;
+
+          let details = await getTMDBDetails(tmdbId, tmdbMediaType, 'zh-CN');
+          if (details && isUnknownText(details.overview)) {
+              const en = await getTMDBDetails(tmdbId, tmdbMediaType, 'en-US');
+              if (en && !isUnknownText(en.overview)) details = { ...details, overview: en.overview };
+          }
+          if (!details) return;
+
+          const next: Partial<MediaItem> = { tmdbId, tmdbMediaType };
+
+          const rel = norm(details.release_date || details.first_air_date);
+          if (rel && (isUnknownText(it.releaseDate) || (wantsFullDate(it.type) && !isFullDate(it.releaseDate)) || dateScore(rel) > dateScore(it.releaseDate))) {
+              next.releaseDate = rel;
+          }
+
+          if (isUnknownText(it.directorOrAuthor)) {
+              if (tmdbMediaType === 'movie') {
+                  const crew = Array.isArray(details.credits?.crew) ? details.credits.crew : [];
+                  const directors = crew.filter((c: any) => c && c.job === 'Director' && c.name).map((c: any) => String(c.name));
+                  if (directors.length > 0) next.directorOrAuthor = directors.slice(0, 2).join(' / ');
+              } else {
+                  const createdBy = Array.isArray(details.created_by) ? details.created_by : [];
+                  const creators = createdBy.filter((c: any) => c && c.name).map((c: any) => String(c.name));
+                  if (creators.length > 0) next.directorOrAuthor = creators.slice(0, 2).join(' / ');
+              }
+          }
+
+          const overview = norm(details.overview);
+          if (overview && (isUnknownText(it.description) || norm(it.description).length < 60)) {
+              next.description = overview;
+          }
+
+          if (!it.cast || it.cast.length === 0) {
+              const cast = Array.isArray(details.credits?.cast) ? details.credits.cast : [];
+              const names = cast.filter((c: any) => c && c.name).map((c: any) => String(c.name)).slice(0, 5);
+              if (names.length > 0) next.cast = names;
+          }
+
+          const poster = getTMDBPosterUrl(details.poster_path) || undefined;
+          if (poster && (!it.posterUrl || it.posterUrl.includes('placehold.co') || it.posterUrl.includes('No+Image') || it.posterUrl.includes('Image+Error'))) {
+              next.posterUrl = poster;
+          }
+
+          if (Object.keys(next).length <= 2) return;
+          byId.set(it.id, { ...it, ...next });
+      };
+
+      const worker = async () => {
+          while (queue.length > 0) {
+              const it = queue.shift();
+              if (!it) return;
+              try { await applyTMDBDetails(it); } catch {}
+          }
+      };
+
+      await Promise.all([worker(), worker(), worker()]);
+      return items.map(i => byId.get(i.id) || i);
+  };
+
+  filtered = await enrichWithTMDB(filtered);
 
   try {
     localStorage.setItem(cacheKey, JSON.stringify(filtered));
@@ -1708,13 +1980,11 @@ export const repairMediaItem = async (item: MediaItem): Promise<Partial<MediaIte
         const low = s.toLowerCase();
         return low === 'unknown' || s === '未知' || low === 'n/a' || low === 'na' || s === '-';
     };
+    const isFullDate = (v?: string) => /^\d{4}-\d{2}-\d{2}$/.test(norm(v));
+    const wantsFullDate = item.type === MediaType.MOVIE || item.type === MediaType.TV_SERIES;
 
-    const isPosterMissing =
-        !item.posterUrl ||
-        item.posterUrl.includes('placehold.co') ||
-        item.posterUrl.includes('No+Image') ||
-        item.posterUrl.includes('Image+Error');
-    const isDateMissing = isUnknownText(item.releaseDate);
+    const isPosterMissing = isBlockedPosterUrl(item.posterUrl);
+    const isDateMissing = wantsFullDate ? !isFullDate(item.releaseDate) : isUnknownText(item.releaseDate);
     const isDirectorMissing = isUnknownText(item.directorOrAuthor);
     const currentDesc = norm(item.description);
     const isDescShort = !isUnknownText(currentDesc) && currentDesc.length < 50;
@@ -1733,11 +2003,90 @@ export const repairMediaItem = async (item: MediaItem): Promise<Partial<MediaIte
         }
     }
 
+    if (item.type === MediaType.MOVIE || item.type === MediaType.TV_SERIES) {
+        try {
+            const mapType: 'movie' | 'tv' =
+                (item.tmdbMediaType === 'movie' || item.tmdbMediaType === 'tv')
+                    ? item.tmdbMediaType
+                    : (item.type === MediaType.TV_SERIES ? 'tv' : 'movie');
+
+            let tmdbId = item.tmdbId;
+            let tmdbMediaType: 'movie' | 'tv' = mapType;
+
+            if (!tmdbId) {
+                const candidates = await searchTMDB(item.title, mapType);
+                const year = norm(item.releaseDate).slice(0, 4);
+                const best = (year && /^\d{4}$/.test(year))
+                    ? candidates.find(c => (c.release_date || c.first_air_date || '').startsWith(year))
+                    : candidates[0];
+                if (best && typeof best.id === 'number') {
+                    tmdbId = best.id;
+                    tmdbMediaType = best.media_type === 'tv' ? 'tv' : 'movie';
+                }
+            }
+
+            if (tmdbId) {
+                let details = await getTMDBDetails(tmdbId, tmdbMediaType, 'zh-CN');
+                if (details && isUnknownText(details.overview)) {
+                    const en = await getTMDBDetails(tmdbId, tmdbMediaType, 'en-US');
+                    if (en && !isUnknownText(en.overview)) details = { ...details, overview: en.overview };
+                }
+                if (details) {
+                    updates.tmdbId = tmdbId;
+                    updates.tmdbMediaType = tmdbMediaType;
+
+                    const rel = norm(details.release_date || details.first_air_date);
+                    if (rel && (!isFullDate(item.releaseDate) || isUnknownText(item.releaseDate))) {
+                        updates.releaseDate = rel;
+                    }
+
+                    if (isUnknownText(item.directorOrAuthor)) {
+                        if (tmdbMediaType === 'movie') {
+                            const crew = Array.isArray(details.credits?.crew) ? details.credits.crew : [];
+                            const directors = crew
+                                .filter((c: any) => c && c.name && (c.job === 'Director' || String(c.job || '').toLowerCase().includes('director')))
+                                .map((c: any) => String(c.name));
+                            if (directors.length > 0) updates.directorOrAuthor = directors.slice(0, 2).join(' / ');
+                        } else {
+                            const createdBy = Array.isArray(details.created_by) ? details.created_by : [];
+                            const creators = createdBy.filter((c: any) => c && c.name).map((c: any) => String(c.name));
+                            if (creators.length > 0) updates.directorOrAuthor = creators.slice(0, 2).join(' / ');
+                            else {
+                                const crew = Array.isArray(details.credits?.crew) ? details.credits.crew : [];
+                                const directors = crew
+                                    .filter((c: any) => c && c.name && String(c.job || '').toLowerCase().includes('director'))
+                                    .map((c: any) => String(c.name));
+                                if (directors.length > 0) updates.directorOrAuthor = directors.slice(0, 2).join(' / ');
+                            }
+                        }
+                    }
+
+                    const overview = norm(details.overview);
+                    if (overview && (isUnknownText(item.description) || currentDesc.length < 60)) {
+                        updates.description = overview;
+                    }
+
+                    if (!item.cast || item.cast.length === 0) {
+                        const cast = Array.isArray(details.credits?.cast) ? details.credits.cast : [];
+                        const names = cast.filter((c: any) => c && c.name).map((c: any) => String(c.name)).slice(0, 5);
+                        if (names.length > 0) updates.cast = names;
+                    }
+
+                    const poster = getTMDBPosterUrl(details.poster_path) || undefined;
+                    if (poster && isPosterMissing && !updates.posterUrl) updates.posterUrl = poster;
+                }
+            }
+        } catch {}
+    }
+
+    const effective = { ...item, ...updates } as MediaItem;
+
     const shouldSearch =
-        isDateMissing ||
-        isDirectorMissing ||
-        isDescMissing ||
-        isCastMissing ||
+        (wantsFullDate ? !isFullDate(effective.releaseDate) : isUnknownText(effective.releaseDate)) ||
+        isUnknownText(effective.directorOrAuthor) ||
+        isUnknownText(effective.description) ||
+        (norm(effective.description).length > 0 && norm(effective.description).length < 50) ||
+        (!effective.cast || effective.cast.length === 0) ||
         (isPosterMissing && !updates.posterUrl);
 
     if (shouldSearch) {
@@ -1746,19 +2095,19 @@ export const repairMediaItem = async (item: MediaItem): Promise<Partial<MediaIte
             const exact = results.find(r => r.title.toLowerCase() === item.title.toLowerCase());
             const match = exact || results[0];
             if (match) {
-                if (isDateMissing && !isUnknownText(match.releaseDate)) {
+                if ((wantsFullDate ? !isFullDate(effective.releaseDate) : isUnknownText(effective.releaseDate)) && !isUnknownText(match.releaseDate)) {
                     updates.releaseDate = match.releaseDate;
                 }
                 if ((isPosterMissing && !updates.posterUrl) && match.posterUrl && !match.posterUrl.includes('placehold.co')) {
                     updates.posterUrl = match.posterUrl;
                 }
-                if (isDirectorMissing && !isUnknownText(match.directorOrAuthor)) {
+                if (isUnknownText(effective.directorOrAuthor) && !isUnknownText(match.directorOrAuthor)) {
                     updates.directorOrAuthor = match.directorOrAuthor;
                 }
-                if (isDescMissing && !isUnknownText(match.description)) {
+                if ((isUnknownText(effective.description) || norm(effective.description).length < 60) && !isUnknownText(match.description)) {
                     updates.description = match.description;
                 }
-                if (isCastMissing && match.cast && match.cast.length > 0) {
+                if ((!effective.cast || effective.cast.length === 0) && match.cast && match.cast.length > 0) {
                     updates.cast = match.cast;
                 }
             }
@@ -1824,6 +2173,11 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
         return await fetchPosterFromOMDB(title, year);
     }
 
+    const yearToken = (() => {
+        const y = String(year || '').trim().slice(0, 4);
+        return /^\d{4}$/.test(y) ? y : '';
+    })();
+
     // Construct a more specific query
     const isChinese = i18n.language.startsWith('zh');
     let query = "";
@@ -1840,10 +2194,9 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
             case 'music': case '音乐': typeTerm = "专辑封面"; break;
             case 'short drama': case '短剧': typeTerm = "短剧海报 竖版"; break;
         }
-        // Simplified: Title + Type Term only
-        query = `${title} ${typeTerm}`; 
+        query = `${title} ${yearToken ? `${yearToken} ` : ''}${typeTerm}`; 
     } else {
-        query = `"${title}" ${type} poster`;
+        query = `"${title}" ${yearToken ? `${yearToken} ` : ''}${type} poster`;
     }
     
     // ...
@@ -1867,7 +2220,11 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                 return s.replace(/^www\./, '').split('/')[0];
             }
         };
-        const isImageUrl = (u: string) => /\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i.test(u);
+        const isImageUrl = (u: string) => {
+            const normalized = normalizeImageUrl(u);
+            if (!normalized) return false;
+            return /\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i.test(normalized);
+        };
         const isPosterDetailLink = (u: string): boolean => {
             const host = normalizeHost(u);
             if (!host) return false;
@@ -1888,7 +2245,6 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                 if (url.includes('impawards.com')) return 80;
                 if (url.includes('moviepostersgallery.com')) return 78;
                 if (url.includes('imdb.com')) return 70;
-                if (url.includes('m.media-amazon.com')) return 60;
                 if (url.includes('pinterest.com')) return 40;
                 return 50;
             };
@@ -1916,26 +2272,25 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                     const out: string[] = [];
                     if (typeof r?.image === 'string') out.push(r.image);
                     const l = r?.link;
-                    if (typeof l === 'string' && /\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i.test(l)) out.push(l);
+                    if (typeof l === 'string' && isImageUrl(l)) out.push(l);
                     return out;
                 })
                 .filter((u: any) => typeof u === 'string')
                 .filter((u: string) => {
                     const url = u.toLowerCase();
                     if (url.includes('instagram.com') || url.includes('facebook.com') || url.includes('twitter.com') || url.includes('x.com')) return false;
+                    if (url.includes('tiktok.com/api/img')) return false;
+                    if (url.includes('m.media-amazon.com')) return false;
+                    if (url.includes('i.ebayimg.com') || url.includes('ebayimg.com')) return false;
                     return true;
                 })
                 .sort((a: string, b: string) => (scoreDomain(b) + scoreSizeHint(b)) - (scoreDomain(a) + scoreSizeHint(a)));
 
             if (candidates.length === 0) return undefined;
 
-            const nonAmazon = candidates.filter((u: string) => !u.toLowerCase().includes('m.media-amazon.com'));
-            for (const url of nonAmazon) {
-                if (await checkImage(url)) return url;
-            }
-            const others = candidates.filter((u: string) => u.toLowerCase().includes('m.media-amazon.com'));
-            for (const url of others) {
-                if (await checkImage(url)) return url;
+            for (const url of candidates) {
+                const normalized = normalizeImageUrl(url);
+                if (normalized && await checkImage(normalized)) return normalized;
             }
             return undefined;
         };
@@ -2602,7 +2957,155 @@ export const getTrendingMedia = async (): Promise<MediaItem[]> => {
   if (results.length === 0) {
       return await createFallbackItemsFromContext(searchContext);
   }
-  return results;
+  const norm = (v?: string) => String(v || '').trim();
+  const isUnknownText = (v?: string) => {
+      const s = norm(v);
+      if (!s) return true;
+      const low = s.toLowerCase();
+      return low === 'unknown' || s === '未知' || low === 'n/a' || low === 'na' || s === '-';
+  };
+  const isFullDate = (v?: string) => /^\d{4}-\d{2}-\d{2}$/.test(norm(v));
+  const shouldEnrich = (it: MediaItem) => {
+      if (!(it.type === MediaType.MOVIE || it.type === MediaType.TV_SERIES)) return false;
+      const dateNeeded = !isFullDate(it.releaseDate);
+      const directorNeeded = isUnknownText(it.directorOrAuthor);
+      const descNeeded = isUnknownText(it.description) || norm(it.description).length < 60;
+      const castNeeded = !it.cast || it.cast.length === 0;
+      const posterNeeded = !it.posterUrl || it.posterUrl.includes('placehold.co') || it.posterUrl.includes('No+Image') || it.posterUrl.includes('Image+Error');
+      return dateNeeded || directorNeeded || descNeeded || castNeeded || posterNeeded;
+  };
+
+  const toPatch = results.filter(shouldEnrich);
+  if (toPatch.length === 0) return results;
+
+  const byId = new Map(results.map(r => [r.id, r]));
+  const queue = [...toPatch];
+
+  const applyTMDBDetails = async (it: MediaItem) => {
+      const tmdbType: 'movie' | 'tv' = it.type === MediaType.TV_SERIES ? 'tv' : 'movie';
+      const candidates = await searchTMDB(it.title, tmdbType);
+      if (!candidates || candidates.length === 0) return;
+
+      const year = norm(it.releaseDate).slice(0, 4);
+      const best = (year && /^\d{4}$/.test(year))
+          ? candidates.find(c => (c.release_date || c.first_air_date || '').startsWith(year))
+          : candidates[0];
+      if (!best || typeof best.id !== 'number') return;
+
+      let details = await getTMDBDetails(best.id, tmdbType, 'zh-CN');
+      if (details && isUnknownText(details.overview)) {
+          const en = await getTMDBDetails(best.id, tmdbType, 'en-US');
+          if (en && !isUnknownText(en.overview)) details = { ...details, overview: en.overview };
+      }
+      if (!details) return;
+
+      const patch: Partial<MediaItem> = {
+          tmdbId: best.id,
+          tmdbMediaType: tmdbType
+      };
+
+      const rel = norm(details.release_date || details.first_air_date);
+      if (rel && !isFullDate(it.releaseDate)) patch.releaseDate = rel;
+
+      if (isUnknownText(it.directorOrAuthor)) {
+          if (tmdbType === 'movie') {
+              const crew = Array.isArray(details.credits?.crew) ? details.credits.crew : [];
+              const directors = crew
+                  .filter((c: any) => c && c.name && (c.job === 'Director' || String(c.job || '').toLowerCase().includes('director')))
+                  .map((c: any) => String(c.name));
+              if (directors.length > 0) patch.directorOrAuthor = directors.slice(0, 2).join(' / ');
+          } else {
+              const createdBy = Array.isArray(details.created_by) ? details.created_by : [];
+              const creators = createdBy.filter((c: any) => c && c.name).map((c: any) => String(c.name));
+              if (creators.length > 0) patch.directorOrAuthor = creators.slice(0, 2).join(' / ');
+          }
+      }
+
+      const overview = norm(details.overview);
+      if (overview && (isUnknownText(it.description) || norm(it.description).length < 60)) patch.description = overview;
+
+      if (!it.cast || it.cast.length === 0) {
+          const cast = Array.isArray(details.credits?.cast) ? details.credits.cast : [];
+          const names = cast.filter((c: any) => c && c.name).map((c: any) => String(c.name)).slice(0, 5);
+          if (names.length > 0) patch.cast = names;
+      }
+
+      const poster = getTMDBPosterUrl(details.poster_path) || undefined;
+      if (poster && (!it.posterUrl || it.posterUrl.includes('placehold.co') || it.posterUrl.includes('No+Image') || it.posterUrl.includes('Image+Error'))) {
+          patch.posterUrl = poster;
+      }
+
+      if (Object.keys(patch).length <= 2) return;
+      byId.set(it.id, { ...it, ...patch });
+  };
+
+  const worker = async () => {
+      while (queue.length > 0) {
+          const it = queue.shift();
+          if (!it) return;
+          try { await applyTMDBDetails(it); } catch {}
+      }
+  };
+
+  await Promise.all([worker(), worker()]);
+
+  const afterTmdb = results.map(r => byId.get(r.id) || r);
+  const isPosterPlaceholder = (u?: string) => {
+      const s = String(u || '').trim().toLowerCase();
+      if (!s) return true;
+      if (s.includes('placehold.co')) return true;
+      if (s.includes('no+image')) return true;
+      if (s.includes('image+error')) return true;
+      if (s.includes('m.media-amazon.com')) return true;
+      if (s.includes('i.ebayimg.com') || s.includes('ebayimg.com')) return true;
+      return false;
+  };
+
+  const typeToPosterQuery = (t: MediaType) => {
+      switch (t) {
+          case MediaType.TV_SERIES: return 'tv series';
+          case MediaType.SHORT_DRAMA: return 'short drama';
+          case MediaType.BOOK: return 'book';
+          case MediaType.COMIC: return 'comic';
+          case MediaType.MUSIC: return 'music';
+          case MediaType.MOVIE:
+          default:
+              return 'movie';
+      }
+  };
+
+  const withTimeout = async <T,>(p: Promise<T>, ms: number): Promise<T | undefined> => {
+      let timer: any = null;
+      try {
+          return await Promise.race([
+              p,
+              new Promise<T | undefined>((resolve) => {
+                  timer = setTimeout(() => resolve(undefined), ms);
+              })
+          ]);
+      } finally {
+          if (timer) clearTimeout(timer);
+      }
+  };
+
+  const needPoster = afterTmdb.filter(it => isPosterPlaceholder(it.posterUrl));
+  if (needPoster.length === 0) return afterTmdb;
+
+  const patched = new Map(afterTmdb.map(r => [r.id, r]));
+  await Promise.all(
+      needPoster.map(async (it) => {
+          try {
+              const year = norm(it.releaseDate).slice(0, 4);
+              const poster = await withTimeout(
+                  fetchPosterFromSearch(it.title, year, typeToPosterQuery(it.type)),
+                  9000
+              );
+              if (poster) patched.set(it.id, { ...it, posterUrl: poster });
+          } catch {}
+      })
+  );
+
+  return afterTmdb.map(r => patched.get(r.id) || r);
 };
 
 export const getAIDate = async (): Promise<string> => {

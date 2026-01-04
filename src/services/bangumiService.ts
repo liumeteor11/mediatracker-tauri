@@ -2,9 +2,14 @@ import { useAIStore } from "../store/useAIStore";
 import { invoke } from "@tauri-apps/api/core";
 
 const isTauriEnv = typeof window !== 'undefined' && (
-    '__TAURI__' in window ||
-    '__TAURI_IPC__' in window ||
-    (window as any).__TAURI_METADATA__ !== undefined
+    ('__TAURI__' in window) ||
+    ('__TAURI_INTERNALS__' in window) ||
+    ('__TAURI_IPC__' in window) ||
+    (window as any).__TAURI_METADATA__ !== undefined ||
+    (typeof window.location !== 'undefined' && (
+      window.location.protocol === 'tauri:' ||
+      (typeof window.location.origin === 'string' && window.location.origin.startsWith('http://tauri.localhost'))
+    ))
 );
 
 const BANGUMI_BASE_URL = 'https://api.bgm.tv';
@@ -32,7 +37,7 @@ export const searchBangumi = async (query: string, type?: number): Promise<Bangu
         const token = s.getDecryptedBangumiToken && s.getDecryptedBangumiToken();
 
         if (isTauriEnv) {
-             const result = await invoke<string>('bangumi_search', { query, subjectType: type, token: token || null });
+             const result = await invoke<string>('bangumi_search', { query, subject_type: type || null, token: token || null });
              const data = JSON.parse(result);
              return data.list || [];
         }
@@ -42,15 +47,10 @@ export const searchBangumi = async (query: string, type?: number): Promise<Bangu
             url += `&type=${type}`;
         }
         
-        // Bangumi requires User-Agent: ProjectName/Version (Contact)
         const headers: Record<string, string> = {
             'User-Agent': 'MediaTracker-Rust/1.0 (https://github.com/yourrepo)',
             'Accept': 'application/json'
         };
-
-        if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
-        }
 
         const res = await fetch(url, { headers });
         if (!res.ok) throw new Error(`Bangumi Error: ${res.statusText}`);
@@ -78,10 +78,6 @@ export const getBangumiDetails = async (id: number): Promise<any> => {
             'User-Agent': 'MediaTracker-Rust/1.0 (https://github.com/yourrepo)',
             'Accept': 'application/json'
         };
-
-        if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
-        }
 
         const res = await fetch(url, { headers });
         if (!res.ok) throw new Error(`Bangumi Error: ${res.statusText}`);

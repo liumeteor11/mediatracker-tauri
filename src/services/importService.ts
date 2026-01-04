@@ -154,7 +154,7 @@ export const parseImportFile = async (content: string, source: ImportSource): Pr
             
             // Fill defaults
             if (!item.description) item.description = "Imported from " + source;
-            if (!item.directorOrAuthor) item.directorOrAuthor = "Unknown";
+            if (!item.directorOrAuthor) item.directorOrAuthor = "";
             if (!item.cast) item.cast = [];
 
             result.items.push(item as MediaItem);

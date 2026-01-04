@@ -11,7 +11,11 @@
     "select_theme": "选择主题",
     "theme": "主题",
     "save_success": "保存成功",
-    "close": "关闭"
+    "close": "关闭",
+    "notifications": "通知提示"
+  },
+  "app": {
+    "updated_tracking_info": "已更新 {{count}} 个系列的追踪信息。"
   },
   "nav": {
     "dashboard": "仪表盘",
@@ -130,7 +134,10 @@
     "proxy_password_placeholder": "密码 (可选)",
     "metadata_sources": "元数据源",
     "bangumi_token_label": "Bangumi 访问令牌 (Access Token)",
-    "bangumi_token_note": "填写令牌以获得更高的速率限制和访问用户收藏"
+    "bangumi_token_note": "填写令牌以获得更高的速率限制和访问用户收藏",
+    "bangumi_label": "Bangumi (番组计划)",
+    "get_bangumi_token": "获取 Bangumi 令牌",
+    "get_tmdb_key": "获取 TMDB API Key"
   },
   "import": {
     "title": "导入媒体",
@@ -187,7 +194,17 @@
     "year_selector": "选择年份",
     "last_search": "最近搜索",
     "no_recent_search": "暂无最近搜索",
-    "copied": "已复制"
+    "copied": "已复制",
+    "hide_chart": "隐藏图表",
+    "show_chart": "显示图表",
+    "show_logs": "展开输入输出日志",
+    "domain_connected": "{{domain}} 连接正常，返回 {{count}} 项",
+    "domain_failed": "{{domain}} 测试失败 {{error}}",
+    "domain_placeholder": "例如 imdb.com",
+    "add": "添加",
+    "delete": "删除",
+    "test": "测试",
+    "no_domains": "暂无域名"
   },
   "search_page": {
     "title": "发现你的下一部必看作品",
@@ -213,6 +230,7 @@
     "no_results_found": "未找到结果。请尝试不同的查询。",
     "network_unavailable": "网络不可达或未配置：请检查网络或在“AI 配置”中设置 Provider 与 API Key，或切换至 DuckDuckGo 搜索。",
     "search_error": "搜索请求失败。",
+    "search_taking_long": "搜索耗时较长，请耐心等待...",
     "searching_wait": "正在搜索，请稍候...",
     "search_done": "搜索完成，共 {{count}} 条结果",
     "added_to_collection": "已将 \"{{title}}\" 添加到 {{category}}",

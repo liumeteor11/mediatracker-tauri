@@ -79,6 +79,25 @@ export const MediaCard: React.FC<MediaCardProps> = ({
   const { theme } = useThemeStore();
   const { updateItem, removeFromCollection } = useCollectionStore();
 
+  const normalizeImgSrc = (value?: string): string | undefined => {
+    let s = String(value ?? '').trim();
+    if (!s) return undefined;
+    s = s
+      .replace(/^[<("'“‘\[]+/g, '')
+      .replace(/[>"'”’\].,;:)]+$/g, '')
+      .trim();
+    if (!s) return undefined;
+    const lower = s.toLowerCase();
+    if (lower === 'n/a' || lower === 'na' || lower === 'null' || lower === 'undefined') return undefined;
+    if (lower.includes('m.media-amazon.com/')) return undefined;
+    if (lower.includes('i.ebayimg.com/') || lower.includes('ebayimg.com/')) return undefined;
+    if (lower.startsWith('data:') || lower.startsWith('blob:')) return s;
+    if (lower.startsWith('http://') || lower.startsWith('https://')) return s;
+    if (s.startsWith('//')) return `https:${s}`;
+    if (/^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(s)) return `https://${s}`;
+    return s;
+  };
+
   const getCategoryIcon = (category?: CollectionCategory) => {
     switch (category) {
       case CollectionCategory.FAVORITES: return <Heart className="w-4 h-4 fill-current text-red-500" />;
@@ -88,10 +107,11 @@ export const MediaCard: React.FC<MediaCardProps> = ({
     }
   };
 
-  const [imgSrc, setImgSrc] = useState(item.customPosterUrl || item.posterUrl || 'https://placehold.co/600x400/1a1a1a/FFF?text=No+Image');
+  const fallbackPoster = 'https://placehold.co/600x400/1a1a1a/FFF?text=No+Image';
+  const [imgSrc, setImgSrc] = useState(normalizeImgSrc(item.customPosterUrl || item.posterUrl) || fallbackPoster);
 
   useEffect(() => {
-    setImgSrc(item.customPosterUrl || item.posterUrl || 'https://placehold.co/600x400/1a1a1a/FFF?text=No+Image');
+    setImgSrc(normalizeImgSrc(item.customPosterUrl || item.posterUrl) || fallbackPoster);
     setImgLoading(true);
     setImgFailed(false);
   }, [item.customPosterUrl, item.posterUrl]);
@@ -123,7 +143,8 @@ export const MediaCard: React.FC<MediaCardProps> = ({
               !item.posterUrl ||
               item.posterUrl.includes('placehold.co') ||
               item.posterUrl.includes('No+Image') ||
-              item.posterUrl.includes('Image+Error');
+              item.posterUrl.includes('Image+Error') ||
+              item.posterUrl.toLowerCase().includes('m.media-amazon.com');
           const isInfoMissing =
               isPosterMissing ||
               isUnknownText(item.releaseDate) ||
@@ -243,6 +264,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
                 onLoad={() => setImgLoading(false)}
                 className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                 loading="lazy"
+                referrerPolicy="no-referrer"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
               
@@ -317,15 +339,19 @@ export const MediaCard: React.FC<MediaCardProps> = ({
             <div className="flex-1 overflow-y-auto no-scrollbar relative pr-1">
               {/* Metadata Section */}
                <div className="mb-3 space-y-1.5 text-xs text-theme-subtext">
-                 <div className="flex items-center gap-2">
-                   <Calendar className="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
-                   <span>{item.releaseDate}</span>
-                 </div>
+                 {!isUnknownText(item.releaseDate) && (
+                   <div className="flex items-center gap-2">
+                     <Calendar className="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
+                     <span>{item.releaseDate}</span>
+                   </div>
+                 )}
                  
-                 <div className="flex items-center gap-2">
-                   <User className="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
-                   <span className="line-clamp-1">{item.directorOrAuthor}</span>
-                 </div>
+                 {!isUnknownText(item.directorOrAuthor) && (
+                   <div className="flex items-center gap-2">
+                     <User className="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
+                     <span className="line-clamp-1">{item.directorOrAuthor}</span>
+                   </div>
+                 )}
 
                  {item.cast && item.cast.length > 0 && (
                    <div className="flex items-start gap-2">
@@ -339,14 +365,16 @@ export const MediaCard: React.FC<MediaCardProps> = ({
 
                <div className="w-full h-px mb-3 bg-theme-border" />
 
-              <div className={clsx(
-                "text-sm leading-relaxed mb-4 transition-all duration-300 text-theme-text", 
-                !isExpanded && "line-clamp-6"
-              )}>
-                {item.description}
-              </div>
+              {!isUnknownText(item.description) && (
+                <div className={clsx(
+                  "text-sm leading-relaxed mb-4 transition-all duration-300 text-theme-text", 
+                  !isExpanded && "line-clamp-6"
+                )}>
+                  {item.description}
+                </div>
+              )}
               
-              {item.description.length > 150 && (
+              {!isUnknownText(item.description) && item.description.length > 150 && (
                 <button 
                   onClick={(e) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
                   className="text-xs font-medium mb-3 hover:underline text-theme-accent"

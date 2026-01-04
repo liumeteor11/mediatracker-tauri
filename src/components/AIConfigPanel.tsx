@@ -674,7 +674,7 @@ export const AIConfigPanel: React.FC = () => {
                         {/* Bangumi Toggle */}
                         <div className="flex items-center justify-between">
                             <div>
-                                <label className="text-sm font-medium text-theme-text">Bangumi (番组计划)</label>
+                                <label className="text-sm font-medium text-theme-text">{t('ai_config.bangumi_label')}</label>
                                 <p className="text-xs text-theme-subtext">Anime, Comics, Games metadata</p>
                             </div>
                             <label className="relative inline-flex items-center cursor-pointer">
@@ -713,7 +713,7 @@ export const AIConfigPanel: React.FC = () => {
                                             {t('ai_config.bangumi_token_note') || "Required for higher rate limits"}
                                         </p>
                                         <a href="https://bangumi.tv/dev/app" target="_blank" rel="noreferrer" className="text-xs text-theme-accent hover:underline">
-                                            {t('ai_config.get_bangumi_token') || "Get Bangumi Token"}
+                                            {t('ai_config.get_bangumi_token')}
                                         </a>
                                     </div>
                                     <button onClick={handleTestBangumi} disabled={isBangumiTesting} className="text-xs px-3 py-1.5 rounded border border-theme-accent text-theme-accent hover:bg-theme-accent hover:text-white transition-colors disabled:opacity-50 flex-shrink-0 ml-2">
@@ -766,7 +766,7 @@ export const AIConfigPanel: React.FC = () => {
                                                 {t('ai_config.tmdb_key_optional_note')}
                                             </p>
                                             <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noreferrer" className="text-xs text-theme-accent hover:underline">
-                                                {t('ai_config.get_tmdb_key') || "Get TMDB API Key"}
+                                                {t('ai_config.get_tmdb_key')}
                                             </a>
                                         </div>
                                         <button onClick={handleTestTmdb} disabled={isTmdbTesting} className="text-xs px-3 py-1.5 rounded border border-theme-accent text-theme-accent hover:bg-theme-accent hover:text-white transition-colors disabled:opacity-50 flex-shrink-0 ml-2">
