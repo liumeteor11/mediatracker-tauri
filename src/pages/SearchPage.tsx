@@ -380,10 +380,37 @@ export const SearchPage: React.FC = () => {
       // Double check title to prevent mismatch
       if (cur.title !== expectedTitle) return;
 
+      // Check if we are overwriting a valid poster with an invalid one or placeholder
+      // If the current poster is valid (not placeholder), and the new one is invalid or placeholder, skip
+      // Unless force is true? hydratePosters is called with force=true on manual refresh.
+      // But even if force is true, we shouldn't replace a valid poster with a broken one if possible.
+      // Actually, fetchPosterFromSearch returns undefined if failed.
+      // But if it returns a placehold.co link?
+      // fetchPosterFromSearch logic ensures it tries to return a real image.
+      
+      // Additional safety: if the current item ALREADY has a valid poster (and we are not in force mode, OR even if we are),
+      // we should be careful. 
+      // The issue description says "refreshes twice, replacing correct image with wrong one".
+      // This implies multiple calls to applyUpdate or race condition.
+      
+      // Let's ensure we don't apply the same update redundantly or regress.
+      const isPlaceholder = (u?: string) => !u || u.includes('placehold.co') || u.includes('No+Image') || u.includes('m.media-amazon.com');
+      
+      if (patch.posterUrl && isPlaceholder(patch.posterUrl) && !isPlaceholder(cur.posterUrl)) {
+          // New poster is placeholder, but old one was valid. Skip.
+          return;
+      }
+
       const next = { ...cur, ...patch } as MediaItem;
       mergedById.set(id, next);
       setResults(prev => {
         if (!isOpActive(effOpId)) return prev;
+        
+        // Safety: check if the item in 'prev' has changed in a way that makes this update stale?
+        // 'prev' is the latest state.
+        const currentInState = prev.find(r => r.id === id);
+        if (currentInState && currentInState.title !== expectedTitle) return prev; // Title mismatch in state
+        
         const mapped = prev.map(r => r.id === id ? { ...r, ...patch } : r);
         try {
           if (!isTrendingRef.current && queryRef.current.trim()) {
