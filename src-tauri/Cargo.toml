@@ -7,6 +7,10 @@ edition = "2021"
 rust-version = "1.77.2"
 build = "build.rs"
 
+[lib]
+name = "mediatracker_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { version = "2.0.1", features = [] }
 
