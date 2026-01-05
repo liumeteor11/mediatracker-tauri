@@ -47,6 +47,10 @@ export interface MediaItem {
   status?: string;
   addedAt?: string;
   userRating?: number;
+
+  // Collection fields
+  parentCollectionId?: string; // If set, this item belongs to a collection
+  isCollection?: boolean; // If true, this item is a container for other items
 }
 
 export interface User {
@@ -68,4 +72,28 @@ export interface AIIOLogEntry {
   searchType?: 'text' | 'image';
   model?: string;
   baseURL?: string;
+}
+
+export interface SearchDiagnosticsStep {
+  name: string;
+  durationMs: number;
+  provider?: string;
+  details?: any;
+}
+
+export interface SearchDiagnosticsQuota {
+  provider: string;
+  unit: 'request' | 'token';
+  amount: number;
+  details?: any;
+}
+
+export interface SearchDiagnostics {
+  query: string;
+  type: string;
+  at: string;
+  totalDurationMs: number;
+  providers: string[];
+  steps: SearchDiagnosticsStep[];
+  quota: SearchDiagnosticsQuota[];
 }

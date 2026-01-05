@@ -3,6 +3,8 @@ import { MediaItem, CollectionCategory } from '../types/types';
 import { fetchCover } from '../services/coverService';
 import { invoke } from '@tauri-apps/api/core';
 import { useAuthStore } from './useAuthStore';
+import { v4 as uuidv4 } from 'uuid';
+
 const isTauri = typeof window !== 'undefined' && (('__TAURI__' in window) || ('__TAURI_INTERNALS__' in window));
 
 interface CollectionState {
@@ -14,7 +16,9 @@ interface CollectionState {
   removeFromCollection: (id: string) => void;
   updateItem: (id: string, updates: Partial<MediaItem>) => void;
   moveCategory: (id: string, category: CollectionCategory) => void;
+  createCollection: (primaryItem: MediaItem, selectedItems: MediaItem[]) => void;
   importCollection: (items: MediaItem[]) => void;
+  reorderCollection: (newOrder: MediaItem[]) => void;
   exportCollection: (targetDir?: string, redactSensitive?: boolean) => Promise<string | null>;
   getStats: () => { total: number; watched: number; toWatch: number; favorites: number };
   refreshForUser: () => Promise<void>;
@@ -86,6 +90,18 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
         
         return { collection: updatedCollection };
       });
+  },
+
+  reorderCollection: (newOrder) => {
+      set({ collection: newOrder });
+      
+      if (isTauri) {
+          const username = useAuthStore.getState().user?.username || 'guest';
+          const ids = newOrder.map(i => i.id);
+          invoke('reorder_collection', { username, ids }).catch(console.error);
+      } else {
+          localStorage.setItem('media-tracker-collection', JSON.stringify({ state: { collection: newOrder }, version: 0 }));
+      }
   },
 
   exportCollection: async (targetPath?: string, redactSensitive: boolean = true) => {
@@ -192,6 +208,52 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
     }
 
     return { collection: updatedCollection };
+  }),
+
+  createCollection: (primaryItem, selectedItems) => set((state) => {
+      const collectionId = uuidv4();
+      // Create the collection container item
+      const collectionItem: MediaItem = {
+          ...primaryItem,
+          id: collectionId,
+          title: primaryItem.title, // Keep original title or maybe append (Collection)?
+          isCollection: true,
+          parentCollectionId: undefined, // Top level
+          savedAt: Date.now()
+      };
+
+      // Items to be updated (primary + selected)
+      const itemsToUpdate = [primaryItem, ...selectedItems].map(item => ({
+          ...item,
+          parentCollectionId: collectionId
+      }));
+
+      // Update collection state
+      // 1. Add collectionItem
+      // 2. Update existing items with parentCollectionId
+      
+      const updatedCollection = state.collection.map(item => {
+          const foundUpdate = itemsToUpdate.find(u => u.id === item.id);
+          return foundUpdate || item;
+      });
+      
+      // Add the new collection item
+      const finalCollection = [collectionItem, ...updatedCollection];
+
+      // Persist
+      if (isTauri) {
+          const username = useAuthStore.getState().user?.username || 'guest';
+          // Save collection item
+          invoke('save_item', { username, item: collectionItem }).catch(console.error);
+          // Save updated children
+          itemsToUpdate.forEach(item => {
+              invoke('save_item', { username, item }).catch(console.error);
+          });
+      } else {
+          localStorage.setItem('media-tracker-collection', JSON.stringify({ state: { collection: finalCollection }, version: 0 }));
+      }
+
+      return { collection: finalCollection };
   }),
 
   getStats: () => {

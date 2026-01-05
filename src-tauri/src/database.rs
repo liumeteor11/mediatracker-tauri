@@ -53,10 +53,43 @@ impl Database {
         let mut data = self.cache.lock().map_err(|e| e.to_string())?;
         let list = data.items_by_user.entry(username.to_string()).or_default();
         list.retain(|i| i.id != item.id);
-        list.push(item);
+        list.insert(0, item);
         drop(data);
         self.save()
     }
+
+    pub fn reorder_items_for_user(&self, username: &str, new_order_ids: Vec<String>) -> Result<(), String> {
+        let mut data = self.cache.lock().map_err(|e| e.to_string())?;
+        if let Some(list) = data.items_by_user.get_mut(username) {
+            let mut id_map: std::collections::HashMap<String, MediaItem> = list.drain(..).map(|item| (item.id.clone(), item)).collect();
+            let mut new_list = Vec::new();
+            
+            for id in new_order_ids {
+                if let Some(item) = id_map.remove(&id) {
+                    new_list.push(item);
+                }
+            }
+            
+            // Append any remaining items that were not in new_order_ids (just in case)
+            // Ideally this shouldn't happen if the frontend sends all IDs, but safety first.
+            // Or maybe we should put them at the end?
+            // If the user drags items, they should be sending the full list of IDs.
+            // If some are missing, they might get deleted if we don't handle them.
+            // Let's assume new_order_ids is the FULL list.
+            // But if id_map is not empty, it means some items were missed. We should add them back.
+            // However, since we used a HashMap, the order is lost for remaining items.
+            // Let's re-iterate the original list? No, we drained it.
+            // Let's just append remaining items.
+             for (_, item) in id_map {
+                new_list.push(item);
+            }
+            
+            *list = new_list;
+        }
+        drop(data);
+        self.save()
+    }
+
 
     pub fn remove_item_for_user(&self, username: &str, id: &str) -> Result<(), String> {
         let mut data = self.cache.lock().map_err(|e| e.to_string())?;

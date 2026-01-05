@@ -14,7 +14,7 @@ import { testAuthoritativeDomain } from '../services/aiService';
 import { AIIOLogEntry } from '../types/types';
 
 const YearlyReport: React.FC<{ collection: MediaItem[] }> = ({ collection }) => {
-    const { t } = useTranslation();
+    const { t, i18n } = useTranslation();
     const [year, setYear] = useState(new Date().getFullYear());
     const [showChart, setShowChart] = useState(false);
     
@@ -28,7 +28,7 @@ const YearlyReport: React.FC<{ collection: MediaItem[] }> = ({ collection }) => 
              const d = new Date();
              d.setMonth(i);
              return { 
-                name: d.toLocaleString(undefined, { month: 'short' }), 
+                name: d.toLocaleString(i18n.language, { month: 'short' }), 
                 monthIndex: i,
                 count: 0 
             };
@@ -68,11 +68,8 @@ const YearlyReport: React.FC<{ collection: MediaItem[] }> = ({ collection }) => 
             }
         });
 
-        // Localize top category if possible
-        // We can just use the key and let the user localize it mentally or duplicate logic
-        // For simplicity, we just return the raw type key here
         return { monthlyData: months, totalAdded: total, topMonth: topMonthName, topCategory: topCat };
-    }, [collection, year]);
+    }, [collection, year, i18n.language]);
 
     const chartStyles = {
         text: 'var(--text-secondary)',
@@ -112,8 +109,8 @@ const YearlyReport: React.FC<{ collection: MediaItem[] }> = ({ collection }) => 
                         </div>
                         <div className="flex items-center gap-2">
                             <span className="text-theme-subtext">{t('dashboard.favorite_category')}:</span>
-                            <span className="font-bold text-theme-text max-w-[100px] truncate" title={topCategory}>
-                                {topCategory === '-' ? '-' : t(`search_page.filter_${topCategory === 'TV Series' ? 'tv' : topCategory.toLowerCase().replace(' ', '_')}s`) || topCategory}
+                            <span className="font-bold text-theme-text max-w-[100px] truncate" title={topCategory === '-' ? '' : t(`media_type.${topCategory}`)}>
+                                {topCategory === '-' ? '-' : t(`media_type.${topCategory}`)}
                             </span>
                         </div>
                     </div>
@@ -178,6 +175,9 @@ export const DashboardPage: React.FC = () => {
   const lastSearchDurationMs = useAIStore(s => s.lastSearchDurationMs);
   const lastSearchAt = useAIStore(s => s.lastSearchAt);
   const lastSearchQuery = useAIStore(s => s.lastSearchQuery);
+  const enableSearchDiagnostics = useAIStore(s => s.enableSearchDiagnostics);
+  const lastSearchDiagnostics = useAIStore(s => s.lastSearchDiagnostics);
+  const setAIConfig = useAIStore(s => s.setConfig);
   const logs = useAIStore(s => s.logs);
   const clearLogs = useAIStore(s => s.clearLogs);
   const [logFilter, setLogFilter] = useState<'all'|'ai'|'search'>('all');
@@ -259,18 +259,95 @@ export const DashboardPage: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        <div className="p-3 rounded-theme shadow-sm border bg-theme-surface border-theme-border flex flex-col justify-center">
+        <div className="p-3 rounded-theme shadow-sm border bg-theme-surface border-theme-border flex flex-col">
           <div className="flex items-center justify-between mb-2">
              <h3 className="text-sm font-medium text-theme-subtext">{t('dashboard.last_search')}</h3>
-             <span className="text-xs text-theme-subtext">{lastSearchAt || ''}</span>
+             <div className="flex items-center gap-2">
+                <label className="relative inline-flex items-center cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={enableSearchDiagnostics}
+                    onChange={(e) =>
+                      setAIConfig({
+                        enableSearchDiagnostics: e.target.checked,
+                        ...(!e.target.checked ? { lastSearchDiagnostics: null } : {})
+                      })
+                    }
+                    className="sr-only peer"
+                    aria-label={t('dashboard.search_diag_toggle')}
+                  />
+                  <div className="w-10 h-5 bg-theme-border border border-theme-subtext/20 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-theme-accent rounded-full peer after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border after:border-gray-300 after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full peer-checked:bg-theme-accent/70" />
+                  <span className="ms-2 text-[11px] font-medium text-theme-subtext">
+                    {enableSearchDiagnostics ? t('dashboard.search_diag_on') : t('dashboard.search_diag_off')}
+                  </span>
+                </label>
+                <span className="text-xs text-theme-subtext">{lastSearchAt || ''}</span>
+             </div>
           </div>
-          {lastSearchDurationMs != null ? (
+          {enableSearchDiagnostics && (lastSearchDurationMs != null ? (
             <div className="flex items-center justify-between text-sm text-theme-text bg-theme-bg/50 px-3 py-2 rounded-md border border-theme-border/50">
-               <span className="truncate font-medium max-w-[200px]" title={lastSearchQuery || ''}>{lastSearchQuery || '-'}</span>
-               <span className="text-xs px-2 py-0.5 rounded-full bg-theme-accent/10 text-theme-accent">{lastSearchDurationMs}ms</span>
+              <span className="truncate font-medium max-w-[200px]" title={lastSearchQuery || ''}>{lastSearchQuery || '-'}</span>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-theme-accent/10 text-theme-accent">{lastSearchDurationMs}ms</span>
             </div>
           ) : (
             <p className="text-sm text-theme-subtext text-center py-2">{t('dashboard.no_recent_search')}</p>
+          ))}
+
+          {enableSearchDiagnostics && lastSearchDiagnostics && (
+            <div className="mt-2 text-xs text-theme-subtext bg-theme-bg/30 border border-theme-border/50 rounded-md p-2 space-y-2">
+              {Array.isArray(lastSearchDiagnostics.providers) && lastSearchDiagnostics.providers.length > 0 && (
+                <div className="flex items-start justify-between gap-2">
+                  <span className="shrink-0">{t('dashboard.search_diag_providers')}</span>
+                  <span className="text-theme-text text-right break-words">
+                    {lastSearchDiagnostics.providers
+                      .filter(p => p && !['parallel', 'cache'].includes(p))
+                      .map(p => {
+                        const k = String(p).toLowerCase();
+                        if (k === 'tmdb') return 'TMDB';
+                        if (k === 'bangumi') return 'Bangumi';
+                        if (k === 'duckduckgo') return 'DuckDuckGo';
+                        if (k === 'serper') return 'Serper';
+                        if (k === 'yandex') return 'Yandex';
+                        if (k === 'google') return 'Google';
+                        if (k === 'plugin') return t('dashboard.search_diag_plugin');
+                        return p;
+                      })
+                      .join(' · ')}
+                  </span>
+                </div>
+              )}
+
+              {Array.isArray(lastSearchDiagnostics.quota) && lastSearchDiagnostics.quota.length > 0 && (
+                <div className="flex items-start justify-between gap-2">
+                  <span className="shrink-0">{t('dashboard.search_diag_quota')}</span>
+                  <span className="text-theme-text text-right break-words">
+                    {lastSearchDiagnostics.quota.map((q, idx) => {
+                      const prov = String(q?.provider || '');
+                      const unit = q?.unit === 'token' ? t('dashboard.search_diag_tokens') : t('dashboard.search_diag_requests');
+                      const amount = typeof q?.amount === 'number' ? q.amount : 0;
+                      return `${prov}:${amount} ${unit}${idx === lastSearchDiagnostics.quota.length - 1 ? '' : ' · '}`;
+                    })}
+                  </span>
+                </div>
+              )}
+
+              {Array.isArray(lastSearchDiagnostics.steps) && lastSearchDiagnostics.steps.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="shrink-0">{t('dashboard.search_diag_steps')}</span>
+                    <span className="text-[10px] text-theme-subtext">{lastSearchDiagnostics.totalDurationMs}ms</span>
+                  </div>
+                  <div className="mt-1 max-h-[140px] overflow-auto custom-scrollbar space-y-1">
+                    {lastSearchDiagnostics.steps.slice(0, 12).map((s, idx) => (
+                      <div key={`${s.name}-${idx}`} className="flex items-center justify-between gap-2">
+                        <span className="truncate">{s.name}</span>
+                        <span className="shrink-0 text-theme-text">{s.durationMs}ms</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
         <div className="p-3 rounded-theme shadow-sm border bg-theme-surface border-theme-border">

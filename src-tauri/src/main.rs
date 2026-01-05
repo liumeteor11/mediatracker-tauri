@@ -1132,6 +1132,12 @@ fn import_collection(username: String, items: Vec<MediaItem>, db: State<Database
 }
 
 #[command]
+fn reorder_collection(username: String, ids: Vec<String>, db: State<Database>) -> Result<(), String> {
+    db.reorder_items_for_user(&username, ids)
+}
+
+
+#[command]
 fn export_collection(
     username: String,
     target_path: Option<String>,
@@ -1279,6 +1285,7 @@ fn main() {
             save_item,
             remove_item,
             import_collection,
+            reorder_collection,
             export_collection,
             register_user,
             login_user

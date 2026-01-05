@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import CryptoJS from 'crypto-js';
-import { AIIOLogEntry } from '../types/types';
+import { AIIOLogEntry, SearchDiagnostics } from '../types/types';
 
 // Simple encryption key (In a real app, this should not be hardcoded or should be user-provided)
 // For this requirement, we use a static key to satisfy "encrypted storage" vs plain text in localStorage
@@ -36,6 +36,8 @@ interface AIConfigState {
   lastSearchDurationMs: number | null;
   lastSearchAt: string | null;
   lastSearchQuery: string | null;
+  enableSearchDiagnostics: boolean;
+  lastSearchDiagnostics: SearchDiagnostics | null;
   authoritativeDomains: {
     movie_tv: string[];
     book: string[];
@@ -129,6 +131,8 @@ Ensure data is accurate.`,
       lastSearchDurationMs: null,
       lastSearchAt: null,
       lastSearchQuery: null,
+      enableSearchDiagnostics: true,
+      lastSearchDiagnostics: null,
       authoritativeDomains: {
         movie_tv: ['imdb.com','themoviedb.org','tvmaze.com','wikipedia.org','zh.wikipedia.org','douban.com'],
         book: ['goodreads.com','wikipedia.org','zh.wikipedia.org','douban.com'],
@@ -204,7 +208,7 @@ Ensure data is accurate.`,
             break;
           case 'qwen':
             defaultBaseUrl = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-            defaultModel = 'qwen-max';
+            defaultModel = 'qwen-max-latest';
             break;
           case 'google':
             defaultBaseUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/';
@@ -272,7 +276,7 @@ Ensure data is accurate.`,
     }),
     {
       name: 'ai-config-storage',
-      version: 4,
+      version: 5,
       storage: createJSONStorage(() => {
         try {
           if (typeof window !== 'undefined' && window.localStorage) {
@@ -321,6 +325,12 @@ Ensure data is accurate.`,
             if (prov === 'moonshot' && url && !url.includes('/openai/')) {
               persistedState.baseUrl = ensureV1(url);
             }
+            if (typeof persistedState.enableSearchDiagnostics !== 'boolean') {
+              persistedState.enableSearchDiagnostics = true;
+            }
+            if (!('lastSearchDiagnostics' in persistedState)) {
+              persistedState.lastSearchDiagnostics = null;
+            }
           }
         } catch {}
         return persistedState;
@@ -349,6 +359,8 @@ Ensure data is accurate.`,
         lastSearchDurationMs: state.lastSearchDurationMs,
         lastSearchAt: state.lastSearchAt,
         lastSearchQuery: state.lastSearchQuery,
+        enableSearchDiagnostics: state.enableSearchDiagnostics,
+        lastSearchDiagnostics: state.lastSearchDiagnostics,
         authoritativeDomains: state.authoritativeDomains,
         useSystemProxy: state.useSystemProxy,
         proxyProtocol: state.proxyProtocol,

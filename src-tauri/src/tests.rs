@@ -29,6 +29,8 @@ fn test_media_item_serialization() {
         status: None,
         added_at: None,
         user_rating: None,
+        parent_collection_id: None,
+        is_collection: None,
     };
 
     let json = serde_json::to_string(&item).unwrap();

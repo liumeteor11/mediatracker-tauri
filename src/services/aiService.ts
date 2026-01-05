@@ -3,7 +3,7 @@ import { searchBangumi } from './bangumiService';
 import { usePluginStore } from '../store/usePluginStore';
 import { PluginExecutor } from './pluginService';
 import OpenAI from "openai";
-import { MediaType, MediaItem } from "../types/types";
+import { MediaType, MediaItem, SearchDiagnostics } from "../types/types";
 import { v4 as uuidv4 } from 'uuid';
 import { useAIStore } from "../store/useAIStore";
 import i18n from '../i18n';
@@ -207,6 +207,7 @@ const normalizeImageUrl = (value: any): string | undefined => {
   if (!s) return undefined;
   const lower = s.toLowerCase();
   if (lower === 'n/a' || lower === 'na' || lower === 'null' || lower === 'undefined') return undefined;
+  if (lower.startsWith('x-raw-image')) return undefined;
   if (lower.includes('m.media-amazon.com/')) return undefined;
   if (lower.includes('i.ebayimg.com/') || lower.includes('ebayimg.com/')) return undefined;
   if (lower.startsWith('data:') || lower.startsWith('blob:')) return s;
@@ -219,6 +220,7 @@ const normalizeImageUrl = (value: any): string | undefined => {
 const isBlockedPosterUrl = (value?: string): boolean => {
   const s = String(value ?? '').trim().toLowerCase();
   if (!s) return true;
+  if (s.startsWith('x-raw-image')) return true;
   if (s.includes('placehold.co') || s.includes('no+image') || s.includes('image+error')) return true;
   if (s.includes('m.media-amazon.com/')) return true;
   return false;
@@ -350,7 +352,41 @@ export const performClientSideSearch = async (
             if (effType === MediaType.MUSIC) return s.authoritativeDomains.music || [];
             return [];
         })();
-        const precisionDomains = domsFromStore.map(d => `site:${d}`);
+        const normalizeDomain = (d: any): string => {
+            const raw = String(d || '').trim().replace(/^site:/i, '');
+            if (!raw) return '';
+            let host = raw.toLowerCase();
+            if (host.includes('://')) {
+                try {
+                    host = new URL(raw).hostname.toLowerCase();
+                } catch {}
+            }
+            host = host.replace(/^www\./, '').split('/')[0].trim();
+            return host;
+        };
+        const domsUniq = new Set<string>();
+        for (const d of domsFromStore) {
+            const nd = normalizeDomain(d);
+            if (nd) domsUniq.add(nd);
+        }
+        const domainOrder = (() => {
+            if (effType === MediaType.TV_SERIES) return ['tvmaze.com', 'themoviedb.org', 'imdb.com', 'wikipedia.org', 'zh.wikipedia.org', 'douban.com'];
+            if (effType === MediaType.MOVIE) return ['imdb.com', 'themoviedb.org', 'douban.com', 'wikipedia.org', 'zh.wikipedia.org'];
+            if (effType === MediaType.BOOK) return ['goodreads.com', 'douban.com', 'wikipedia.org', 'zh.wikipedia.org'];
+            if (effType === MediaType.COMIC) return ['bgm.tv', 'bangumi.tv', 'wikipedia.org', 'zh.wikipedia.org'];
+            if (effType === MediaType.MUSIC) return ['musicbrainz.org', 'discogs.com', 'wikipedia.org', 'zh.wikipedia.org'];
+            return [];
+        })();
+        const rankDomain = (d: string) => {
+            const idx = domainOrder.findIndex(x => d === x || d.endsWith(`.${x}`));
+            return idx === -1 ? 999 : idx;
+        };
+        let domsForSearch = Array.from(domsUniq.values());
+        if (effType === MediaType.MOVIE) {
+            domsForSearch = domsForSearch.filter(d => d !== 'tvmaze.com');
+        }
+        domsForSearch.sort((a, b) => rankDomain(a) - rankDomain(b));
+        const precisionDomains = domsForSearch.map(d => `site:${d}`);
         const isEnglishUI = (typeof i18n?.language === 'string') && i18n.language.startsWith('en');
 
         const englishTypeTerm = (t: MediaType | 'All') => {
@@ -380,41 +416,52 @@ export const performClientSideSearch = async (
             const enAlias = aliases.find(a => /[a-z]/i.test(a));
             return enAlias || t;
         };
-        // Precision queries logic disabled for quota control
-        /*
-        const precisionQueries: string[] = [];
-        for (const d of precisionDomains) {
-            // ... (original logic)
+        const maxDomainQueries = (effType === MediaType.MOVIE || effType === MediaType.TV_SERIES) ? 2 : 1;
+        const selectedDomains = domsForSearch.slice(0, maxDomainQueries);
+        for (const dRaw of selectedDomains) {
+            const d = String(dRaw || '').trim().replace(/^site:/i,'').replace(/^www\./i,'').split('/')[0];
+            if (!d) continue;
             const englishDomain = d.includes('imdb.com') || d.includes('themoviedb.org') || d.includes('tvmaze.com') || (d.includes('wikipedia.org') && !d.includes('zh.wikipedia.org')) || d.includes('goodreads.com') || d.includes('discogs.com') || d.includes('musicbrainz.org');
-            if (englishDomain && !isEnglishUI) {
-                const baseEn = toEnglishBase(base);
-                if (effType === 'All') {
-                    const hints = ['movie','tv series','novel','comic','album'];
-                    for (const h of hints) {
-                        precisionQueries.push(`${d} ${baseEn} ${h}`);
-                    }
-                } else {
-                    const typeHint = englishTypeTerm(effType);
-                    const q = typeHint ? `${baseEn} ${typeHint}` : baseEn;
-                    precisionQueries.push(`${d} ${q}`);
-                }
-            } else {
-                precisionQueries.push(`${d} ${base}`);
-            }
+            const baseTerm = (englishDomain && !isEnglishUI) ? toEnglishBase(base) : base;
+            const typeHint = (englishDomain && effType !== 'All') ? englishTypeTerm(effType) : '';
+            const qv = typeHint ? `${baseTerm} ${typeHint}` : baseTerm;
+            precisionQueries.push(`site:${d} ${qv}`);
         }
-        */
 
-        const isMediaCandidate = (title: string, snippet: string): boolean => {
+        const normalizeHost = (u: string): string => {
+            try {
+                return new URL(u).hostname.toLowerCase().replace(/^www\./, '');
+            } catch {
+                const s = String(u || '').toLowerCase();
+                const m = s.match(/^https?:\/\/([^\/?#]+)/);
+                if (m && m[1]) return m[1].replace(/^www\./, '');
+                return s.replace(/^www\./, '').split('/')[0];
+            }
+        };
+        const isMediaCandidate = (title: string, snippet: string, link?: string): boolean => {
             const text = `${title} ${snippet}`.toLowerCase();
-            const positives = isChinese 
+            const allKeywords = isChinese
                 ? ['电影','电视剧','短剧','漫画','小说','书籍','专辑','音乐','原声','ost','动漫','动画','综艺','纪录片','剧集','番剧']
                 : ['movie','film','tv series','season','episode','novel','book','comic','manga','album','music','soundtrack','ost','anime','animation','documentary','drama'];
-            if (effType === 'All') {
-                // Stricter check: require at least one media keyword even if a year is present.
-                // This prevents generic year-based results (e.g. "2025 Trends") from being treated as media.
-                return positives.some(k => text.includes(k));
+            const typeKeywords = (() => {
+                if (effType === MediaType.MOVIE) return isChinese ? ['电影', '影片'] : ['movie', 'film'];
+                if (effType === MediaType.TV_SERIES) return isChinese ? ['电视剧', '剧集', '季', '集', '番剧'] : ['tv series', 'season', 'episode', 'series'];
+                if (effType === MediaType.BOOK) return isChinese ? ['小说', '书', '书籍'] : ['novel', 'book'];
+                if (effType === MediaType.COMIC) return isChinese ? ['漫画', '番剧'] : ['comic', 'manga', 'anime'];
+                if (effType === MediaType.MUSIC) return isChinese ? ['专辑', '音乐', '原声', 'ost'] : ['album', 'music', 'soundtrack', 'ost'];
+                if (effType === MediaType.SHORT_DRAMA) return isChinese ? ['短剧'] : ['short drama'];
+                return allKeywords;
+            })();
+            const matchesKeyword = (effType === 'All' ? allKeywords : typeKeywords).some(k => text.includes(k));
+            if (matchesKeyword) return true;
+            if (link) {
+                const host = normalizeHost(link);
+                if (host) {
+                    if (effType === 'All') return false;
+                    return domsForSearch.some(d => host === d || host.endsWith(`.${d}`));
+                }
             }
-            return positives.some(k => text.includes(k));
+            return false;
         };
 
         // Tauri Mode
@@ -540,7 +587,7 @@ export const performClientSideSearch = async (
                 const resultsArrays = await Promise.all(limitedTasks.map(t => runTauriSearch(t.p, t.qv)));
                 const allResults = resultsArrays.flat();
 
-                const candidateStep = (effType === 'All') ? allResults : allResults.filter((it: any) => isMediaCandidate(it.title || '', it.snippet || ''));
+                const candidateStep = (effType === 'All') ? allResults : allResults.filter((it: any) => isMediaCandidate(it.title || '', it.snippet || '', it.link));
                 
                 // Process and Score Results
                 const scoredResults = candidateStep.map((it: any) => {
@@ -609,7 +656,7 @@ export const performClientSideSearch = async (
                 const ddgResultsArrays = await Promise.all(ddgPromises);
                 const allDDGResults = ddgResultsArrays.flat();
                 
-                const filteredDDG = (effType === 'All') ? allDDGResults : allDDGResults.filter((it: any) => isMediaCandidate(it.title || '', it.snippet || ''));
+                const filteredDDG = (effType === 'All') ? allDDGResults : allDDGResults.filter((it: any) => isMediaCandidate(it.title || '', it.snippet || '', it.link));
                 
                  const scoredDDG = filteredDDG.map((it: any) => {
                     const pr = processSearchResult(it.title || '', it.snippet || '');
@@ -722,7 +769,7 @@ export const performClientSideSearch = async (
                         searchType: 'text'
                     });
                 } catch {}
-                const filteredStep = merged.filter((it: any) => isMediaCandidate(it.title, it.snippet));
+                const filteredStep = merged.filter((it: any) => isMediaCandidate(it.title, it.snippet, it.link));
                 for (const it of filteredStep) {
                     const pr = processSearchResult(it.title || '', it.snippet || '');
                     const key = `${pr.title}|${pr.year}`;
@@ -782,7 +829,7 @@ export const performClientSideSearch = async (
                         searchType: 'text'
                     });
                 } catch {}
-                const filteredStep = merged.filter((it: any) => isMediaCandidate(it.title, it.snippet));
+                const filteredStep = merged.filter((it: any) => isMediaCandidate(it.title, it.snippet, it.link));
                 for (const it of filteredStep) {
                     const pr = processSearchResult(it.title || '', it.snippet || '');
                     const key = `${pr.title}|${pr.year}`;
@@ -838,7 +885,7 @@ export const performClientSideSearch = async (
                         searchType: 'text'
                     });
                 } catch {}
-                const filteredD = (effType === 'All') ? mergedDDG : mergedDDG.filter((it: any) => isMediaCandidate(it.title, it.snippet));
+                const filteredD = (effType === 'All') ? mergedDDG : mergedDDG.filter((it: any) => isMediaCandidate(it.title, it.snippet, it.link));
                 for (const it of filteredD) {
                     const pr = processSearchResult(it.title || '', it.snippet || '');
                     const key = `${pr.title}|${pr.year}`;
@@ -1432,11 +1479,93 @@ const normalizeMediaItem = (item: any): any => {
 };
 
 export const searchMedia = async (query: string, type?: MediaType | 'All'): Promise<MediaItem[]> => {
-  if (!query.trim()) return [];
+  const q = query.trim();
+  if (!q) return [];
+
+  const diagEnabled = useAIStore.getState().enableSearchDiagnostics;
+  const diagStartEpoch = Date.now();
+  const diagStartPerf = performance.now();
+  const diagSteps: SearchDiagnostics['steps'] = [];
+  const diagProviders = new Set<string>();
+  const diagQuota: SearchDiagnostics['quota'] = [];
+
+  const addStep = (name: string, startPerf: number, provider?: string, details?: any) => {
+    const durationMs = Math.max(0, Math.round(performance.now() - startPerf));
+    diagSteps.push({ name, durationMs, provider, details });
+    if (provider) diagProviders.add(provider);
+  };
+
+  const extractTokenUsage = (resp: any) => {
+    const u = resp?.usage;
+    if (u && typeof u === 'object') {
+      const input = u.prompt_tokens ?? u.input_tokens ?? u.promptTokens;
+      const output = u.completion_tokens ?? u.output_tokens ?? u.completionTokens;
+      const total = u.total_tokens ?? u.totalTokens ?? (typeof input === 'number' && typeof output === 'number' ? input + output : undefined);
+      return { input, output, total };
+    }
+    const um = resp?.usageMetadata;
+    if (um && typeof um === 'object') {
+      const input = um.promptTokenCount ?? um.inputTokenCount ?? um.prompt_tokens ?? um.input_tokens;
+      const output = um.candidatesTokenCount ?? um.outputTokenCount ?? um.completion_tokens ?? um.output_tokens;
+      const total = um.totalTokenCount ?? um.total_tokens ?? (typeof input === 'number' && typeof output === 'number' ? input + output : undefined);
+      return { input, output, total };
+    }
+    return {};
+  };
+
+  const finalizeDiagnostics = () => {
+    if (!diagEnabled) return;
+    const endEpoch = Date.now();
+    const logs = (useAIStore.getState().logs || []).filter(l => typeof l?.ts === 'number' && l.ts >= diagStartEpoch && l.ts <= endEpoch);
+
+    const searchLogs = logs.filter(l => l.channel === 'search');
+    const bySearchProvider = new Map<string, { count: number; durationMs: number }>();
+    for (const l of searchLogs) {
+      const p = String(l.provider || 'unknown');
+      const cur = bySearchProvider.get(p) || { count: 0, durationMs: 0 };
+      cur.count += 1;
+      cur.durationMs += typeof l.durationMs === 'number' ? l.durationMs : 0;
+      bySearchProvider.set(p, cur);
+      diagProviders.add(p);
+    }
+    for (const [p, v] of bySearchProvider.entries()) {
+      diagQuota.push({ provider: p, unit: 'request', amount: v.count, details: { durationMs: v.durationMs } });
+    }
+
+    const aiLogs = logs.filter(l => l.channel === 'ai');
+    const latestAi = aiLogs.sort((a, b) => (b.ts || 0) - (a.ts || 0))[0];
+    if (latestAi) {
+      const tok = extractTokenUsage(latestAi.response);
+      const total = typeof tok.total === 'number' ? tok.total : undefined;
+      if (typeof total === 'number') {
+        diagQuota.push({
+          provider: String(latestAi.provider || 'ai'),
+          unit: 'token',
+          amount: total,
+          details: { input: tok.input, output: tok.output, model: latestAi.model }
+        });
+      }
+      if (latestAi.provider) diagProviders.add(String(latestAi.provider));
+    }
+
+    const diagnostics: SearchDiagnostics = {
+      query: q,
+      type: String(type || 'All'),
+      at: new Date().toISOString(),
+      totalDurationMs: Math.max(0, Math.round(performance.now() - diagStartPerf)),
+      providers: Array.from(diagProviders.values()),
+      steps: diagSteps,
+      quota: diagQuota
+    };
+    try {
+      useAIStore.getState().setConfig({ lastSearchDiagnostics: diagnostics });
+    } catch {}
+  };
 
   const langKey = i18n.language.split('-')[0];
-  const cacheKey = `media_tracker_search_${langKey}_${type || 'All'}_${query.trim().toLowerCase()}`;
+  const cacheKey = `media_tracker_search_${langKey}_${type || 'All'}_${q.toLowerCase()}`;
   const cacheTsKey = `${cacheKey}_ts`;
+  const cacheStepT0 = performance.now();
   try {
     const cachedData = localStorage.getItem(cacheKey);
     const cachedTs = localStorage.getItem(cacheTsKey);
@@ -1446,66 +1575,86 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
       const ttl = 2 * 60 * 60 * 1000;
       if (now - last < ttl) {
         const parsed = JSON.parse(cachedData);
-        if (Array.isArray(parsed)) return parsed as MediaItem[];
+        if (Array.isArray(parsed)) {
+          if (diagEnabled) {
+            addStep('缓存命中', cacheStepT0, 'cache', { ttlMs: ttl });
+            finalizeDiagnostics();
+          }
+          return parsed as MediaItem[];
+        }
       }
     }
   } catch {}
+  if (diagEnabled) addStep('缓存检查', cacheStepT0, 'cache');
 
   const isChinese = i18n.language.startsWith('zh');
 
   // Parallel Execution: TMDB, Bangumi, Plugins, and AI Search Context
+  const parallelT0 = performance.now();
+  const timed = async <T,>(name: string, provider: string, fn: () => Promise<T>, fallback: T): Promise<T> => {
+    const t0 = performance.now();
+    try {
+      const res = await fn();
+      if (diagEnabled) addStep(name, t0, provider, { ok: true });
+      return res;
+    } catch (e: any) {
+      if (diagEnabled) addStep(name, t0, provider, { ok: false, error: e?.message || String(e) });
+      return fallback;
+    }
+  };
+
   const [tmdbRes, bangumiRes, pluginRes, searchContext] = await Promise.all([
-      // TMDB Search
-      (async () => {
+    timed(
+      'TMDB 搜索',
+      'tmdb',
+      async () => {
+        if (!type || type === 'All' || type === MediaType.MOVIE || type === MediaType.TV_SERIES) {
+          const t = (type === MediaType.MOVIE) ? 'movie' : (type === MediaType.TV_SERIES) ? 'tv' : 'multi';
+          return await searchTMDB(q, t as any);
+        }
+        return [];
+      },
+      []
+    ),
+    timed(
+      'Bangumi 搜索',
+      'bangumi',
+      async () => {
+        let bType = undefined;
+        if (type === MediaType.BOOK) bType = 1;
+        if (type === MediaType.TV_SERIES || type === MediaType.COMIC) bType = 2;
+        if (type === MediaType.MUSIC) bType = 3;
+        return await searchBangumi(q, bType);
+      },
+      []
+    ),
+    timed(
+      '插件搜索',
+      'plugin',
+      async () => {
+        const { getEnabledPlugins } = usePluginStore.getState();
+        const plugins = getEnabledPlugins();
+        if (plugins.length === 0) return [];
+        const results = await Promise.all(plugins.map(async p => {
           try {
-              if (!type || type === 'All' || type === MediaType.MOVIE || type === MediaType.TV_SERIES) {
-                  const t = (type === MediaType.MOVIE) ? 'movie' : (type === MediaType.TV_SERIES) ? 'tv' : 'multi';
-                  return await searchTMDB(query, t as any);
-              }
-          } catch {}
-          return [];
-      })(),
-      // Bangumi Search
-      (async () => {
-           try {
-               let bType = undefined;
-               // Bangumi types: 1=book, 2=anime(tv), 3=music, 4=game, 6=real
-               if (type === MediaType.BOOK) bType = 1;
-               if (type === MediaType.TV_SERIES || type === MediaType.COMIC) bType = 2; 
-               if (type === MediaType.MUSIC) bType = 3;
-               return await searchBangumi(query, bType);
-           } catch {}
-           return [];
-      })(),
-      // Plugin Search
-      (async () => {
-          try {
-              const { getEnabledPlugins } = usePluginStore.getState();
-              const plugins = getEnabledPlugins();
-              if (plugins.length === 0) return [];
-              
-              const results = await Promise.all(plugins.map(async p => {
-                  try {
-                      const executor = new PluginExecutor(p);
-                      return await executor.executeSearch(query);
-                  } catch (e) {
-                      console.error(`Plugin ${p.name} failed:`, e);
-                      return [];
-                  }
-              }));
-              return results.flat();
-          } catch (e) {
-              console.error("Plugin search error:", e);
-              return [];
+            const executor = new PluginExecutor(p);
+            return await executor.executeSearch(q);
+          } catch {
+            return [];
           }
-      })(),
-      // AI Search Context
-      (async () => {
-          try {
-            return await performClientSideSearch(query, true, type);
-          } catch { return ""; }
-      })()
+        }));
+        return results.flat();
+      },
+      []
+    ),
+    timed(
+      '网页搜索上下文',
+      String(useAIStore.getState().searchProvider || 'search'),
+      async () => await performClientSideSearch(q, true, type),
+      ""
+    )
   ]);
+  if (diagEnabled) addStep('并行阶段', parallelT0, 'parallel');
 
   // Convert Plugin Results
   const pluginItems: MediaItem[] = pluginRes.map((item: any) => {
@@ -1656,7 +1805,9 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
 
   let aiItems: MediaItem[] = [];
   try {
+    const aiT0 = performance.now();
     const text = await callAI(messages, 0.1, { forceSearch: true });
+    if (diagEnabled) addStep('AI 生成候选作品', aiT0, String(provider || 'ai'));
     if (text) {
         let jsonStr = "";
         const jsonArrayMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
@@ -1807,6 +1958,8 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
   });
 
   const enrichWithTMDB = async (items: MediaItem[]): Promise<MediaItem[]> => {
+      const enrichT0 = performance.now();
+      let detailCalls = 0;
       const wantsFullDate = (t: MediaType) => t === MediaType.MOVIE || t === MediaType.TV_SERIES || t === MediaType.SHORT_DRAMA;
       const needsEnrich = (it: MediaItem) => {
           if (!(it.type === MediaType.MOVIE || it.type === MediaType.TV_SERIES)) return false;
@@ -1828,6 +1981,7 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
           const tmdbMediaType: 'movie' | 'tv' = it.tmdbMediaType as any;
           if (!tmdbId) return;
 
+          detailCalls += 1;
           let details = await getTMDBDetails(tmdbId, tmdbMediaType, 'zh-CN');
           if (details && isUnknownText(details.overview)) {
               const en = await getTMDBDetails(tmdbId, tmdbMediaType, 'en-US');
@@ -1883,10 +2037,16 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
       };
 
       await Promise.all([worker(), worker(), worker()]);
+      if (diagEnabled) addStep('TMDB 详情补全', enrichT0, 'tmdb', { calls: detailCalls, items: toPatch.length });
       return items.map(i => byId.get(i.id) || i);
   };
 
   filtered = await enrichWithTMDB(filtered);
+  if (diagEnabled) finalizeDiagnostics();
+
+  if (type && type !== 'All') {
+      filtered = filtered.filter(it => it.type === type);
+  }
 
   try {
     localStorage.setItem(cacheKey, JSON.stringify(filtered));
@@ -2764,7 +2924,7 @@ const createFallbackItemsFromContext = async (searchContext: string, limit: numb
     }
 };
 
-export const getTrendingMedia = async (): Promise<MediaItem[]> => {
+export const getTrendingMedia = async (excludeItems: MediaItem[] = []): Promise<MediaItem[]> => {
   const { systemPrompt, trendingPrompt, provider } = useAIStore.getState();
   const dateObj = new Date();
   const today = dateObj.toISOString().split('T')[0];
@@ -2774,56 +2934,66 @@ export const getTrendingMedia = async (): Promise<MediaItem[]> => {
   
   const isChinese = i18n.language.startsWith('zh');
   
-  let searchContext = "";
+  // We no longer perform a manual pre-search. We let the AI decide what to search based on the prompt.
+  const searchContext = "";
 
-  // 1. Perform Manual Search First (ONLY if no custom prompt is set)
-    // If a custom prompt is set, we rely on the AI to call the search tool with relevant keywords
-    if (!trendingPrompt || !trendingPrompt.trim()) {
-        // Use Year+Month for broader hits, and specific "latest" keywords
-        // Optimized to single query to save API quota
-        const query = isChinese 
-            ? `最新热门电影电视剧 ${monthStr}`
-            : `trending movies tv shows ${monthStr} ${currentYear}`;
-
-        try {
-            // Search for the first query
-            const searchResult = await performClientSideSearch(query, true);
-            if (searchResult) {
-                searchContext = searchResult;
-            }
-        } catch (e) {
-            console.warn("Manual search in getTrendingMedia failed", e);
-        }
-    }
-
-  
+  // Prepare exclusion list
+  const excludeTitles = excludeItems.map(i => i.title).filter(Boolean);
+  const excludeStr = excludeTitles.length > 0 
+      ? (isChinese ? `\n\n[排除列表] 请不要推荐以下已展示过的作品：${excludeTitles.join(', ')}。请推荐其他不同的热门作品。` 
+                   : `\n\n[Exclude List] Do NOT recommend the following items that were already shown: ${excludeTitles.join(', ')}. Please recommend DIFFERENT trending works.`)
+      : "";
 
   let userPrompt = "";
 
   if (trendingPrompt && trendingPrompt.trim()) {
       userPrompt = trendingPrompt;
+      userPrompt += excludeStr;
       userPrompt += isChinese 
-        ? `\n\n[系统提示] 当前日期: ${today}。请优先使用提供的联网搜索工具 (web_search) 获取最新信息；若不可用，可先基于已有知识快速返回，再进行校验。`
-        : `\n\n[System Note] Today's Date: ${today}. Prefer using the provided 'web_search' tool to fetch the latest information; if unavailable, return quickly based on internal knowledge and verify later.`;
-  } else if (provider === 'moonshot') {
-     // For Moonshot, we use our manual "web_search" tool
-     searchContext = "";
+        ? `\n\n[系统提示] 当前日期: ${today}。
+        1. 你拥有一个 'web_search' 工具。**你必须先使用该工具进行联网搜索**，获取满足上述要求的最新的影视作品信息。
+        2. 不要直接编造数据。请根据搜索结果进行推荐。
+        3. 请务必严格遵守上述提示词中的所有要求，**特别是关于时间/日期的限制**。如果提示词包含具体日期（如"2024-01-01之后"），**必须**严格过滤掉在此日期之前的作品。
+        4. 返回的数据必须准确，releaseDate 需尽量精确到年月日。
+        5. 务必返回严格合法的JSON数组，不要包含Markdown格式（如 \`\`\`json）。
+        6. 严禁返回任何笼统的平台名称（如"iQIYI"、"Netflix"）、国家类别（如"美国电视剧"）或非具体作品。必须是具体的电影、电视剧或动漫名称。
+        7. 严禁返回任何形式的“合集”、“盘点”、“推荐列表”类文章标题（如“2025必看美剧合集”）。必须是单个的具体作品名称。`
+        : `\n\n[System Note] Today's Date: ${today}. 
+        1. You have a 'web_search' tool. **You MUST use this tool first** to search for the latest media works matching the requirements.
+        2. Do NOT fabricate data. Recommend based on search results.
+        3. You MUST strictly follow all requirements in the prompt above, **especially regarding time/date limits**. If the prompt contains specific dates (e.g. "after 2024-01-01"), you MUST strictly filter out works released before that date.
+        4. Ensure returned data is accurate; releaseDate should be as specific as possible.
+        5. Return STRICTLY valid JSON array, do NOT use Markdown format (like \`\`\`json).
+        6. Do NOT return generic platform names (e.g., "iQIYI", "Netflix") or categories (e.g., "US TV Series"). Must be specific movie/series/anime titles.
+        7. Do NOT return collection/compilation titles (e.g., "Top 10 Movies", "Best Series List"). Must be single, specific work titles.`;
+  } else {
+     // Default logic (Unified for all providers)
      if (isChinese) {
          userPrompt = `今天是 ${today}。请推荐4部在最近2个月内更新或上映的热门电影、电视剧或动漫。
+         ${excludeStr}
          
-         [优先] 请优先使用提供的联网搜索工具 (web_search) 获取最新信息；若不可用，可先基于已有知识返回，再进行校验。请搜索关键词: "最新热门电影电视剧 ${monthStr}"。
+         **重要执行步骤：**
+         1. **调用 web_search 工具**，搜索关键词: "最新热门电影电视剧 ${monthStr}" 或 "2024年热门影视排行榜"。
+         2. 阅读搜索结果，筛选出在 **最近2个月内** (例如 ${monthStr} 或上个月) 有更新或上映的高热度作品。
+         3. 整理信息，以 JSON 格式返回推荐列表。
          
          要求：
-         1. 必须是 **最近2个月内** (例如 ${monthStr} 或上个月) 有更新或上映的作品。
+         1. 必须是 **最近2个月内** 有更新或上映的作品。
          2. **必须** 基于联网搜索结果进行推荐。
          3. 严禁推荐几年前的老片，除非它最近有新季度更新。
          4. releaseDate 字段必须准确。如果是电视剧，请填写 **最新一季** 的首播日期。
          5. 返回字段中的 latestUpdateInfo 必须准确（例如 "第2季 第5集" 或 "已完结"）。
-         6. 确保上映日期真实准确，不要捏造未来的日期，除非确有官方定档信息。`;
+         6. 确保上映日期真实准确，不要捏造未来的日期，除非确有官方定档信息。
+         7. 严禁返回任何笼统的平台名称（如"iQIYI"、"Netflix"）、国家类别（如"美国电视剧"）或非具体作品。
+         8. 严禁返回任何形式的“合集”、“盘点”、“推荐列表”类文章标题。必须是单个的具体作品名称。`;
      } else {
          userPrompt = `Today is ${today}. Recommend 4 trending movies, TV series, or dramas that have been updated or released within the last 2 months.
+         ${excludeStr}
          
-         [PREFER] Prefer using the provided web search tool (web_search) to get the latest information. If unavailable, return quickly based on internal knowledge and verify later. Search query: "trending movies tv series ${monthStr}".
+         **Execution Steps:**
+         1. **Call the web_search tool** with queries like: "trending movies tv series ${monthStr} ${currentYear}".
+         2. Analyze the results and select high-popularity works updated or released within the **last 2 months**.
+         3. Return the list in JSON format.
          
          Requirements:
          1. Must be updated or released within the **last 2 months**.
@@ -2831,49 +3001,10 @@ export const getTrendingMedia = async (): Promise<MediaItem[]> => {
          3. Do NOT recommend old content unless it has a very recent new season.
          4. releaseDate MUST be accurate. For TV Series, use the premiere date of the **LATEST SEASON**.
          5. Ensure latestUpdateInfo is accurate.
-         6. Ensure release dates are factual.`;
+         6. Ensure release dates are factual.
+         7. Do NOT return generic platform names (e.g., "iQIYI", "Netflix") or categories. Must be specific titles.
+         8. Do NOT return collection/compilation titles. Must be single, specific work titles.`;
      }
-  } else if (isChinese) {
-    userPrompt = `今天是 ${today}。请推荐4部在最近2个月内更新或上映的热门电影、电视剧或动漫。
-    
-    ${searchContext ? `[重要] 参考以下搜索结果进行推荐（这是实时的网络搜索结果）：
-    ${searchContext}
-    
-    要求：
-    1. 必须是 **最近2个月内** (例如 ${monthStr} 或上个月) 有更新或上映的作品。
-    2. **必须** 从上述搜索结果中优先选择。如果搜索结果中有热门作品，直接使用。
-    3. 如果搜索结果不足或为空，请基于你的内部知识推荐近期（2024-2025年）的高热度作品。` : 
-    `[重要] 请务必使用联网搜索工具 (web_search) 获取 "最新热门电影电视剧 ${monthStr}" 的信息。
-    
-    要求：
-    1. 必须是 **最近2个月内** (例如 ${monthStr} 或上个月) 有更新或上映的作品。
-    2. 如果联网搜索失败，请务必使用你的内部知识库推荐近期热门作品，不要返回空。`}
-    
-    4. 严禁推荐几年前的老片，除非它最近有新季度更新。
-    5. releaseDate 字段必须准确。如果是电视剧，请填写 **最新一季** 的首播日期。
-    6. 返回字段中的 latestUpdateInfo 必须准确（例如 "第2季 第5集" 或 "已完结"）。
-    7. 确保上映日期真实准确，不要捏造未来的日期，除非确有官方定档信息。如果日期不确定，请留空或填写年份。`;
-  } else {
-    userPrompt = `Today is ${today}. Recommend 4 trending movies, TV series, or dramas that have been updated or released within the last 2 months.
-    
-    ${searchContext ? `[IMPORTANT] Refer to the following search results (Real-time data):
-    ${searchContext}
-    
-    Requirements:
-    1. Must be updated or released within the **last 2 months**.
-    2. **MUST** prioritize selection from the search results above.
-    3. If search results are insufficient, rely on your internal knowledge to recommend trending works from 2024-2025.` : 
-    `[IMPORTANT] You MUST use the provided web search tool (web_search) to get the latest information. Search query: "trending movies tv series ${monthStr}".
-    
-    Requirements:
-    1. Must be updated or released within the **last 2 months**.
-    2. Use your knowledge to find the most trending recent releases.
-    3. If web search fails, you MUST use your internal knowledge to recommend recent trending works. Do not return empty.`}
-    
-    4. Do NOT recommend old content unless it has a very recent new season.
-    5. releaseDate MUST be accurate. For TV Series, use the premiere date of the **LATEST SEASON**.
-    6. Ensure latestUpdateInfo is accurate.
-    7. Ensure release dates are factual. Do not invent future dates unless officially announced.`;
   }
 
   // Fallback instructions if search fails
@@ -2887,17 +3018,29 @@ export const getTrendingMedia = async (): Promise<MediaItem[]> => {
   const parseTrending = async (text: string): Promise<Omit<MediaItem, 'id' | 'posterUrl'>[]> => {
       if (!text) return [];
       let jsonStr = "";
-      const jsonArrayMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
-      if (jsonArrayMatch) {
-          jsonStr = jsonArrayMatch[0];
+      // Try to find the first '[' and last ']' to extract JSON array
+      const firstBracket = text.indexOf('[');
+      const lastBracket = text.lastIndexOf(']');
+      
+      if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+          jsonStr = text.substring(firstBracket, lastBracket + 1);
       } else {
-          jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+          // Fallback to regex or cleanup
+          const jsonArrayMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
+          if (jsonArrayMatch) {
+              jsonStr = jsonArrayMatch[0];
+          } else {
+              jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+          }
       }
+
       if (!jsonStr.startsWith('[') && !jsonStr.startsWith('{')) return [];
+      
       try {
           const parsed = JSON.parse(jsonStr);
           return Array.isArray(parsed) ? parsed : [];
-      } catch {
+      } catch (e) {
+          console.warn("Initial JSON parse failed, trying recovery", e);
           const lastBracket = jsonStr.lastIndexOf('}');
           if (lastBracket > 0) {
               try {
@@ -2915,6 +3058,37 @@ export const getTrendingMedia = async (): Promise<MediaItem[]> => {
   const text = await callAI(messages, 0.1, { forceSearch: true }); 
   let rawData = await parseTrending(text || "");
   if (rawData.length > 4) rawData = rawData.slice(0, 4);
+
+  // Filter out generic titles
+  const isGenericTitle = (title: string) => {
+      const t = title.toLowerCase();
+      // 1. Generic Categories/Platforms (Only filter if title is short/almost exact match)
+      const genericCategories = [
+          'iqiyi', 'netflix', 'amazon', 'hulu', 'disney', 'hbo', 'apple tv', 'peacock', 'paramount',
+          'us tv', 'uk tv', 'korean drama', 'japanese anime', 'chinese drama',
+          '美国电视剧', '英剧', '韩剧', '日剧', '国产剧', '电视剧', '电影', '动漫',
+          'top 10', 'trending', 'hot movies', 'new releases',
+          '热门电影', '最新电影', '排行榜'
+      ];
+      
+      if (genericCategories.some(g => t.includes(g) && t.length < g.length + 5)) return true;
+
+      // 2. Banned Phrases (Filter if contained anywhere, usually indicating non-content)
+      const bannedPhrases = [
+          '合集', '盘点', '推荐', '必看', '片单', 
+          'collection', 'compilation', 'list', 'recommendation', 'must watch',
+          'ending explained', 'plot breakdown', 'full review', 'season review', 'episode review',
+          '结局解析', '剧情分析', '全集解析', '深度解析', '观后感', '评价', '讨论',
+          'douban', 'reddit', 'zhihu', 'discussion', 'thoughts on'
+      ];
+      
+      if (bannedPhrases.some(g => t.includes(g))) return true;
+
+      return false;
+  };
+
+  rawData = rawData.filter(item => item && item.title && !isGenericTitle(item.title));
+
   if (rawData.length < 4 && searchContext) {
       try {
           const fb = await createFallbackItemsFromContext(searchContext, 4);
@@ -2987,9 +3161,21 @@ export const getTrendingMedia = async (): Promise<MediaItem[]> => {
       if (!candidates || candidates.length === 0) return;
 
       const year = norm(it.releaseDate).slice(0, 4);
-      const best = (year && /^\d{4}$/.test(year))
-          ? candidates.find(c => (c.release_date || c.first_air_date || '').startsWith(year))
-          : candidates[0];
+      let best: any = undefined;
+
+      if (year && /^\d{4}$/.test(year)) {
+          // Strict year match (+/- 1 year tolerance)
+          const yNum = parseInt(year, 10);
+          best = candidates.find(c => {
+              const cDate = c.release_date || c.first_air_date || '';
+              const cYear = parseInt(cDate.slice(0, 4), 10);
+              return !isNaN(cYear) && Math.abs(cYear - yNum) <= 1;
+          });
+      } else {
+          // If no year, require exact title match
+          best = candidates.find(c => (c.title || c.name || '').toLowerCase() === it.title.toLowerCase());
+      }
+
       if (!best || typeof best.id !== 'number') return;
 
       let details = await getTMDBDetails(best.id, tmdbType, 'zh-CN');

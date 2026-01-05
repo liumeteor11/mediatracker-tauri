@@ -150,7 +150,9 @@ export const SearchPage: React.FC = () => {
       }
 
       // 2. Fetch new data
-      const trending = await getTrendingMedia();
+      // Pass current results to exclude them if refreshing
+      const excludeItems = forceRefresh ? results : [];
+      const trending = await getTrendingMedia(excludeItems);
       if (!isOpActive(opId)) return;
       
       // 3. Save to local storage
@@ -371,10 +373,13 @@ export const SearchPage: React.FC = () => {
       } catch {}
     };
 
-    const applyUpdate = (id: string, patch: Partial<MediaItem>) => {
+    const applyUpdate = (id: string, expectedTitle: string, patch: Partial<MediaItem>) => {
       if (!isOpActive(effOpId)) return;
       const cur = mergedById.get(id);
       if (!cur) return;
+      // Double check title to prevent mismatch
+      if (cur.title !== expectedTitle) return;
+
       const next = { ...cur, ...patch } as MediaItem;
       mergedById.set(id, next);
       setResults(prev => {
@@ -398,7 +403,7 @@ export const SearchPage: React.FC = () => {
         try {
           const url = await fetchPosterFromSearch(item.title, year, item.type);
           if (!isOpActive(effOpId)) return;
-          if (url) applyUpdate(item.id, { posterUrl: url });
+          if (url) applyUpdate(item.id, item.title, { posterUrl: url });
         } catch {}
       }
     };
@@ -517,13 +522,13 @@ export const SearchPage: React.FC = () => {
           </div>
         </form>
 
-        <div className="flex flex-wrap justify-center gap-2 mt-6 max-w-2xl mx-auto">
+        <div className="flex flex-wrap md:flex-nowrap justify-center gap-2 mt-6 max-w-4xl mx-auto overflow-x-auto pb-2 no-scrollbar px-4">
           {filters.map((filter) => (
             <button
               key={filter.value}
               onClick={() => setSelectedType(filter.value as MediaType | 'All')}
               className={clsx(
-                "px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 border focus:outline-none focus:ring-2 focus:ring-theme-accent",
+                "px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 border focus:outline-none focus:ring-2 focus:ring-theme-accent whitespace-nowrap flex-shrink-0",
                 selectedType === filter.value
                   ? "bg-theme-accent text-theme-bg border-theme-accent border-2 shadow-lg"
                   : "bg-theme-surface text-theme-subtext border-theme-border hover:border-theme-accent/50 hover:text-theme-text"
@@ -615,7 +620,34 @@ export const SearchPage: React.FC = () => {
                 </button>
             </div>
             
-            <div className="p-4 flex-1 overflow-y-auto">
+            <div className="p-4 flex-1 overflow-y-auto space-y-4">
+                <div className="flex gap-2 flex-wrap">
+                    <span className="text-xs text-theme-subtext self-center">{t('search_page.insert_template')}:</span>
+                    <button
+                        onClick={() => {
+                            const d = new Date();
+                            d.setMonth(d.getMonth() - 3);
+                            const dateStr = d.toISOString().split('T')[0];
+                            const template = t('search_page.template_date_constraint', { date: dateStr });
+                            setTempPrompt(prev => `${prev} ${template}`.trim());
+                        }}
+                        className="px-2 py-1 text-xs rounded border border-theme-border bg-theme-bg hover:bg-theme-surface transition-colors text-theme-text"
+                    >
+                        + {t('search_page.template_recent_3_months')}
+                    </button>
+                    <button
+                        onClick={() => {
+                            const d = new Date();
+                            d.setFullYear(d.getFullYear() - 1);
+                            const dateStr = d.toISOString().split('T')[0];
+                            const template = t('search_page.template_date_constraint', { date: dateStr });
+                            setTempPrompt(prev => `${prev} ${template}`.trim());
+                        }}
+                        className="px-2 py-1 text-xs rounded border border-theme-border bg-theme-bg hover:bg-theme-surface transition-colors text-theme-text"
+                    >
+                        + {t('search_page.template_recent_year')}
+                    </button>
+                </div>
                 <textarea
                 value={tempPrompt}
                 onChange={(e) => setTempPrompt(e.target.value)}

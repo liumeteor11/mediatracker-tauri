@@ -2,30 +2,125 @@ import React, { useState, useEffect } from 'react';
 import { useCollectionStore } from '../store/useCollectionStore';
 import { MediaCard } from '../components/MediaCard';
 import { CollectionCategory, MediaItem } from '../types/types';
-import { Filter, Search as SearchIcon, X, Download, Upload, MoreHorizontal, RefreshCw, Plus } from 'lucide-react';
+import { Filter, Search as SearchIcon, X, Download, Upload, MoreHorizontal, RefreshCw, Plus, Check, ArrowLeft } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
 import { checkUpdates, repairMediaItem } from '../services/aiService';
 import { AddMediaModal } from '../components/AddMediaModal';
-
 import { save } from '@tauri-apps/plugin-dialog';
+
+import {
+  DndContext, 
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  rectSortingStrategy,
+  useSortable
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 // Helper to detect Tauri environment
 const isTauri = typeof window !== 'undefined' && (('__TAURI__' in window) || ('__TAURI_INTERNALS__' in window));
 
+interface SortableItemProps {
+    item: MediaItem;
+    index: number;
+    onClick: () => void;
+    onAction: (item: MediaItem, category: CollectionCategory) => void;
+    isSelectionMode?: boolean;
+    isSelected?: boolean;
+    onStartCollection?: () => void;
+}
+
+const SortableItem = ({ item, index, onClick, onAction, isSelectionMode, isSelected, onStartCollection }: SortableItemProps) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ id: item.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 50 : undefined,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners} className="h-full">
+      <MediaCard 
+        item={item} 
+        layoutId={item.id}
+        onClick={onClick}
+        onAction={onAction}
+        index={index}
+        variant="collection"
+        isSelectionMode={isSelectionMode}
+        isSelected={isSelected}
+        onStartCollection={onStartCollection}
+      />
+    </div>
+  );
+};
+
 export const CollectionPage: React.FC = () => {
   const { t } = useTranslation();
-  const { collection, moveCategory, importCollection, exportCollection, updateItem } = useCollectionStore();
+  const { collection, moveCategory, importCollection, exportCollection, updateItem, reorderCollection, createCollection } = useCollectionStore();
   const [filter, setFilter] = useState<CollectionCategory | 'All'>('All');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showMenu, setShowMenu] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  
+  // Collection & Selection State
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [collectionInitiatorId, setCollectionInitiatorId] = useState<string | null>(null);
+  const [viewingCollectionId, setViewingCollectionId] = useState<string | null>(null);
+
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const menuRef = React.useRef<HTMLDivElement>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // Require movement of 8px to start drag (prevents accidental drag on click)
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    
+    if (active.id !== over?.id) {
+      const oldIndex = collection.findIndex((item) => item.id === active.id);
+      const newIndex = collection.findIndex((item) => item.id === over?.id);
+      
+      if (oldIndex !== -1 && newIndex !== -1) {
+          const newOrder = arrayMove(collection, oldIndex, newIndex);
+          reorderCollection(newOrder);
+      }
+    }
+  };
+
+  const isDraggable = filter === 'All' && searchTerm === '';
 
   const handleRefresh = async () => {
       setIsRefreshing(true);
@@ -106,8 +201,14 @@ export const CollectionPage: React.FC = () => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setSelectedId(null);
-        setShowMenu(false);
+        if (selectionMode) {
+             handleCancelCollection();
+        } else if (viewingCollectionId) {
+             setViewingCollectionId(null);
+        } else {
+             setSelectedId(null);
+             setShowMenu(false);
+        }
       }
     };
     
@@ -123,13 +224,66 @@ export const CollectionPage: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, []);
+  }, [selectionMode, viewingCollectionId]);
 
-  const filteredCollection = collection.filter(item => {
-    const matchesCategory = filter === 'All' || item.category === filter;
-    const matchesSearch = item.title.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
+  const handleStartCollection = (initiatorId: string) => {
+      setSelectionMode(true);
+      setCollectionInitiatorId(initiatorId);
+      setSelectedIds([initiatorId]);
+  };
+
+  const handleToggleSelection = (id: string) => {
+      if (selectedIds.includes(id)) {
+          setSelectedIds(selectedIds.filter(i => i !== id));
+      } else {
+          setSelectedIds([...selectedIds, id]);
+      }
+  };
+
+  const handleConfirmCollection = () => {
+      if (!collectionInitiatorId) return;
+      
+      const initiator = collection.find(i => i.id === collectionInitiatorId);
+      if (!initiator) return;
+
+      const selected = collection.filter(i => selectedIds.includes(i.id) && i.id !== collectionInitiatorId);
+      
+      createCollection(initiator, selected);
+      toast.success(t('collection.created_success') || "Collection created!");
+      
+      setSelectionMode(false);
+      setCollectionInitiatorId(null);
+      setSelectedIds([]);
+  };
+
+  const handleCancelCollection = () => {
+      setSelectionMode(false);
+      setCollectionInitiatorId(null);
+      setSelectedIds([]);
+  };
+
+  const filteredCollection = React.useMemo(() => {
+    let base = collection;
+
+    // Hierarchy Filter
+    if (viewingCollectionId) {
+        base = base.filter(item => item.parentCollectionId === viewingCollectionId);
+    } else {
+        base = base.filter(item => !item.parentCollectionId);
+    }
+
+    if (filter !== 'All') {
+      base = base.filter((item) => item.category === filter);
+    }
+    
+    if (searchTerm) {
+        const lower = searchTerm.toLowerCase();
+        base = base.filter((item) => 
+            item.title.toLowerCase().includes(lower)
+        );
+    }
+    return base;
+  }, [collection, filter, searchTerm, viewingCollectionId]);
 
   const handleMove = (item: MediaItem, category: CollectionCategory) => {
     moveCategory(item.id, category);
@@ -221,99 +375,144 @@ export const CollectionPage: React.FC = () => {
   return (
     <div className="space-y-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
-        <div>
-            <h1 className="text-3xl font-bold text-theme-accent">{t('collection.title')}</h1>
-            <p className="mt-1 text-theme-subtext">{t('collection.subtitle')}</p>
-        </div>
-
-        <div className="flex flex-col sm:flex-row gap-4">
-             <div className="relative">
-                <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-theme-subtext" />
-                <input 
-                    type="text" 
-                    placeholder={t('collection.filter_placeholder')}
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-9 pr-4 py-2 rounded-lg border focus:ring-2 outline-none w-full sm:w-64 transition-all bg-theme-surface border-theme-border text-theme-text focus:border-theme-accent focus:ring-theme-accent/20 placeholder-theme-subtext"
-                />
-            </div>
-            
-            <button
-                onClick={handleRefresh}
-                disabled={isRefreshing}
-                className={clsx(
-                    "p-2 rounded-lg border transition-colors flex items-center justify-center",
-                    isRefreshing
-                        ? "bg-theme-surface border-theme-border text-theme-subtext cursor-wait"
-                        : "bg-theme-surface border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent"
+        <div className="flex items-center gap-4">
+            {viewingCollectionId && (
+                <button 
+                    onClick={() => setViewingCollectionId(null)}
+                    className="p-2 rounded-full hover:bg-theme-bg transition-colors"
+                >
+                    <ArrowLeft className="w-6 h-6 text-theme-text" />
+                </button>
+            )}
+            <div>
+                {selectionMode ? (
+                     <>
+                        <h1 className="text-3xl font-bold text-theme-accent">{t('collection.selection_mode') || "Selection Mode"}</h1>
+                        <p className="mt-1 text-theme-subtext">{t('collection.selection_hint') || "Select items to add to collection"}</p>
+                     </>
+                ) : viewingCollectionId ? (
+                     <>
+                        <h1 className="text-3xl font-bold text-theme-accent">
+                            {collection.find(i => i.id === viewingCollectionId)?.title || t('collection.collection_view')}
+                        </h1>
+                        <p className="mt-1 text-theme-subtext">{t('collection.collection_view') || "Collection View"}</p>
+                     </>
+                ) : (
+                     <>
+                        <h1 className="text-3xl font-bold text-theme-accent">{t('collection.title')}</h1>
+                        <p className="mt-1 text-theme-subtext">{t('collection.subtitle')}</p>
+                     </>
                 )}
-                title={t('collection.refresh_tooltip') || "Refresh collection & Fix metadata"}
-            >
-                <RefreshCw className={clsx("w-5 h-5", isRefreshing && "animate-spin")} />
-            </button>
-
-            <button
-                onClick={() => setIsAddModalOpen(true)}
-                className="p-2 rounded-lg border bg-theme-surface border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent transition-colors flex items-center justify-center"
-                title={t('collection.add_manual_tooltip') || "Add Manually"}
-            >
-                <Plus className="w-5 h-5" />
-            </button>
-
-            <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0 no-scrollbar">
-                {(['All', ...Object.values(CollectionCategory)] as const).map((cat) => (
-                    <button
-                        key={cat}
-                        onClick={() => setFilter(cat)}
-                        className={clsx(
-                          "px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-colors",
-                          filter === cat 
-                            ? "bg-theme-accent text-theme-bg"
-                            : "bg-theme-surface border border-theme-border text-theme-text hover:bg-theme-bg"
-                        )}
-                    >
-                        {getCategoryLabel(cat)}
-                    </button>
-                ))}
-            </div>
-            
-            <div className="flex gap-2 items-center border-l border-theme-border pl-4 relative" ref={menuRef}>
-               <button
-                 onClick={() => setShowMenu(!showMenu)}
-                 className="p-2 rounded-lg bg-theme-surface border border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent transition-colors"
-                 title={t('collection.import_export_tooltip')}
-               >
-                 <MoreHorizontal className="w-5 h-5" />
-               </button>
-
-               {showMenu && (
-                 <div className="absolute right-0 top-full mt-2 w-48 bg-theme-surface border border-theme-border rounded-lg shadow-lg z-50 overflow-hidden">
-                   <button
-                     onClick={handleExport}
-                     className="w-full text-left px-4 py-2 hover:bg-theme-bg transition-colors flex items-center gap-2 text-theme-text"
-                   >
-                     <Download className="w-4 h-4" />
-                     {t('collection.export_tooltip')}
-                   </button>
-                   <button
-                     onClick={() => fileInputRef.current?.click()}
-                     className="w-full text-left px-4 py-2 hover:bg-theme-bg transition-colors flex items-center gap-2 text-theme-text"
-                   >
-                     <Upload className="w-4 h-4" />
-                     {t('collection.import_tooltip')}
-                   </button>
-                 </div>
-               )}
-
-               <input
-                 type="file"
-                 ref={fileInputRef}
-                 onChange={handleImport}
-                 accept=".json"
-                 className="hidden"
-               />
             </div>
         </div>
+
+        {selectionMode ? (
+            <div className="flex items-center gap-4">
+                <button
+                    onClick={handleCancelCollection}
+                    className="px-6 py-2 rounded-lg border border-theme-border text-theme-subtext hover:text-theme-text hover:bg-theme-bg transition-colors flex items-center gap-2"
+                >
+                    <X className="w-5 h-5" />
+                    {t('common.cancel')}
+                </button>
+                <button
+                    onClick={handleConfirmCollection}
+                    className="px-6 py-2 rounded-lg bg-theme-accent text-theme-bg font-bold hover:bg-theme-accent-hover transition-colors flex items-center gap-2 shadow-lg shadow-theme-accent/20"
+                >
+                    <Check className="w-5 h-5" />
+                    {t('common.confirm')}
+                </button>
+            </div>
+        ) : (
+            <div className="flex flex-col sm:flex-row gap-4">
+                 <div className="relative">
+                    <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-theme-subtext" />
+                    <input 
+                        type="text" 
+                        placeholder={t('collection.filter_placeholder')}
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="pl-9 pr-4 py-2 rounded-lg border focus:ring-2 outline-none w-full sm:w-64 transition-all bg-theme-surface border-theme-border text-theme-text focus:border-theme-accent focus:ring-theme-accent/20 placeholder-theme-subtext"
+                    />
+                </div>
+                
+                <button
+                    onClick={handleRefresh}
+                    disabled={isRefreshing}
+                    className={clsx(
+                        "p-2 rounded-lg border transition-colors flex items-center justify-center",
+                        isRefreshing
+                            ? "bg-theme-surface border-theme-border text-theme-subtext cursor-wait"
+                            : "bg-theme-surface border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent"
+                    )}
+                    title={t('collection.refresh_tooltip') || "Refresh collection & Fix metadata"}
+                >
+                    <RefreshCw className={clsx("w-5 h-5", isRefreshing && "animate-spin")} />
+                </button>
+
+                <button
+                    onClick={() => setIsAddModalOpen(true)}
+                    className="p-2 rounded-lg border bg-theme-surface border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent transition-colors flex items-center justify-center"
+                    title={t('collection.add_manual_tooltip') || "Add Manually"}
+                >
+                    <Plus className="w-5 h-5" />
+                </button>
+
+                <div className="flex gap-2 overflow-x-auto pb-2 sm:pb-0 no-scrollbar">
+                    {(['All', ...Object.values(CollectionCategory)] as const).map((cat) => (
+                        <button
+                            key={cat}
+                            onClick={() => setFilter(cat)}
+                            className={clsx(
+                              "px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-colors",
+                              filter === cat 
+                                ? "bg-theme-accent text-theme-bg"
+                                : "bg-theme-surface border border-theme-border text-theme-text hover:bg-theme-bg"
+                            )}
+                        >
+                            {getCategoryLabel(cat)}
+                        </button>
+                    ))}
+                </div>
+                
+                <div className="flex gap-2 items-center border-l border-theme-border pl-4 relative" ref={menuRef}>
+                   <button
+                     onClick={() => setShowMenu(!showMenu)}
+                     className="p-2 rounded-lg bg-theme-surface border border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent transition-colors"
+                     title={t('collection.import_export_tooltip')}
+                   >
+                     <MoreHorizontal className="w-5 h-5" />
+                   </button>
+
+                   {showMenu && (
+                     <div className="absolute right-0 top-full mt-2 w-48 bg-theme-surface border border-theme-border rounded-lg shadow-lg z-50 overflow-hidden">
+                       <button
+                         onClick={handleExport}
+                         className="w-full text-left px-4 py-2 hover:bg-theme-bg transition-colors flex items-center gap-2 text-theme-text"
+                       >
+                         <Download className="w-4 h-4" />
+                         {t('collection.export_tooltip')}
+                       </button>
+                       <button
+                         onClick={() => fileInputRef.current?.click()}
+                         className="w-full text-left px-4 py-2 hover:bg-theme-bg transition-colors flex items-center gap-2 text-theme-text"
+                       >
+                         <Upload className="w-4 h-4" />
+                         {t('collection.import_tooltip')}
+                       </button>
+                     </div>
+                   )}
+
+                   <input
+                     type="file"
+                     ref={fileInputRef}
+                     onChange={handleImport}
+                     accept=".json"
+                     className="hidden"
+                   />
+                </div>
+            </div>
+        )}
       </div>
 
       {collection.length === 0 ? (
@@ -323,21 +522,68 @@ export const CollectionPage: React.FC = () => {
             <p className="mb-6 text-theme-subtext">{t('collection.empty_text')}</p>
         </div>
       ) : (
-        <motion.div layout className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-5 gap-y-8 gap-x-6">
-            <AnimatePresence>
-                {filteredCollection.map((item, index) => (
-                    <MediaCard 
-                        key={item.id} 
-                        item={item} 
-                        layoutId={item.id}
-                        onClick={() => setSelectedId(item.id)}
-                        onAction={handleMove}
-                        index={index}
-                        variant="collection"
-                    />
-                ))}
-            </AnimatePresence>
-        </motion.div>
+        isDraggable ? (
+          <DndContext 
+            sensors={sensors} 
+            collisionDetection={closestCenter} 
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext 
+              items={collection.map(i => i.id)}
+              strategy={rectSortingStrategy}
+            >
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-5 gap-y-8 gap-x-6">
+                    {filteredCollection.map((item, index) => (
+                        <SortableItem 
+                            key={item.id} 
+                            item={item} 
+                            onClick={() => {
+                                if (selectionMode) {
+                                    handleToggleSelection(item.id);
+                                } else if (item.isCollection) {
+                                    setViewingCollectionId(item.id);
+                                } else {
+                                    setSelectedId(item.id);
+                                }
+                            }}
+                            onAction={handleMove}
+                            index={index}
+                            isSelectionMode={selectionMode}
+                            isSelected={selectedIds.includes(item.id)}
+                            onStartCollection={() => handleStartCollection(item.id)}
+                        />
+                    ))}
+                </div>
+            </SortableContext>
+          </DndContext>
+        ) : (
+            <motion.div layout className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-5 gap-y-8 gap-x-6">
+                <AnimatePresence>
+                    {filteredCollection.map((item, index) => (
+                        <MediaCard 
+                            key={item.id} 
+                            item={item} 
+                            layoutId={item.id}
+                            onClick={() => {
+                                if (selectionMode) {
+                                    handleToggleSelection(item.id);
+                                } else if (item.isCollection) {
+                                    setViewingCollectionId(item.id);
+                                } else {
+                                    setSelectedId(item.id);
+                                }
+                            }}
+                            onAction={handleMove}
+                            index={index}
+                            variant="collection"
+                            isSelectionMode={selectionMode}
+                            isSelected={selectedIds.includes(item.id)}
+                            onStartCollection={() => handleStartCollection(item.id)}
+                        />
+                    ))}
+                </AnimatePresence>
+            </motion.div>
+        )
       )}
 
       {filteredCollection.length === 0 && collection.length > 0 && (

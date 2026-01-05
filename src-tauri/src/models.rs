@@ -56,6 +56,8 @@ pub struct MediaItem {
     pub status: Option<String>, // 'To Watch' etc, seems redundant with category but present in some parts
     pub added_at: Option<String>,
     pub user_rating: Option<f32>,
+    pub parent_collection_id: Option<String>,
+    pub is_collection: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

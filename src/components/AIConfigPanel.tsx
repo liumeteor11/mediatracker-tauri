@@ -12,29 +12,35 @@ import { PluginManagerModal } from './PluginManagerModal';
 
 const PROVIDER_MODELS: Record<string, { name: string; version: string; releaseDate: string }[]> = {
     moonshot: [
-      { name: 'moonshot-v1-8k', version: 'V1 8k', releaseDate: '2024-03' },
-      { name: 'moonshot-v1-32k', version: 'V1 32k', releaseDate: '2024-03' },
-      { name: 'moonshot-v1-128k', version: 'V1 128k', releaseDate: '2024-03' }
+      { name: 'kimi-latest', version: 'Kimi Latest', releaseDate: 'rolling' },
+      { name: 'kimi-k2-thinking-preview', version: 'Kimi K2 Thinking (Preview)', releaseDate: '2025-11' },
+      { name: 'moonshot-v1-128k', version: 'Moonshot V1 128k', releaseDate: '2024-03' }
     ],
     openai: [
+      { name: 'o3', version: 'o3', releaseDate: '2025-06' },
+      { name: 'o4-mini', version: 'o4-mini', releaseDate: '2025-06' },
       { name: 'gpt-4o', version: 'GPT-4o', releaseDate: '2024-05' },
-      { name: 'gpt-5', version: 'GPT-5 (Preview)', releaseDate: '2025-12' },
-      { name: 'gpt-4-turbo', version: 'GPT-4 Turbo', releaseDate: '2024-04' }
+      { name: 'gpt-4o-mini', version: 'GPT-4o mini', releaseDate: '2024-07' },
+      { name: 'gpt-4.1', version: 'GPT-4.1', releaseDate: '2025' }
     ],
     deepseek: [
-      { name: 'deepseek-chat', version: 'DeepSeek V3', releaseDate: '2025-09' },
-      { name: 'deepseek-reasoner', version: 'DeepSeek Reasoner (R1)', releaseDate: '2025-01' }
+      { name: 'deepseek-chat', version: 'DeepSeek Chat (V3.2)', releaseDate: 'rolling' },
+      { name: 'deepseek-reasoner', version: 'DeepSeek Reasoner (V3.2)', releaseDate: 'rolling' }
     ],
     qwen: [
-      { name: 'qwen-max', version: 'Qwen Max', releaseDate: '2025-11' },
-      { name: 'qwen-plus', version: 'Qwen Plus', releaseDate: '2025-11' }
+      { name: 'qwen3-235b-a22b', version: 'Qwen3 235B', releaseDate: 'rolling' },
+      { name: 'qwen-max-latest', version: 'Qwen Max (Latest)', releaseDate: 'rolling' },
+      { name: 'qwen-plus-latest', version: 'Qwen Plus (Latest)', releaseDate: 'rolling' },
+      { name: 'qwq-32b', version: 'QwQ 32B', releaseDate: 'rolling' }
     ],
     google: [
-      { name: 'gemini-2.5-flash', version: 'Gemini 2.5 Flash', releaseDate: '2025-12' },
-      { name: 'gemini-1.5-pro', version: 'Gemini 1.5 Pro', releaseDate: '2024-04' }
+      { name: 'gemini-2.5-pro', version: 'Gemini 2.5 Pro', releaseDate: 'rolling' },
+      { name: 'gemini-2.5-flash', version: 'Gemini 2.5 Flash', releaseDate: 'rolling' },
+      { name: 'gemini-2.0-flash', version: 'Gemini 2.0 Flash', releaseDate: 'rolling' }
     ],
     mistral: [
-      { name: 'mistral-large-latest', version: 'Large 3', releaseDate: '2025-11' }
+      { name: 'mistral-large-latest', version: 'Mistral Large (Latest)', releaseDate: 'rolling' },
+      { name: 'mistral-small-latest', version: 'Mistral Small (Latest)', releaseDate: 'rolling' }
     ]
   };
 

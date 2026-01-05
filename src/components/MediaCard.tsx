@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Star, Clock, Calendar, Heart, Check, Bookmark, MoreVertical, Info, Bell, BellOff, RefreshCw, Edit, Trash2, User, Users, Plus, Minus, ChevronsUp, Share2 } from 'lucide-react';
+import { Star, Clock, Calendar, Heart, Check, Bookmark, MoreVertical, Info, Bell, BellOff, RefreshCw, Edit, Trash2, User, Users, Plus, Minus, ChevronsUp, Tags, Layers, FolderPlus } from 'lucide-react';
 import { MediaItem, CollectionCategory, MediaType } from '../types/types';
 import clsx from 'clsx';
 import { useThemeStore } from '../store/useThemeStore';
 import { useCollectionStore } from '../store/useCollectionStore';
 import { EditMediaModal } from './EditMediaModal';
-import { ShareCardModal } from './ShareCardModal';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import { toast } from 'react-toastify';
@@ -45,6 +44,9 @@ interface MediaCardProps {
   onClick?: () => void;
   className?: string;
   variant?: 'search' | 'collection';
+  isSelectionMode?: boolean;
+  isSelected?: boolean;
+  onStartCollection?: () => void;
 }
 
 export const MediaCard: React.FC<MediaCardProps> = ({ 
@@ -55,14 +57,16 @@ export const MediaCard: React.FC<MediaCardProps> = ({
   layoutId, 
   onClick, 
   className,
-  variant = 'search' 
+  variant = 'search',
+  isSelectionMode,
+  isSelected,
+  onStartCollection
 }) => {
   const [isFlipped, setIsFlipped] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const { t } = useTranslation();
   const [imgLoading, setImgLoading] = useState(true);
   const [imgFailed, setImgFailed] = useState(false);
@@ -77,7 +81,31 @@ export const MediaCard: React.FC<MediaCardProps> = ({
   }, []);
   
   const { theme } = useThemeStore();
-  const { updateItem, removeFromCollection } = useCollectionStore();
+  const { updateItem, removeFromCollection, moveCategory } = useCollectionStore();
+
+  const getCategoryLabel = (cat: CollectionCategory) => {
+    switch (cat) {
+      case CollectionCategory.TO_WATCH:
+        return t('dashboard.to_watch');
+      case CollectionCategory.WATCHED:
+        return t('dashboard.status_watched');
+      case CollectionCategory.FAVORITES:
+        return t('dashboard.status_favorites');
+      default:
+        return String(cat);
+    }
+  };
+
+  const getNextCategory = (cat?: CollectionCategory) => {
+    const order: CollectionCategory[] = [
+      CollectionCategory.TO_WATCH,
+      CollectionCategory.WATCHED,
+      CollectionCategory.FAVORITES
+    ];
+    const current = cat && order.includes(cat) ? cat : CollectionCategory.TO_WATCH;
+    const idx = order.indexOf(current);
+    return order[(idx + 1) % order.length];
+  };
 
   const normalizeImgSrc = (value?: string): string | undefined => {
     let s = String(value ?? '').trim();
@@ -241,6 +269,28 @@ export const MediaCard: React.FC<MediaCardProps> = ({
           {/* Front Side */}
           <div className="absolute inset-0 backface-hidden rounded-theme overflow-hidden border-2 border-theme-border bg-theme-surface">
             <div className="relative h-full w-full">
+              {/* Collection Indicator */}
+              {item.isCollection && (
+                  <div className="absolute top-2 left-2 z-20 bg-black/60 backdrop-blur-md p-1.5 rounded-md text-white border border-white/10 shadow-lg">
+                      <Layers className="w-4 h-4" />
+                  </div>
+              )}
+
+              {/* Selection Overlay */}
+              {isSelectionMode && (
+                  <div className={clsx(
+                      "absolute inset-0 z-30 flex items-center justify-center transition-all duration-200",
+                      isSelected ? "bg-theme-accent/20 backdrop-blur-[2px]" : "bg-black/40 hover:bg-black/20"
+                  )}>
+                       <div className={clsx(
+                           "w-12 h-12 rounded-full border-2 flex items-center justify-center transition-all duration-200 shadow-xl",
+                           isSelected ? "bg-theme-accent border-theme-accent scale-110" : "border-white/50 bg-black/20 scale-100 hover:scale-105"
+                       )}>
+                           {isSelected && <Check className="w-6 h-6 text-white" />}
+                       </div>
+                  </div>
+              )}
+
               {/* Mobile Flip Button */}
               {isMobile && (
                  <div className="absolute top-3 left-3 z-20">
@@ -258,11 +308,16 @@ export const MediaCard: React.FC<MediaCardProps> = ({
               )}
               
               <img
+                key={imgSrc}
                 src={imgSrc}
                 alt={item.title}
                 onError={handleImageError}
                 onLoad={() => setImgLoading(false)}
-                className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                className={clsx(
+                  "w-full h-full object-cover transition-transform duration-700 group-hover:scale-110",
+                  imgLoading ? "opacity-0" : "opacity-100",
+                  isFlipped ? "scale-x-[-1]" : ""
+                )}
                 loading="lazy"
                 referrerPolicy="no-referrer"
               />
@@ -383,6 +438,22 @@ export const MediaCard: React.FC<MediaCardProps> = ({
                 </button>
               )}
 
+              {/* Create Collection Button */}
+              {variant === 'collection' && !item.isCollection && !isSelectionMode && onStartCollection && (
+                <div className="flex justify-end mb-3">
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onStartCollection();
+                        }}
+                        className="p-2 rounded-lg bg-theme-bg border border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent transition-colors"
+                        title={t('collection.create_collection') || "Create Collection"}
+                    >
+                        <FolderPlus className="w-4 h-4" />
+                    </button>
+                </div>
+              )}
+
               {/* User Review Snippet (Collection Mode) */}
               {variant === 'collection' && item.userReview && (
                 <div className="mb-3 p-2 rounded border bg-theme-bg border-theme-border text-theme-subtext overflow-hidden max-h-24 prose prose-sm max-w-none prose-p:text-xs prose-p:text-theme-subtext prose-p:m-0 prose-p:leading-relaxed prose-headings:text-xs prose-headings:text-theme-subtext prose-headings:m-0 prose-ul:m-0 prose-li:m-0 prose-li:text-theme-subtext">
@@ -486,12 +557,18 @@ export const MediaCard: React.FC<MediaCardProps> = ({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setIsShareModalOpen(true);
+                    const next = getNextCategory(item.category);
+                    if (onAction) {
+                      onAction(item, next);
+                    } else {
+                      moveCategory(item.id, next);
+                      toast.success(t('collection.moved_toast', { title: item.title, category: getCategoryLabel(next) }));
+                    }
                   }}
                   className="flex items-center justify-center px-3 py-2 rounded-lg font-medium transition-colors bg-theme-bg text-theme-text hover:bg-theme-bg-hover border-2 border-theme-border focus:outline-none focus:ring-2 focus:ring-theme-accent"
-                  title={t('media_card.share')}
+                  title={t('media_card.change_category')}
                 >
-                  <Share2 className="w-4 h-4" />
+                  {getCategoryIcon(item.category) ?? <Tags className="w-4 h-4" />}
                 </button>
                 <button
                   type="button"
@@ -547,14 +624,6 @@ export const MediaCard: React.FC<MediaCardProps> = ({
           item={item} 
           onClose={() => setIsEditModalOpen(false)} 
           onDelete={() => removeFromCollection(item.id)}
-        />
-      )}
-
-      {/* Share Modal */}
-      {isShareModalOpen && (
-        <ShareCardModal 
-          item={item} 
-          onClose={() => setIsShareModalOpen(false)} 
         />
       )}
 
