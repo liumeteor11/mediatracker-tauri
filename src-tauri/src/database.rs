@@ -99,6 +99,46 @@ impl Database {
         drop(data);
         self.save()
     }
+
+    pub fn get_full_data(&self) -> Result<CollectionData, String> {
+        let data = self.cache.lock().map_err(|e| e.to_string())?;
+        Ok(data.clone())
+    }
+
+    pub fn merge_full_data(&self, incoming: CollectionData) -> Result<(), String> {
+        let mut data = self.cache.lock().map_err(|e| e.to_string())?;
+        
+        // Merge Users
+        for user in incoming.users {
+            if !data.users.iter().any(|u| u.username == user.username) {
+                data.users.push(user);
+            }
+        }
+
+        // Merge Items per User
+        for (username, incoming_items) in incoming.items_by_user {
+            let local_items = data.items_by_user.entry(username).or_default();
+            
+            for item in incoming_items {
+                if let Some(existing_idx) = local_items.iter().position(|i| i.id == item.id) {
+                    // Update if incoming is newer (naive check: always update or check timestamps if available)
+                    // Assuming last_edited_at exists
+                    let existing = &local_items[existing_idx];
+                    let incoming_ts = item.last_edited_at.unwrap_or(0);
+                    let existing_ts = existing.last_edited_at.unwrap_or(0);
+                    
+                    if incoming_ts > existing_ts {
+                        local_items[existing_idx] = item;
+                    }
+                } else {
+                    local_items.push(item);
+                }
+            }
+        }
+
+        drop(data);
+        self.save()
+    }
     
     #[allow(dead_code)]
     pub fn update_item(&self, _item: MediaItem) -> Result<(), String> {

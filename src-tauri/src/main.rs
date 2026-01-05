@@ -2,10 +2,13 @@
 
 mod models;
 mod database;
+mod sync;
 #[cfg(test)]
 mod tests;
 
 use tauri::{command, State, Manager};
+use std::sync::Arc;
+use crate::models::CollectionData;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use reqwest::Client;
@@ -1112,27 +1115,27 @@ async fn test_proxy(config: ProxyTestConfig, state: State<'_, AppState>) -> Resu
 // --- Database Commands ---
 
 #[command]
-fn get_collection(username: String, db: State<Database>) -> Result<Vec<MediaItem>, String> {
+fn get_collection(username: String, db: State<Arc<Database>>) -> Result<Vec<MediaItem>, String> {
     db.get_all_for_user(&username)
 }
 
 #[command]
-fn save_item(username: String, item: MediaItem, db: State<Database>) -> Result<(), String> {
+fn save_item(username: String, item: MediaItem, db: State<Arc<Database>>) -> Result<(), String> {
     db.add_item_for_user(&username, item)
 }
 
 #[command]
-fn remove_item(username: String, id: String, db: State<Database>) -> Result<(), String> {
+fn remove_item(username: String, id: String, db: State<Arc<Database>>) -> Result<(), String> {
     db.remove_item_for_user(&username, &id)
 }
 
 #[command]
-fn import_collection(username: String, items: Vec<MediaItem>, db: State<Database>) -> Result<(), String> {
+fn import_collection(username: String, items: Vec<MediaItem>, db: State<Arc<Database>>) -> Result<(), String> {
     db.import_for_user(&username, items)
 }
 
 #[command]
-fn reorder_collection(username: String, ids: Vec<String>, db: State<Database>) -> Result<(), String> {
+fn reorder_collection(username: String, ids: Vec<String>, db: State<Arc<Database>>) -> Result<(), String> {
     db.reorder_items_for_user(&username, ids)
 }
 
@@ -1142,7 +1145,7 @@ fn export_collection(
     username: String,
     target_path: Option<String>,
     redact_sensitive: Option<bool>,
-    db: State<Database>,
+    db: State<Arc<Database>>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     let items = db.get_all_for_user(&username)?;
@@ -1236,9 +1239,12 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let db = Database::new(app.handle());
-            app.manage(db);
+            let db = Arc::new(Database::new(app.handle()));
+            app.manage(db.clone());
             
+            let sync_service = sync::SyncService::new();
+            app.manage(sync_service);
+
             // 1. Proxy Client (System Proxy Enabled) - For Google, Serper, etc.
             let proxy_client = Client::builder()
                 .tcp_nodelay(true)
@@ -1288,14 +1294,17 @@ fn main() {
             reorder_collection,
             export_collection,
             register_user,
-            login_user
+            login_user,
+            start_sync_server,
+            get_peers,
+            sync_with_peer
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
 #[command]
-fn register_user(username: String, password: String, db: State<Database>) -> Result<UserPublic, String> {
+fn register_user(username: String, password: String, db: State<Arc<Database>>) -> Result<UserPublic, String> {
     let u = username.trim();
     if u.len() < 3 { return Err("Username too short".to_string()); }
     if password.len() < 6 { return Err("Password too short".to_string()); }
@@ -1321,7 +1330,7 @@ fn register_user(username: String, password: String, db: State<Database>) -> Res
 }
 
 #[command]
-fn login_user(username: String, password: String, db: State<Database>) -> Result<UserPublic, String> {
+fn login_user(username: String, password: String, db: State<Arc<Database>>) -> Result<UserPublic, String> {
     let u = username.trim();
     let record = db.find_user(u).ok_or_else(|| "INVALID_CREDENTIALS".to_string())?;
 
@@ -1332,6 +1341,38 @@ fn login_user(username: String, password: String, db: State<Database>) -> Result
         Err(_) => Err("INVALID_CREDENTIALS".to_string()),
     }
 }
+
+// --- Sync Commands ---
+
+#[command]
+async fn start_sync_server(sync: State<'_, sync::SyncService>, db: State<'_, Arc<Database>>) -> Result<(), String> {
+    let db = db.inner().clone(); 
+    let sync = sync.inner().clone();
+    tokio::spawn(async move {
+        sync.start_server(db).await;
+    });
+    Ok(())
+}
+
+#[command]
+fn get_peers(sync: State<'_, sync::SyncService>) -> Result<Vec<sync::PeerInfo>, String> {
+    Ok(sync.get_known_peers())
+}
+
+#[command]
+async fn sync_with_peer(peer_ip: String, peer_port: u16, db: State<'_, Arc<Database>>) -> Result<(), String> {
+    let url = format!("http://{}:{}/sync/data", peer_ip, peer_port);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+        
+    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    let data: CollectionData = resp.json().await.map_err(|e| e.to_string())?;
+    db.merge_full_data(data)?;
+    Ok(())
+}
+
 // Password hashing (Argon2)
 use argon2::{Argon2, PasswordHasher};
 use argon2::password_hash::{PasswordHash, PasswordVerifier, SaltString};

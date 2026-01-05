@@ -1,0 +1,115 @@
+import React, { useEffect, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+
+interface PeerInfo {
+    name: string;
+    ip: string;
+    port: number;
+    last_seen: number;
+}
+
+interface SyncModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+}
+
+export const SyncModal: React.FC<SyncModalProps> = ({ isOpen, onClose }) => {
+    const [peers, setPeers] = useState<PeerInfo[]>([]);
+    const [status, setStatus] = useState<string>('Idle');
+    const [isSyncing, setIsSyncing] = useState(false);
+
+    useEffect(() => {
+        if (isOpen) {
+            startServer();
+            const interval = setInterval(fetchPeers, 3000);
+            return () => clearInterval(interval);
+        }
+    }, [isOpen]);
+
+    const startServer = async () => {
+        try {
+            setStatus('Starting Sync Service...');
+            await invoke('start_sync_server');
+            setStatus('Scanning for devices...');
+        } catch (e) {
+            setStatus('Error starting service: ' + String(e));
+        }
+    };
+
+    const fetchPeers = async () => {
+        try {
+            const res = await invoke<PeerInfo[]>('get_peers');
+            // Deduplicate by IP
+            const unique = res.filter((v, i, a) => a.findIndex(t => t.ip === v.ip) === i);
+            setPeers(unique);
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    const handleSync = async (peer: PeerInfo) => {
+        setIsSyncing(true);
+        setStatus(`Syncing with ${peer.name}...`);
+        try {
+            await invoke('sync_with_peer', { peerIp: peer.ip, peerPort: peer.port });
+            setStatus('Sync Completed!');
+            setTimeout(() => {
+                window.location.reload(); 
+            }, 1000);
+        } catch (e) {
+            setStatus('Sync Failed: ' + String(e));
+        } finally {
+            setIsSyncing(false);
+        }
+    };
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 backdrop-blur-sm">
+            <div className="bg-white dark:bg-gray-800 p-6 rounded-lg w-96 shadow-2xl border dark:border-gray-700">
+                <h2 className="text-xl font-bold mb-4 dark:text-white flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Device Sync
+                </h2>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">{status}</p>
+                
+                <div className="min-h-[200px] max-h-[300px] overflow-y-auto border rounded p-2 mb-4 bg-gray-50 dark:bg-gray-900 dark:border-gray-700">
+                    {peers.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400 mb-2"></div>
+                            <span className="text-xs">Looking for devices on LAN...</span>
+                        </div>
+                    ) : (
+                        peers.map((peer) => (
+                            <div key={peer.ip} className="flex justify-between items-center p-3 mb-2 bg-white dark:bg-gray-800 shadow-sm rounded border border-gray-100 dark:border-gray-700 hover:border-blue-500 transition-colors">
+                                <div>
+                                    <div className="font-semibold dark:text-white text-sm">{peer.name}</div>
+                                    <div className="text-xs text-gray-500">{peer.ip}</div>
+                                </div>
+                                <button 
+                                    onClick={() => handleSync(peer)}
+                                    disabled={isSyncing}
+                                    className="bg-blue-600 text-white px-3 py-1.5 rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                                >
+                                    {isSyncing ? 'Syncing...' : 'Sync'}
+                                </button>
+                            </div>
+                        ))
+                    )}
+                </div>
+
+                <div className="flex justify-end">
+                    <button 
+                        onClick={onClose} 
+                        className="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                    >
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
