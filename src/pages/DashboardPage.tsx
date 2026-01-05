@@ -3,11 +3,12 @@ import { useCollectionStore } from '../store/useCollectionStore';
 import { useThemeStore } from '../store/useThemeStore';
 import { AIConfigPanel } from '../components/AIConfigPanel';
 import { ImportMediaModal } from '../components/ImportMediaModal';
+import { SyncModal } from '../components/SyncModal';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { CollectionCategory, MediaType, MediaItem } from '../types/types';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
-import { Bell, Upload, Activity, ChevronDown, ChevronUp, BarChart2, X } from 'lucide-react';
+import { Bell, Upload, Activity, ChevronDown, ChevronUp, BarChart2, X, Wifi } from 'lucide-react';
 import { useAIStore } from '../store/useAIStore';
 import { toast } from 'react-toastify';
 import { testAuthoritativeDomain } from '../services/aiService';
@@ -172,6 +173,7 @@ export const DashboardPage: React.FC = () => {
   const { t } = useTranslation();
   const stats = getStats();
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isSyncOpen, setIsSyncOpen] = useState(false);
   const lastSearchDurationMs = useAIStore(s => s.lastSearchDurationMs);
   const lastSearchAt = useAIStore(s => s.lastSearchAt);
   const lastSearchQuery = useAIStore(s => s.lastSearchQuery);
@@ -241,6 +243,14 @@ export const DashboardPage: React.FC = () => {
     <div className="space-y-8">
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold text-theme-accent">{t('dashboard.title')}</h1>
+        <button
+          onClick={() => setIsSyncOpen(true)}
+          className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50 focus:outline-none focus:ring-2 focus:ring-theme-accent"
+          title="Sync Devices"
+        >
+          <Wifi className="w-4 h-4" />
+          <span className="hidden sm:inline">Sync</span>
+        </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -521,6 +531,7 @@ export const DashboardPage: React.FC = () => {
         </div>
       </div>
       {isImportModalOpen && <ImportMediaModal onClose={() => setIsImportModalOpen(false)} />}
+      <SyncModal isOpen={isSyncOpen} onClose={() => setIsSyncOpen(false)} />
     </div>
   );
 };

@@ -161,6 +161,7 @@
   },
   "dashboard": {
     "title": "仪表盘",
+    "sync": "同步设备",
     "total_collection": "总收藏",
     "completed": "看过",
     "to_watch": "待看",

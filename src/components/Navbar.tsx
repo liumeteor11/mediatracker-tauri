@@ -1,11 +1,10 @@
 import React, { useRef, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Search, Library, User, Menu, X, LogIn, Palette, ChevronDown, Globe, Calendar, Wifi } from 'lucide-react';
+import { Search, Library, User, Menu, X, LogIn, Palette, ChevronDown, Globe, Calendar } from 'lucide-react';
 import { useAuthStore } from '../store/useAuthStore';
 import { useThemeStore, Theme } from '../store/useThemeStore';
 import { useTranslation } from 'react-i18next';
 import { getAIDate } from '../services/aiService';
-import { SyncModal } from './SyncModal';
 import clsx from 'clsx';
 
 export const Navbar: React.FC = () => {
@@ -14,7 +13,6 @@ export const Navbar: React.FC = () => {
   const [isOpen, setIsOpen] = React.useState(false);
   const [isThemeOpen, setIsThemeOpen] = React.useState(false);
   const [isLangOpen, setIsLangOpen] = React.useState(false);
-  const [isSyncOpen, setIsSyncOpen] = React.useState(false);
   const themeDropdownRef = useRef<HTMLDivElement>(null);
   const langDropdownRef = useRef<HTMLDivElement>(null);
   const { user, logout } = useAuthStore();
@@ -106,16 +104,6 @@ export const Navbar: React.FC = () => {
               ))}
 
               
-
-              {/* Sync Button */}
-              <button
-                onClick={() => setIsSyncOpen(true)}
-                className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50 focus:outline-none focus:ring-2 focus:ring-theme-accent"
-                title="Sync Devices"
-              >
-                <Wifi className="w-4 h-4" />
-                <span className="hidden xl:inline">Sync</span>
-              </button>
 
               {/* Language Dropdown */}
               <div className="relative" ref={langDropdownRef}>
@@ -275,7 +263,6 @@ export const Navbar: React.FC = () => {
           </div>
         </div>
       )}
-      <SyncModal isOpen={isSyncOpen} onClose={() => setIsSyncOpen(false)} />
     </nav>
   );
 };

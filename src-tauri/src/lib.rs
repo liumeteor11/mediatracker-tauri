@@ -1341,11 +1341,9 @@ pub fn run() {
             
             app.manage(AppState { proxy_client, direct_client, search_cache: RwLock::new(HashMap::new()) });
             
-            #[cfg(desktop)]
-            if std::env::var("TAURI_OPEN_DEVTOOLS").unwrap_or_default() == "true" {
-                if let Some(w) = app.get_webview_window("main") {
-                    w.open_devtools();
-                }
+            #[cfg(debug_assertions)]
+            if let Some(w) = app.get_webview_window("main") {
+                w.open_devtools();
             }
 
             Ok(())

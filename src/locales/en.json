@@ -157,6 +157,7 @@
   },
   "dashboard": {
     "title": "Dashboard",
+    "sync": "Sync Devices",
     "total_collection": "Total Collection",
     "completed": "Watched",
     "to_watch": "To Watch",
