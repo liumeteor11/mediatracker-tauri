@@ -243,14 +243,27 @@ export const DashboardPage: React.FC = () => {
     <div className="space-y-8">
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold text-theme-accent">{t('dashboard.title')}</h1>
-        <button
-          onClick={() => setIsSyncOpen(true)}
-          className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50 focus:outline-none focus:ring-2 focus:ring-theme-accent"
-          title="Sync Devices"
-        >
-          <Wifi className="w-4 h-4" />
-          <span className="hidden sm:inline">Sync</span>
-        </button>
+        <div className="flex items-center gap-2">
+            <button
+               onClick={() => {
+                   clearSearchCache();
+                   toast.success(t('dashboard.cache_cleared'));
+               }}
+               className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50 focus:outline-none focus:ring-2 focus:ring-theme-accent"
+               title={t('dashboard.clear_cache')}
+             >
+               <Activity className="w-4 h-4" />
+               <span className="hidden sm:inline">{t('dashboard.clear_cache')}</span>
+             </button>
+            <button
+              onClick={() => setIsSyncOpen(true)}
+              className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50 focus:outline-none focus:ring-2 focus:ring-theme-accent"
+              title="Sync Devices"
+            >
+              <Wifi className="w-4 h-4" />
+              <span className="hidden sm:inline">Sync</span>
+            </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">

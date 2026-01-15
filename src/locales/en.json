@@ -210,7 +210,9 @@
     "add": "Add",
     "delete": "Delete",
     "test": "Test",
-    "no_domains": "No domains"
+    "no_domains": "No domains",
+    "clear_cache": "Clear Cache",
+    "cache_cleared": "Cache cleared"
   },
   "search_page": {
     "title": "Discover Your Next Obsession",

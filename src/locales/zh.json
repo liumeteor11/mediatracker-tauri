@@ -215,7 +215,9 @@
     "add": "添加",
     "delete": "删除",
     "test": "测试",
-    "no_domains": "暂无域名"
+    "no_domains": "暂无域名",
+    "clear_cache": "清除缓存",
+    "cache_cleared": "缓存已清除"
   },
   "search_page": {
     "title": "发现你的下一部必看作品",

@@ -591,14 +591,23 @@ export const performClientSideSearch = async (
                 const scoredResults = candidateStep.map((it: any) => {
                     const pr = processSearchResult(it.title || '', it.snippet || '');
                     let score = 0;
-                    // Exact title match bonus
-                    if (pr.title.toLowerCase().includes(base.toLowerCase())) score += 10;
-                    if (pr.title.toLowerCase() === base.toLowerCase()) score += 20;
-                    // Year presence bonus
-                    if (pr.year) score += 5;
-                    // Authoritative domain bonus (simple check)
-                    if (it.link && precisionDomains.some(d => it.link.includes(d.replace('site:', '')))) score += 15;
+                    const tLower = pr.title.toLowerCase();
+                    const qLower = base.toLowerCase();
                     
+                    // Exact title match bonus
+                    if (tLower === qLower) score += 50;
+                    else if (tLower.startsWith(qLower)) score += 30;
+                    else if (tLower.includes(qLower)) score += 15;
+                    
+                    // Year presence bonus
+                    if (pr.year) score += 10;
+                    
+                    // Authoritative domain bonus (simple check)
+                    if (it.link && precisionDomains.some(d => it.link.includes(d.replace('site:', '')))) score += 20;
+                    
+                    // Penalty for very short titles if query is long
+                    if (tLower.length < qLower.length && qLower.length > 5) score -= 10;
+
                     return { ...it, processed: pr, score };
                 });
                 
@@ -659,9 +668,15 @@ export const performClientSideSearch = async (
                  const scoredDDG = filteredDDG.map((it: any) => {
                     const pr = processSearchResult(it.title || '', it.snippet || '');
                     let score = 0;
-                    if (pr.title.toLowerCase().includes(base.toLowerCase())) score += 10;
-                    if (pr.title.toLowerCase() === base.toLowerCase()) score += 20;
-                    if (pr.year) score += 5;
+                    const tLower = pr.title.toLowerCase();
+                    const qLower = base.toLowerCase();
+
+                    if (tLower === qLower) score += 50;
+                    else if (tLower.startsWith(qLower)) score += 30;
+                    else if (tLower.includes(qLower)) score += 15;
+
+                    if (pr.year) score += 10;
+                    
                     return { ...it, processed: pr, score };
                 });
                 scoredDDG.sort((a: any, b: any) => b.score - a.score);
@@ -775,8 +790,22 @@ export const performClientSideSearch = async (
                 }
                 if (uniq.size >= 8) break;
             }
-            const out = Array.from(uniq.values()).slice(0, 8);
-            if (out.length > 0) return JSON.stringify(out);
+            const outArray = Array.from(uniq.values());
+            const scoredOut = outArray.map((it: any) => {
+                const pr = processSearchResult(it.title || '', it.snippet || '');
+                let score = 0;
+                const tLower = pr.title.toLowerCase();
+                const qLower = base.toLowerCase();
+                if (tLower === qLower) score += 50;
+                else if (tLower.startsWith(qLower)) score += 30;
+                else if (tLower.includes(qLower)) score += 15;
+                if (pr.year) score += 10;
+                if (tLower.length < qLower.length && qLower.length > 5) score -= 10;
+                return { ...it, score };
+            });
+            scoredOut.sort((a, b) => b.score - a.score);
+            const final = scoredOut.slice(0, 8);
+            if (final.length > 0) return JSON.stringify(final);
             }
         }
 
@@ -891,8 +920,22 @@ export const performClientSideSearch = async (
                 }
                 if (uniqD.size >= 8) break;
             }
-            const outD = Array.from(uniqD.values()).slice(0, 8);
-            if (outD.length > 0) return JSON.stringify(outD);
+            const outArray = Array.from(uniqD.values());
+            const scoredOut = outArray.map((it: any) => {
+                const pr = processSearchResult(it.title || '', it.snippet || '');
+                let score = 0;
+                const tLower = pr.title.toLowerCase();
+                const qLower = base.toLowerCase();
+                if (tLower === qLower) score += 50;
+                else if (tLower.startsWith(qLower)) score += 30;
+                else if (tLower.includes(qLower)) score += 15;
+                if (pr.year) score += 10;
+                if (tLower.length < qLower.length && qLower.length > 5) score -= 10;
+                return { ...it, score };
+            });
+            scoredOut.sort((a, b) => b.score - a.score);
+            const final = scoredOut.slice(0, 8);
+            if (final.length > 0) return JSON.stringify(final);
         } catch {}
     }
         
@@ -901,6 +944,12 @@ export const performClientSideSearch = async (
         console.warn("Search failed", e);
     }
     return "";
+};
+
+export const clearSearchCache = () => {
+    searchCache.clear();
+    prefetchedImages.clear();
+    testConnectionCache.clear();
 };
 
 export const testAuthoritativeDomain = async (domain: string, sampleQuery: string = 'test'): Promise<{ ok: boolean; count: number; items: any[]; error?: string }> => {
