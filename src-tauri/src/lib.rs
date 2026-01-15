@@ -14,6 +14,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 #[cfg(target_os = "windows")]
 use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+use scraper::{Html, Selector};
 
 mod models;
 mod database;
@@ -437,6 +438,63 @@ async fn duckduckgo_search(client: &Client, query: &str) -> Result<Vec<SearchRes
     Ok(results)
 }
 
+pub(crate) fn parse_duckduckgo_response_body(body: &str) -> Vec<SearchResultItem> {
+    // Robust parsing using scraper
+    let document = Html::parse_document(body);
+    // .result is the container for each result
+    // Note: DDG class names might vary, but result, result__a, result__snippet are standard for the HTML version
+    let result_selector = Selector::parse(".result").unwrap();
+    let link_selector = Selector::parse(".result__a").unwrap();
+    let snippet_selector = Selector::parse(".result__snippet").unwrap();
+
+    let mut results = Vec::new();
+    
+    for element in document.select(&result_selector) {
+        if results.len() >= 10 { break; }
+        
+        // Extract Title & Link
+        let (title, link) = if let Some(a_tag) = element.select(&link_selector).next() {
+            let t = a_tag.text().collect::<Vec<_>>().join(" ");
+            let l = a_tag.value().attr("href").unwrap_or("").to_string();
+            (t, l)
+        } else {
+            continue;
+        };
+        
+        if link.is_empty() { continue; }
+        
+        // Extract Snippet
+        let snippet = if let Some(s_tag) = element.select(&snippet_selector).next() {
+            s_tag.text().collect::<Vec<_>>().join(" ")
+        } else {
+            String::new()
+        };
+
+        // Decode DDG redirect links if necessary (uddg param)
+        let final_link = if link.contains("duckduckgo.com/l/") || link.contains("uddg=") {
+            if let Some(start) = link.find("uddg=") {
+                let rest = &link[start+5..];
+                let end = rest.find('&').unwrap_or(rest.len());
+                let encoded = &rest[..end];
+                urlencoding::decode(encoded).unwrap_or(std::borrow::Cow::Borrowed(encoded)).to_string()
+            } else {
+                link
+            }
+        } else {
+            link
+        };
+
+        results.push(SearchResultItem {
+            title: title.trim().to_string(),
+            snippet: snippet.trim().to_string(),
+            link: final_link,
+            image: None,
+            metadata: None,
+        });
+    }
+    results
+}
+
 async fn duckduckgo_html_search(client: &Client, query: &str) -> Result<Vec<SearchResultItem>, Box<dyn Error + Send + Sync>> {
     let url = format!(
         "https://html.duckduckgo.com/html/?q={}",
@@ -455,87 +513,8 @@ async fn duckduckgo_html_search(client: &Client, query: &str) -> Result<Vec<Sear
         return Err(format!("DuckDuckGo HTML Error ({}): {}", status, text).into());
     }
     let body = resp.text().await.unwrap_or_default();
-    let lower = body.to_ascii_lowercase();
-
-    let mut results = Vec::new();
-    // Try multiple class names: result__a (old), result__url, or generic link finding
-    // Simplified parsing: find blocks that look like results
     
-    // Pattern 1: class="result__a" (classic)
-    let mut pos: usize = 0;
-    while results.len() < 10 {
-        // Look for result title link
-        let found = match lower[pos..].find("result__a") {
-            Some(i) => pos + i,
-            None => break,
-        };
-        
-        let tail_lower = &lower[found..];
-        let href_key = "href=\"";
-        let href_start = match tail_lower.find(href_key) {
-            Some(i) => found + i + href_key.len(),
-            None => {
-                pos = found + 10;
-                continue;
-            }
-        };
-        
-        let rest = &body[href_start..];
-        let end = rest.find('"').unwrap_or(rest.len());
-        let href_raw = &rest[..end];
-
-        // Decode DDG redirect (uddg=...)
-        let link = if let Some(p) = href_raw.find("uddg=") {
-            let rest2 = &href_raw[p + 5..];
-            let end2 = rest2.find('&').unwrap_or(rest2.len());
-            let enc = &rest2[..end2];
-            urlencoding::decode(enc).unwrap_or_else(|_| enc.into()).to_string()
-        } else if href_raw.starts_with("http://") || href_raw.starts_with("https://") {
-            href_raw.to_string()
-        } else {
-            String::new()
-        };
-
-        if !link.is_empty() {
-             // Try to find title
-             let mut title = String::new();
-             if let Some(gt) = rest[end..].find('>') {
-                 let after_tag = &rest[end + gt + 1..];
-                 if let Some(lt) = after_tag.find("</a>") {
-                     title = after_tag[..lt].trim().to_string();
-                     // Remove HTML tags from title if any
-                     if let Some(idx) = title.find('<') {
-                         title = title[..idx].to_string(); // Simple truncation
-                     }
-                 }
-             }
-             
-             // Try to find snippet (result__snippet)
-             let mut snippet = String::new();
-             if let Some(snip_idx) = lower[href_start..].find("result__snippet") {
-                 let snip_start = href_start + snip_idx;
-                 let snip_rest = &body[snip_start..];
-                 if let Some(gt) = snip_rest.find('>') {
-                     let after_tag = &snip_rest[gt+1..];
-                     if let Some(lt) = after_tag.find('<') {
-                         snippet = after_tag[..lt].trim().to_string();
-                     }
-                 }
-             }
-
-            results.push(SearchResultItem {
-                title,
-                snippet,
-                link,
-                image: None,
-                metadata: None,
-            });
-        }
-
-        pos = href_start + end;
-    }
-
-    Ok(results)
+    Ok(parse_duckduckgo_response_body(&body))
 }
 
 fn extract_meta_image(body: &str) -> Option<String> {

@@ -280,7 +280,7 @@ const fetchPosterFromOMDB = async (title: string, year: string): Promise<string 
       const isValid = await checkImage(poster);
       if (isValid) return poster;
     }
-  } catch (error) {}
+  } catch (error) { console.warn("OMDB fetch failed", error); }
   return undefined;
 };
 
@@ -359,7 +359,7 @@ export const performClientSideSearch = async (
             if (host.includes('://')) {
                 try {
                     host = new URL(raw).hostname.toLowerCase();
-                } catch {}
+                } catch (e) { console.warn("URL parse failed", e); }
             }
             host = host.replace(/^www\./, '').split('/')[0].trim();
             return host;
@@ -431,7 +431,8 @@ export const performClientSideSearch = async (
         const normalizeHost = (u: string): string => {
             try {
                 return new URL(u).hostname.toLowerCase().replace(/^www\./, '');
-            } catch {
+            } catch (e) {
+                console.warn("Host normalize failed", e);
                 const s = String(u || '').toLowerCase();
                 const m = s.match(/^https?:\/\/([^\/?#]+)/);
                 if (m && m[1]) return m[1].replace(/^www\./, '');
@@ -500,12 +501,9 @@ export const performClientSideSearch = async (
                   p: { provider: TauriSearchProvider; apiKey?: string; cx?: string; user?: string },
                   qv: string
                 ): Promise<any[]> => {
-                  const cacheKey = `tauri_${p.provider}_${p.cx || ''}_${p.user || ''}_${qv}`;
-                  const cached = searchCache.get(cacheKey);
-                  if (cached && (Date.now() - cached.ts < CACHE_TTL)) {
-                    if (Array.isArray(cached.data)) return cached.data;
-                  }
-
+                  // Cache removed for Tauri mode as per refactoring requirements
+                  // The backend (Rust) handles its own caching if needed, or we rely on fresh results.
+                  
                   const rustConfig = makeRustConfig(p, 'text');
                   const start = performance.now();
                   let resultStr = "";
@@ -534,7 +532,7 @@ export const performClientSideSearch = async (
                               durationMs: Math.round(performance.now() - start),
                               searchType: 'text'
                             });
-                          } catch {}
+                          } catch (e) { console.warn("Log append failed", e); }
                           return [];
                         }
                         await new Promise(r => setTimeout(r, 800));
@@ -556,16 +554,16 @@ export const performClientSideSearch = async (
                       durationMs: Math.round(performance.now() - start),
                       searchType: 'text'
                     });
-                  } catch {}
+                  } catch (e) { console.warn("Log append failed", e); }
 
                   if (!resultStr) return [];
                   try {
                     const arr = JSON.parse(resultStr);
                     if (Array.isArray(arr)) {
-                      searchCache.set(cacheKey, { ts: Date.now(), data: arr });
+                      // searchCache.set(cacheKey, { ts: Date.now(), data: arr }); // Cache removed
                       return arr;
                     }
-                  } catch {}
+                  } catch (e) { console.warn("JSON parse failed", e); }
                   return [];
                 };
 
@@ -644,12 +642,12 @@ export const performClientSideSearch = async (
                                 durationMs: Math.round(performance.now() - start),
                                 searchType: 'text'
                             });
-                        } catch {}
+                        } catch (e) { console.warn("Log append failed", e); }
                         if (resultStr) {
                              const arr = JSON.parse(resultStr);
                              if (Array.isArray(arr)) return arr;
                         }
-                    } catch {}
+                    } catch (e) { console.warn("DDG fallback failed", e); }
                     return [];
                 });
 
@@ -768,7 +766,7 @@ export const performClientSideSearch = async (
                         durationMs: Math.round(performance.now() - start),
                         searchType: 'text'
                     });
-                } catch {}
+                } catch (e) { console.warn("Log append failed", e); }
                 const filteredStep = merged.filter((it: any) => isMediaCandidate(it.title, it.snippet, it.link));
                 for (const it of filteredStep) {
                     const pr = processSearchResult(it.title || '', it.snippet || '');
@@ -1046,7 +1044,8 @@ export const runBackgroundSearch = async (query: string, type?: MediaType | 'All
                 } else {
                     enriched.push(it);
                 }
-            } catch {
+            } catch (e) {
+                console.warn("Poster enrichment failed", e);
                 enriched.push(it);
             }
         }
@@ -1056,10 +1055,10 @@ export const runBackgroundSearch = async (query: string, type?: MediaType | 'All
             const tsKey = `${key}_ts`;
             localStorage.setItem(key, JSON.stringify(enriched));
             localStorage.setItem(tsKey, Date.now().toString());
-        } catch {}
+        } catch (e) { console.warn("Cache write failed", e); }
         const duration = Math.round(performance.now() - start);
         useAIStore.getState().setConfig({ lastSearchDurationMs: duration, lastSearchAt: new Date().toISOString(), lastSearchQuery: q });
-    } catch {}
+    } catch (e) { console.error("Background search failed", e); }
 };
 
 export const refreshTrendingCache = async (): Promise<void> => {
@@ -1074,11 +1073,11 @@ export const refreshTrendingCache = async (): Promise<void> => {
                     const langKey = i18n.language.split('-')[0];
                     const promptKey = (s.trendingPrompt || '').trim();
                     localStorage.setItem('media_tracker_trending_prompt_key', `${langKey}::${promptKey}`);
-                } catch {}
-            } catch {}
+                } catch (e) { console.warn("Prompt key save failed", e); }
+            } catch (e) { console.warn("Trending cache save failed", e); }
             useAIStore.getState().setTrendingCache(trending as any[]);
         }
-    } catch {}
+    } catch (e) { console.error("Refresh trending failed", e); }
 };
 
 export const callAI = async (messages: any[], temperature: number = 0.7, options: { forceSearch?: boolean; configOverride?: { baseURL?: string; apiKey?: string; model?: string; provider?: AIProvider } } = {}): Promise<string> => {
@@ -2857,7 +2856,7 @@ export const processSearchResult = (title: string, snippet: string): { title: st
         .trim();
 
     // Extract year (prioritize title, then snippet)
-    let year = new Date().getFullYear().toString();
+    let year = ""; // Default to empty string to allow broader search if year not found
     const yearMatch = title.match(/\b(19\d{2}|20\d{2})\b/) || snippet.match(/\b(19\d{2}|20\d{2})\b/);
     if (yearMatch) {
         year = yearMatch[1];
@@ -3055,7 +3054,7 @@ export const getTrendingMedia = async (excludeItems: MediaItem[] = []): Promise<
       }
   };
 
-  const text = await callAI(messages, 0.1, { forceSearch: true }); 
+  const text = await callAI(messages, 0.3, { forceSearch: true }); 
   let rawData = await parseTrending(text || "");
   if (rawData.length > 4) rawData = rawData.slice(0, 4);
 
