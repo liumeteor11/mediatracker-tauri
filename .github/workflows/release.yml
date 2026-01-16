@@ -87,7 +87,15 @@ jobs:
 
       - name: Build Android APK
         # Build APKs. Without signing config, this typically produces unsigned release APKs or debug APKs.
-        run: npm run tauri android build -- --apk
+        # Use --apk without value if it is a flag, but Tauri CLI v2 might treat it differently.
+        # For Tauri v2, 'tauri android build' builds APK by default or uses --apk as a flag.
+        # The error says "a value is required for '--apk <APK>'".
+        # This suggests it expects --apk=true or similar if parsed strictly, OR maybe just omit it if default.
+        # But actually, looking at Tauri v2 docs, 'tauri android build' builds app bundle by default?
+        # Let's try explicit format if needed, or check help. 
+        # Actually, the error "value is required" means clap parser expects a value.
+        # Let's try passing 'true' explicitly as suggested by the error message [possible values: true, false].
+        run: npm run tauri android build -- --apk true
         env:
           NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
 
