@@ -116,17 +116,30 @@ const resolveTauriSearchProviderList = (input: {
   const uniq = Array.from(new Set(candidates));
 
   const out: Array<{ provider: TauriSearchProvider; apiKey?: string; cx?: string; user?: string }> = [];
+  
+  // Helper to split keys
+  const splitKeys = (k?: string) => (k || '').split(/[;；]/).map(x => x.trim()).filter(x => x);
+
   for (const p of uniq) {
     if (p === 'google') {
-      if (googleKey && googleCx) out.push({ provider: 'google', apiKey: googleKey, cx: googleCx });
+      if (googleKey && googleCx) {
+         const keys = splitKeys(googleKey);
+         keys.forEach(k => out.push({ provider: 'google', apiKey: k, cx: googleCx }));
+      }
       continue;
     }
     if (p === 'serper') {
-      if (serperKey) out.push({ provider: 'serper', apiKey: serperKey });
+      if (serperKey) {
+         const keys = splitKeys(serperKey);
+         keys.forEach(k => out.push({ provider: 'serper', apiKey: k }));
+      }
       continue;
     }
     if (p === 'yandex') {
-      if (yandexKey && yandexUser) out.push({ provider: 'yandex', apiKey: yandexKey, user: yandexUser });
+      if (yandexKey && yandexUser) {
+         const keys = splitKeys(yandexKey);
+         keys.forEach(k => out.push({ provider: 'yandex', apiKey: k, user: yandexUser }));
+      }
       continue;
     }
     out.push({ provider: 'duckduckgo' });
@@ -714,168 +727,193 @@ export const performClientSideSearch = async (
         
         // Web Mode (Limited)
         if (searchProvider === 'google') {
-            const apiKey = getDecryptedGoogleKey();
-            if (apiKey && googleSearchCx) {
-            let merged: any[] = [];
-            const topN = (effType === MediaType.MOVIE || effType === MediaType.TV_SERIES) ? 3 : 2;
-            const ordered = [...precisionQueries.slice(0, topN), ...qList];
-            const uniq = new Map<string, any>();
-            for (const qv of ordered) {
-                const start = performance.now();
-                const cacheKey = `google_${googleSearchCx}_${qv}`;
-                const cached = searchCache.get(cacheKey);
-                let data: any = null;
-                let status: any = 200;
-                let fromCache = false;
-
-                if (cached && (Date.now() - cached.ts < CACHE_TTL)) {
-                    data = cached.data;
-                    fromCache = true;
-                    status = 'cached';
-                } else {
-                    const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(qv)}&num=8&safe=off`;
-                    let res;
-                    try {
-                         // Optional: Add small delay to avoid burst
-                         await new Promise(r => setTimeout(r, 200));
-                         res = await fetchWithTimeout(url, { timeoutMs: 12000 });
-                    } catch (e) {
-                         res = { ok: false, status: 500 } as any;
-                    }
+            const apiKeyStr = getDecryptedGoogleKey();
+            if (apiKeyStr && googleSearchCx) {
+            const apiKeys = apiKeyStr.split(/[;；]/).map(k => k.trim()).filter(k => k);
+            
+            // Try each key
+            for (const apiKey of apiKeys) {
+                let keyFailed = false;
+                const topN = (effType === MediaType.MOVIE || effType === MediaType.TV_SERIES) ? 3 : 2;
+                const ordered = [...precisionQueries.slice(0, topN), ...qList];
+                
+                // Execute queries in parallel with semaphore
+                const queryPromises = ordered.map(async (qv) => {
+                    const start = performance.now();
+                    if (keyFailed) return [];
+                    const cacheKey = `google_${googleSearchCx}_${qv}`;
+                    const cached = searchCache.get(cacheKey);
                     
-                    status = res.status;
-
-                    if (res.status === 429) {
-                        console.warn("Google Search 429 (Too Many Requests).");
-                        showQuotaError("Quota Exceeded");
-                        if (cached) {
-                            data = cached.data;
-                            fromCache = true;
-                            status = '429_cached_fallback';
-                        } else {
-                            break;
-                        }
-                    } else if (res.ok) {
-                        data = await res.json();
-                        searchCache.set(cacheKey, { ts: Date.now(), data });
+                    if (cached && (Date.now() - cached.ts < CACHE_TTL)) {
+                        return cached.data.items || [];
                     }
-                }
 
-                if (data && data.items) {
-                    merged = merged.concat(data.items.map((item: any) => ({
-                        title: item.title,
-                        snippet: item.snippet,
-                        link: item.link,
-                        image: item.pagemap?.cse_image?.[0]?.src
-                    })));
-                }
-                try {
-                    useAIStore.getState().appendLog({
-                        id: uuidv4(),
-                        ts: Date.now(),
-                        channel: 'search',
-                        provider: 'google',
-                        query: qv,
-                        request: { url: `https://www.googleapis.com/customsearch/v1?q=${encodeURIComponent(qv)}&num=8` },
-                        response: data ? (data.items || []).slice(0, 8) : { status },
-                        durationMs: Math.round(performance.now() - start),
-                        searchType: 'text'
-                    });
-                } catch (e) { console.warn("Log append failed", e); }
+                    const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(qv)}&num=8&safe=off`;
+                    
+                    try {
+                        await apiLimiter.acquire();
+                        try {
+                            const res = await fetchWithTimeout(url, { timeoutMs: 10000 });
+                            
+                            if (res.status === 429 || res.status === 400 || res.status === 403) {
+                                console.warn(`Google Search Error ${res.status}`);
+                                if (res.status === 429) showQuotaError("Quota Exceeded");
+                                keyFailed = true;
+                                return [];
+                            }
+                            
+                            if (res.ok) {
+                                const data = await res.json();
+                                searchCache.set(cacheKey, { ts: Date.now(), data });
+                                try {
+                                    useAIStore.getState().appendLog({
+                                        id: uuidv4(),
+                                        ts: Date.now(),
+                                        channel: 'search',
+                                        provider: 'google',
+                                        query: qv,
+                                        request: { url: `https://www.googleapis.com/customsearch/v1?q=${encodeURIComponent(qv)}&num=8` },
+                                        response: (data.items || []).slice(0, 8),
+                                        durationMs: Math.round(performance.now() - start),
+                                        searchType: 'text'
+                                    });
+                                } catch {}
+                                return data.items || [];
+                            }
+                        } finally {
+                            apiLimiter.release();
+                        }
+                    } catch (e) { }
+                    return [];
+                });
+
+                const resultsArrays = await Promise.all(queryPromises);
+                if (keyFailed) continue;
+
+                let merged = resultsArrays.flat().map((item: any) => ({
+                    title: item.title,
+                    snippet: item.snippet,
+                    link: item.link,
+                    image: item.pagemap?.cse_image?.[0]?.src
+                }));
+
+                const uniq = new Map<string, any>();
                 const filteredStep = merged.filter((it: any) => isMediaCandidate(it.title, it.snippet, it.link));
+                
                 for (const it of filteredStep) {
                     const pr = processSearchResult(it.title || '', it.snippet || '');
                     const key = `${pr.title}|${pr.year}`;
                     if (!uniq.has(key)) uniq.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
                 }
-                if (uniq.size >= 8) break;
-            }
-            const outArray = Array.from(uniq.values());
-            const scoredOut = outArray.map((it: any) => {
-                const pr = processSearchResult(it.title || '', it.snippet || '');
-                let score = 0;
-                const tLower = pr.title.toLowerCase();
-                const qLower = base.toLowerCase();
-                if (tLower === qLower) score += 50;
-                else if (tLower.startsWith(qLower)) score += 30;
-                else if (tLower.includes(qLower)) score += 15;
-                if (pr.year) score += 10;
-                if (tLower.length < qLower.length && qLower.length > 5) score -= 10;
-                return { ...it, score };
-            });
-            scoredOut.sort((a, b) => b.score - a.score);
-            const final = scoredOut.slice(0, 8);
-            if (final.length > 0) return JSON.stringify(final);
+
+                const outArray = Array.from(uniq.values());
+                const scoredOut = outArray.map((it: any) => {
+                    const pr = processSearchResult(it.title || '', it.snippet || '');
+                    let score = 0;
+                    const tLower = pr.title.toLowerCase();
+                    const qLower = base.toLowerCase();
+                    if (tLower === qLower) score += 50;
+                    else if (tLower.startsWith(qLower)) score += 30;
+                    else if (tLower.includes(qLower)) score += 15;
+                    if (pr.year) score += 10;
+                    if (tLower.length < qLower.length && qLower.length > 5) score -= 10;
+                    return { ...it, score };
+                });
+                scoredOut.sort((a, b) => b.score - a.score);
+                const final = scoredOut.slice(0, 8);
+                if (final.length > 0) return JSON.stringify(final);
+                
+                if (!keyFailed) return ""; 
+            } // end key loop
             }
         }
 
     // Serper (Web Mode)
     if (searchProvider === 'serper') {
-        const apiKey = getDecryptedSerperKey();
-        if (apiKey) {
-            let merged: any[] = [];
-            const topN = (effType === MediaType.MOVIE || effType === MediaType.TV_SERIES) ? 3 : 2;
-            const ordered = [...precisionQueries.slice(0, topN), ...qList];
-            const uniq = new Map<string, any>();
-            for (const qv of ordered) {
-                const start = performance.now();
-                const response = await fetchWithTimeout('https://google.serper.dev/search', {
-                    method: 'POST',
-                    headers: {
-                        'X-API-KEY': apiKey,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ q: qv, num: 8, safe: "off" })
-                , timeoutMs: 12000 });
-                if (response.status === 429) {
-                    console.warn("Serper Search 429 (Too Many Requests). Stopping.");
-                    showQuotaError("Quota Exceeded");
-                    break;
-                }
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data.organic) {
-                        merged = merged.concat(data.organic.map((item: any) => ({
-                            title: item.title,
-                            snippet: item.snippet,
-                            link: item.link,
-                            image: undefined
-                        })));
-                    }
-                }
-                try {
-                    useAIStore.getState().appendLog({
-                        id: uuidv4(),
-                        ts: Date.now(),
-                        channel: 'search',
-                        provider: 'serper',
-                        query: qv,
-                        request: { body: { q: qv, num: 8 } },
-                        response: merged.slice(-Math.max(0, Math.min(10, merged.length))),
-                        durationMs: Math.round(performance.now() - start),
-                        searchType: 'text'
-                    });
-                } catch {}
+        const apiKeyStr = getDecryptedSerperKey();
+        if (apiKeyStr) {
+            const apiKeys = apiKeyStr.split(/[;；]/).map(k => k.trim()).filter(k => k);
+            
+            for (const apiKey of apiKeys) {
+                let keyFailed = false;
+                const topN = (effType === MediaType.MOVIE || effType === MediaType.TV_SERIES) ? 3 : 2;
+                const ordered = [...precisionQueries.slice(0, topN), ...qList];
+
+                const queryPromises = ordered.map(async (qv) => {
+                    const start = performance.now();
+                    if (keyFailed) return [];
+                    try {
+                        const response = await fetchWithTimeout('https://google.serper.dev/search', {
+                            method: 'POST',
+                            headers: {
+                                'X-API-KEY': apiKey,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ q: qv, num: 8, safe: "off" })
+                        , timeoutMs: 12000 });
+                        
+                        if (response.status === 429 || response.status === 401 || response.status === 403) {
+                            console.warn("Serper Search Error (Too Many Requests/Auth). Stopping.");
+                            if (response.status === 429) showQuotaError("Quota Exceeded");
+                            keyFailed = true;
+                            return [];
+                        }
+                        
+                        if (response.ok) {
+                            const data = await response.json();
+                            try {
+                                useAIStore.getState().appendLog({
+                                    id: uuidv4(),
+                                    ts: Date.now(),
+                                    channel: 'search',
+                                    provider: 'serper',
+                                    query: qv,
+                                    request: { body: { q: qv, num: 8 } },
+                                    response: (data.organic || []).slice(0, 8),
+                                    durationMs: Math.round(performance.now() - start),
+                                    searchType: 'text'
+                                });
+                            } catch {}
+
+                            if (data.organic) {
+                                return data.organic.map((item: any) => ({
+                                    title: item.title,
+                                    snippet: item.snippet,
+                                    link: item.link,
+                                    image: undefined
+                                }));
+                            }
+                        }
+                    } catch (e) { }
+                    return [];
+                });
+
+                const resultsArrays = await Promise.all(queryPromises);
+                if (keyFailed) continue;
+
+                let merged = resultsArrays.flat();
+                
+                const uniq = new Map<string, any>();
                 const filteredStep = merged.filter((it: any) => isMediaCandidate(it.title, it.snippet, it.link));
                 for (const it of filteredStep) {
                     const pr = processSearchResult(it.title || '', it.snippet || '');
                     const key = `${pr.title}|${pr.year}`;
                     if (!uniq.has(key)) uniq.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
                 }
-                if (uniq.size >= 8) break;
+                
+                const out = Array.from(uniq.values()).slice(0, 8);
+                if (out.length > 0) return JSON.stringify(out);
+                if (!keyFailed) return "";
             }
-            const out = Array.from(uniq.values()).slice(0, 8);
-            if (out.length > 0) return JSON.stringify(out);
         }
     }
 
     // Fallback: DuckDuckGo (Web Mode Only - Tauri handles this above via Rust to avoid CORS)
     if (!isTauriEnv) {
         try {
-            let mergedDDG: any[] = [];
             const orderedD = [...precisionQueries.slice(0, 3), ...qList];
-            const uniqD = new Map<string, any>();
-            for (const qv of orderedD) {
+            
+            const queryPromises = orderedD.map(async (qv) => {
                 const start = performance.now();
                 let items: any[] = [];
                 try {
@@ -898,7 +936,6 @@ export const performClientSideSearch = async (
                         }
                     }
                 } catch {}
-                mergedDDG = mergedDDG.concat(items);
                 try {
                     useAIStore.getState().appendLog({
                         id: uuidv4(),
@@ -907,19 +944,25 @@ export const performClientSideSearch = async (
                         provider: 'duckduckgo',
                         query: qv,
                         request: { url: 'https://api.duckduckgo.com', params: { q: qv } },
-                        response: mergedDDG.slice(-Math.max(0, Math.min(10, mergedDDG.length))),
+                        response: items.slice(0, 8),
                         durationMs: Math.round(performance.now() - start),
                         searchType: 'text'
                     });
                 } catch {}
-                const filteredD = (effType === 'All') ? mergedDDG : mergedDDG.filter((it: any) => isMediaCandidate(it.title, it.snippet, it.link));
-                for (const it of filteredD) {
-                    const pr = processSearchResult(it.title || '', it.snippet || '');
-                    const key = `${pr.title}|${pr.year}`;
-                    if (!uniqD.has(key)) uniqD.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
-                }
-                if (uniqD.size >= 8) break;
+                return items;
+            });
+
+            const resultsArrays = await Promise.all(queryPromises);
+            let mergedDDG = resultsArrays.flat();
+            
+            const uniqD = new Map<string, any>();
+            const filteredD = (effType === 'All') ? mergedDDG : mergedDDG.filter((it: any) => isMediaCandidate(it.title, it.snippet, it.link));
+            for (const it of filteredD) {
+                const pr = processSearchResult(it.title || '', it.snippet || '');
+                const key = `${pr.title}|${pr.year}`;
+                if (!uniqD.has(key)) uniqD.set(key, { title: pr.title, snippet: it.snippet, link: it.link, image: it.image });
             }
+            
             const outArray = Array.from(uniqD.values());
             const scoredOut = outArray.map((it: any) => {
                 const pr = processSearchResult(it.title || '', it.snippet || '');
@@ -946,10 +989,36 @@ export const performClientSideSearch = async (
     return "";
 };
 
-export const clearSearchCache = () => {
-    searchCache.clear();
-    prefetchedImages.clear();
-    testConnectionCache.clear();
+export const clearSearchCache = async (): Promise<boolean> => {
+    try {
+        searchCache.clear();
+        prefetchedImages.clear();
+        testConnectionCache.clear();
+
+        // Clear localStorage search cache
+        try {
+            const keysToRemove: string[] = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith('media_tracker_search_')) {
+                    keysToRemove.push(key);
+                }
+            }
+            keysToRemove.forEach(k => localStorage.removeItem(k));
+        } catch (e) {
+            console.warn("Failed to clear localStorage search cache", e);
+            // LocalStorage failure might not be critical enough to fail the whole operation?
+            // But let's log it.
+        }
+
+        if (isTauriEnv) {
+            await invoke('clear_search_cache');
+        }
+        return true;
+    } catch (e) {
+        console.error("Failed to clear cache:", e);
+        return false;
+    }
 };
 
 export const testAuthoritativeDomain = async (domain: string, sampleQuery: string = 'test'): Promise<{ ok: boolean; count: number; items: any[]; error?: string }> => {
@@ -972,7 +1041,9 @@ export const testAuthoritativeDomain = async (domain: string, sampleQuery: strin
     try {
         if (isTauriEnv) {
             const { useSystemProxy, getProxyUrl } = useAIStore.getState();
-            const eff = resolveTauriSearchProvider({
+            
+            // Use resolveTauriSearchProviderList to handle multiple keys
+            const providerList = resolveTauriSearchProviderList({
                 provider: searchProvider,
                 googleKey: getDecryptedGoogleKey(),
                 googleCx: googleSearchCx,
@@ -980,94 +1051,121 @@ export const testAuthoritativeDomain = async (domain: string, sampleQuery: strin
                 yandexKey: getDecryptedYandexKey(),
                 yandexUser: yandexSearchLogin
             });
-            const rustConfig = {
-                provider: eff.provider,
-                api_key: eff.apiKey,
-                cx: eff.cx,
-                user: eff.user,
-                search_type: 'text',
-                proxy_url: getProxyUrl(),
-                use_system_proxy: useSystemProxy
-            };
-            const resultStr = await invoke<string>('web_search', { query, config: rustConfig });
-            try {
-                const arr = JSON.parse(resultStr);
-                const items = Array.isArray(arr) ? arr : [];
-                return { ok: items.length > 0, count: items.length, items };
-            } catch {
-                return { ok: false, count: 0, items: [], error: 'parse_failed' };
+            
+            let lastError = 'unknown_error';
+            
+            // Try each provider configuration until success
+            for (const eff of providerList) {
+                try {
+                    const rustConfig = {
+                        provider: eff.provider,
+                        api_key: eff.apiKey,
+                        cx: eff.cx,
+                        user: eff.user,
+                        search_type: 'text',
+                        proxy_url: getProxyUrl(),
+                        use_system_proxy: useSystemProxy
+                    };
+                    
+                    const resultStr = await invoke<string>('web_search', { query, config: rustConfig });
+                    const arr = JSON.parse(resultStr);
+                    const items = Array.isArray(arr) ? arr : [];
+                    return { ok: items.length > 0, count: items.length, items };
+                } catch (e: any) {
+                    lastError = e?.message || String(e);
+                    // Continue to next key/provider if error
+                    console.warn("Test connection failed with current key, retrying...", lastError);
+                }
             }
+            return { ok: false, count: 0, items: [], error: lastError };
         }
         if (searchProvider === 'google') {
-            const apiKey = getDecryptedGoogleKey();
-            if (apiKey && googleSearchCx) {
-                const cacheKey = `google_${googleSearchCx}_${query}`;
-                const cached = searchCache.get(cacheKey);
-                if (cached && (Date.now() - cached.ts < CACHE_TTL)) {
-                     const data = cached.data;
-                     const items = Array.isArray(data.items) ? data.items.slice(0, 4).map((item: any) => ({
-                        title: item.title,
-                        snippet: item.snippet,
-                        link: item.link
-                    })) : [];
-                    return { ok: items.length > 0, count: items.length, items };
-                }
+            const apiKeyStr = getDecryptedGoogleKey();
+            if (apiKeyStr && googleSearchCx) {
+                const apiKeys = apiKeyStr.split(/[;；]/).map(k => k.trim()).filter(k => k);
+                let lastError = "";
+                
+                for (const apiKey of apiKeys) {
+                    const cacheKey = `google_${googleSearchCx}_${query}`;
+                    const cached = searchCache.get(cacheKey);
+                    let data: any = null;
+                    let status: any = 200;
+                    let fromCache = false;
 
-                const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(query)}&num=4`;
-                let res;
-                try {
-                    await apiLimiter.acquire();
-                    res = await fetchWithTimeout(url, { timeoutMs: 12000 });
-                } finally {
-                    apiLimiter.release();
-                }
-                if (!res || !res.ok) {
-                     if (res && res.status === 429 && cached) {
-                         const data = cached.data;
-                         const items = Array.isArray(data.items) ? data.items.slice(0, 4).map((item: any) => ({
+                    if (cached && (Date.now() - cached.ts < CACHE_TTL)) {
+                        data = cached.data;
+                        fromCache = true;
+                        status = 'cached';
+                    } else {
+                         const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(query)}&num=4`;
+                        let res;
+                        try {
+                            await apiLimiter.acquire();
+                            res = await fetchWithTimeout(url, { timeoutMs: 12000 });
+                        } catch(e: any) {
+                            lastError = e?.message || "network_error";
+                        } finally {
+                            apiLimiter.release();
+                        }
+                        
+                        if (res && res.ok) {
+                            data = await res.json();
+                            searchCache.set(cacheKey, { ts: Date.now(), data });
+                        } else if (res) {
+                            lastError = `HTTP ${res.status}`;
+                            if (res.status === 400 || res.status === 403 || res.status === 429) {
+                                continue;
+                            }
+                            continue;
+                        }
+                    }
+
+                    if (data && data.items) {
+                        const items = Array.isArray(data.items) ? data.items.map((item: any) => ({
                             title: item.title,
                             snippet: item.snippet,
                             link: item.link
                         })) : [];
                         return { ok: items.length > 0, count: items.length, items };
-                     }
-                     if (res && res.status === 429) {
-                         return { ok: false, count: 0, items: [], error: 'Quota Exceeded (429)' };
-                     }
-                     return { ok: false, count: 0, items: [], error: res ? String(res.status) : 'network_error' };
+                    }
                 }
-                const data = await res.json();
-                if (data && Array.isArray(data.items)) data.items = data.items.slice(0, 4);
-                searchCache.set(cacheKey, { ts: Date.now(), data });
-
-                const items = Array.isArray(data.items) ? data.items.map((item: any) => ({
-                    title: item.title,
-                    snippet: item.snippet,
-                    link: item.link
-                })) : [];
-                return { ok: items.length > 0, count: items.length, items };
+                return { ok: false, count: 0, items: [], error: lastError || 'all_keys_failed' };
             }
         }
         if (searchProvider === 'serper') {
-            const apiKey = getDecryptedSerperKey();
-            if (apiKey) {
-                const response = await fetchWithTimeout('https://google.serper.dev/search', {
-                    method: 'POST',
-                    headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ q: query }),
-                    timeoutMs: 12000
-                });
-                if (!response.ok) {
-                    if (response.status === 429) return { ok: false, count: 0, items: [], error: 'Quota Exceeded (429)' };
-                    return { ok: false, count: 0, items: [], error: String(response.status) };
+            const apiKeyStr = getDecryptedSerperKey();
+            if (apiKeyStr) {
+                const apiKeys = apiKeyStr.split(/[;；]/).map(k => k.trim()).filter(k => k);
+                let lastError = "";
+
+                for (const apiKey of apiKeys) {
+                    try {
+                        const response = await fetchWithTimeout('https://google.serper.dev/search', {
+                            method: 'POST',
+                            headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ q: query }),
+                            timeoutMs: 12000
+                        });
+                        if (!response.ok) {
+                            lastError = String(response.status);
+                            if (response.status === 429 || response.status === 403) {
+                                if (response.status === 429) lastError = 'Quota Exceeded (429)';
+                                continue;
+                            }
+                            continue;
+                        }
+                        const data = await response.json();
+                        const items = Array.isArray(data.organic) ? data.organic.slice(0, 4).map((item: any) => ({
+                            title: item.title,
+                            snippet: item.snippet,
+                            link: item.link
+                        })) : [];
+                        return { ok: items.length > 0, count: items.length, items };
+                    } catch (e: any) {
+                        lastError = e?.message || "error";
+                    }
                 }
-                const data = await response.json();
-                const items = Array.isArray(data.organic) ? data.organic.slice(0, 4).map((item: any) => ({
-                    title: item.title,
-                    snippet: item.snippet,
-                    link: item.link
-                })) : [];
-                return { ok: items.length > 0, count: items.length, items };
+                return { ok: false, count: 0, items: [], error: lastError || 'all_keys_failed' };
             }
         }
         return { ok: false, count: 0, items: [], error: 'unsupported_provider_or_missing_key' };
@@ -1200,14 +1298,16 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
     }
 
     // Abstract the "completion" call
-    const createCompletion = async (msgs: any[], tools: any[], baseURLOverride?: string) => {
+    const createCompletion = async (msgs: any[], tools: any[], baseURLOverride?: string, apiKeyOverride?: string) => {
         const effBaseURL = (baseURLOverride || finalBaseURL || '').trim();
+        const effApiKey = apiKeyOverride || apiKey;
+        
         if (isTauri) {
              const { useSystemProxy, getProxyUrl } = useAIStore.getState();
             const rustConfig = {
                 model,
                 baseURL: effBaseURL,
-                apiKey,
+                apiKey: effApiKey,
                 proxy_url: getProxyUrl(),
                 use_system_proxy: useSystemProxy
             };
@@ -1230,7 +1330,7 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
         } else {
             // Web Mode
              const client = new OpenAI({
-                apiKey: apiKey,
+                apiKey: effApiKey,
                 baseURL: effBaseURL,
                 dangerouslyAllowBrowser: true
             });
@@ -1271,217 +1371,194 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
             ];
         }
 
-        let currentMessages = [...messages];
-        let turnCount = 0;
-        const MAX_TURNS = 2;
-
-        while (turnCount < MAX_TURNS) {
-            let completion;
-            const startTs = performance.now();
+        // Handle multiple API keys with retry logic
+        const apiKeys = apiKey.split(/[;；]/).map(k => k.trim()).filter(k => k);
+        let lastError: any = null;
+        
+        for (let i = 0; i < apiKeys.length; i++) {
+            const currentKey = apiKeys[i];
             
-            // Retry logic with Semaphore and Exponential Backoff
-            const MAX_RETRIES = 3;
-            let attempt = 0;
-            let webBaseURLOverride: string | undefined = undefined;
-            let switchedOffMoonshotProxy = false;
-
-            while (attempt < MAX_RETRIES) {
-                try {
-                    await apiLimiter.acquire();
-                    try {
-                         completion = await createCompletion(currentMessages, tools, webBaseURLOverride);
-                    } finally {
-                        apiLimiter.release();
-                    }
-                    break; // Success
-                } catch (apiError: any) {
-                    console.error(`AI Chat API failed (Attempt ${attempt + 1}/${MAX_RETRIES})`, apiError);
-                    const status = (apiError && typeof apiError.status === 'number') ? apiError.status : (apiError?.response?.status);
-                    const msg = String(apiError?.message || '');
-                    const is5xx = typeof status === 'number' && status >= 500 && status < 600;
-                    const is429 = status === 429;
-                    const isConnectionError =
-                        apiError?.name === 'APIConnectionError' ||
-                        msg.toLowerCase().includes('connection error') ||
-                        msg.toLowerCase().includes('failed to fetch') ||
-                        msg.toLowerCase().includes('network error');
-                    const looksServiceUnavailable = msg.includes('503') || msg.toLowerCase().includes('service unavailable');
-
-                    if (!isTauri && !switchedOffMoonshotProxy && (effProvider === 'moonshot') && isConnectionError) {
-                        const usingMoonshotDevProxy = (finalBaseURL || '').includes('/api/moonshot/');
-                        if (usingMoonshotDevProxy) {
-                            switchedOffMoonshotProxy = true;
-                            webBaseURLOverride = 'https://api.moonshot.cn/v1';
-                            continue;
-                        }
-                    }
-
-                    if (is429 || is5xx || looksServiceUnavailable || isConnectionError) {
-                        attempt++;
-                        if (attempt < MAX_RETRIES) {
-                            const delay = 2000 * Math.pow(2, attempt - 1);
-                            await new Promise(resolve => setTimeout(resolve, delay));
-                            continue;
-                        }
-                    }
-                    throw apiError;
-                }
-            }
-
-            const normalizeAssistantMessage = (c: any): any => {
-                try {
-                    if (!c) return { content: "" };
-                    if (typeof c === 'string') return { content: c };
-                    // OpenAI/Moonshot style
-                    if (Array.isArray(c.choices)) {
-                        if (c.choices.length > 0) {
-                            return c.choices[0].message ?? c.choices[0].delta ?? c.choices[0];
-                        }
-                        return { content: "" };
-                    }
-                    // Common wrappers
-                    if (c.result) return normalizeAssistantMessage(c.result);
-                    if (c.data) return normalizeAssistantMessage(c.data);
-                    if (c?.message) return c.message;
-                    if (typeof c?.output_text === 'string') return { content: c.output_text };
-                    if (typeof c?.content === 'string') return { content: c.content };
-                    if (Array.isArray(c?.content)) return { content: c.content.map((p: any) => (typeof p === 'string' ? p : p?.text || '')).join('') };
-                    return { content: "" };
-                } catch {
-                    return { content: "" };
-                }
-            };
-            const message = normalizeAssistantMessage(completion);
             try {
-                useAIStore.getState().appendLog({
-                    id: uuidv4(),
-                    ts: Date.now(),
-                    channel: 'ai',
-                    provider: effProvider,
-                    model,
-                    baseURL: finalBaseURL,
-                    request: { messages: currentMessages, temperature, tools },
-                    response: completion,
-                    durationMs: Math.round(performance.now() - startTs)
-                });
-            } catch {}
+                let turnCount = 0;
+                const MAX_TURNS = 2;
+                let currentMessages = [...messages]; // Clone for each key retry to start fresh conversation state if needed? 
+                                                     // Actually we probably want to resume conversation, but if a key fails mid-way, 
+                                                     // the conversation state in 'currentMessages' might be dirty if we mutated it?
+                                                     // No, 'currentMessages' is only mutated by pushing new messages. 
+                                                     // If createCompletion fails, 'currentMessages' is untouched for THAT turn.
+                                                     // But wait, the outer loop below modifies 'currentMessages'.
+                                                     // So we should reset 'currentMessages' to 'messages' at start of each key attempt?
+                                                     // YES.
+                currentMessages = [...messages];
 
-            // If the model wants to call a tool
-            const toolCalls = (message && (message.tool_calls || (message.function_call ? [{ type: 'function', id: 'fn', function: message.function_call }] : []))) || [];
-            if (toolCalls && toolCalls.length > 0) {
-                currentMessages.push(message); // Add assistant's tool call message
+                while (turnCount < MAX_TURNS) {
+                    let completion;
+                    const startTs = performance.now();
+                    
+                    // Retry logic with Semaphore and Exponential Backoff (Per Key)
+                    const MAX_RETRIES = 2; // Reduced retries per key since we have multiple keys
+                    let attempt = 0;
+                    let webBaseURLOverride: string | undefined = undefined;
+                    let switchedOffMoonshotProxy = false;
 
-                // Execute tool calls
-                for (const toolCall of toolCalls) {
-                    if (toolCall.type === 'function' && toolCall.function.name === '$web_search') {
-                        let query = "";
+                    while (attempt < MAX_RETRIES) {
                         try {
-                            const args = JSON.parse(toolCall.function.arguments);
-                            query = args.query || args.q || "";
-                        } catch (parseError) {
-                            console.warn("Failed to parse $web_search args", parseError);
-                        }
-                        if (query) {
-                            const searchResult = await performClientSideSearch(query, options.forceSearch);
-                            currentMessages.push({
-                                role: "tool",
-                                tool_call_id: toolCall.id,
-                                name: "$web_search",
-                                content: searchResult || "No relevant results found."
-                            });
+                            await apiLimiter.acquire();
                             try {
-                                useAIStore.getState().appendLog({
-                                    id: uuidv4(),
-                                    ts: Date.now(),
-                                    channel: 'search',
-                                    provider: useAIStore.getState().searchProvider,
-                                    query,
-                                    request: {},
-                                    response: searchResult || "",
-                                    durationMs: undefined,
-                                    searchType: 'text'
-                                });
-                            } catch {}
-                            continue;
-                        } else {
-                            currentMessages.push({
-                                role: "tool",
-                                tool_call_id: toolCall.id,
-                                name: "$web_search",
-                                content: "Error: Missing query parameter."
-                            });
-                            continue;
+                                 completion = await createCompletion(currentMessages, tools, webBaseURLOverride, currentKey);
+                            } finally {
+                                apiLimiter.release();
+                            }
+                            break; // Success
+                        } catch (apiError: any) {
+                            console.error(`AI Chat API failed (Key ${i}, Attempt ${attempt + 1}/${MAX_RETRIES})`, apiError);
+                            const status = (apiError && typeof apiError.status === 'number') ? apiError.status : (apiError?.response?.status);
+                            const msg = String(apiError?.message || '');
+                            const is5xx = typeof status === 'number' && status >= 500 && status < 600;
+                            const is429 = status === 429;
+                            const isConnectionError =
+                                apiError?.name === 'APIConnectionError' ||
+                                msg.toLowerCase().includes('connection error') ||
+                                msg.toLowerCase().includes('failed to fetch') ||
+                                msg.toLowerCase().includes('network error');
+                            const looksServiceUnavailable = msg.includes('503') || msg.toLowerCase().includes('service unavailable');
+
+                            if (!isTauri && !switchedOffMoonshotProxy && (effProvider === 'moonshot') && isConnectionError) {
+                                const usingMoonshotDevProxy = (finalBaseURL || '').includes('/api/moonshot/');
+                                if (usingMoonshotDevProxy) {
+                                    switchedOffMoonshotProxy = true;
+                                    webBaseURLOverride = 'https://api.moonshot.cn/v1';
+                                    continue;
+                                }
+                            }
+
+                            if (is429 || is5xx || looksServiceUnavailable || isConnectionError) {
+                                attempt++;
+                                if (attempt < MAX_RETRIES) {
+                                    const delay = 1000 * Math.pow(2, attempt - 1);
+                                    await new Promise(resolve => setTimeout(resolve, delay));
+                                    continue;
+                                }
+                            }
+                            throw apiError;
                         }
                     }
 
-                    // Standard Web Search Handling
-                    if (toolCall.type === 'function' && toolCall.function.name === 'web_search') {
-                        let query = "";
+                    const normalizeAssistantMessage = (c: any): any => {
                         try {
-                            const args = JSON.parse(toolCall.function.arguments);
-                            query = args.query;
-                        } catch (parseError) {
-                            console.warn("Failed to parse tool arguments", parseError);
+                            if (!c) return { content: "" };
+                            if (typeof c === 'string') return { content: c };
+                            // OpenAI/Moonshot style
+                            if (Array.isArray(c.choices)) {
+                                if (c.choices.length > 0) {
+                                    return c.choices[0].message ?? c.choices[0].delta ?? c.choices[0];
+                                }
+                                return { content: "" };
+                            }
+                            // Common wrappers
+                            if (c.result) return normalizeAssistantMessage(c.result);
+                            if (c.data) return normalizeAssistantMessage(c.data);
+                            if (c?.message) return c.message;
+                            if (typeof c?.output_text === 'string') return { content: c.output_text };
+                            if (typeof c?.content === 'string') return { content: c.content };
+                            if (Array.isArray(c?.content)) return { content: c.content.map((p: any) => (typeof p === 'string' ? p : p?.text || '')).join('') };
+                            return { content: "" };
+                        } catch {
+                            return { content: "" };
                         }
+                    };
+                    const message = normalizeAssistantMessage(completion);
+                    try {
+                        useAIStore.getState().appendLog({
+                            id: uuidv4(),
+                            ts: Date.now(),
+                            channel: 'ai',
+                            provider: effProvider,
+                            model,
+                            baseURL: finalBaseURL,
+                            request: { messages: currentMessages, temperature, tools },
+                            response: completion,
+                            durationMs: Math.round(performance.now() - startTs)
+                        });
+                    } catch {}
 
-                        if (query) {
-                            const searchResult = await performClientSideSearch(query, options.forceSearch);
-                            currentMessages.push({
-                                role: "tool",
-                                tool_call_id: toolCall.id,
-                                content: searchResult || "No relevant results found."
-                            });
-                            try {
-                                useAIStore.getState().appendLog({
-                                    id: uuidv4(),
-                                    ts: Date.now(),
-                                    channel: 'search',
-                                    provider: searchProvider,
-                                    query,
-                                    request: {},
-                                    response: searchResult || "",
-                                    durationMs: undefined,
-                                    searchType: 'text'
-                                });
-                            } catch {}
-                        } else {
-                             currentMessages.push({
-                                role: "tool",
-                                tool_call_id: toolCall.id,
-                                content: "Error: Missing query parameter."
-                            });
+                    // If the model wants to call a tool
+                    const toolCalls = (message && (message.tool_calls || (message.function_call ? [{ type: 'function', id: 'fn', function: message.function_call }] : []))) || [];
+                    if (toolCalls && toolCalls.length > 0) {
+                        currentMessages.push(message); // Add assistant's tool call message
+                        
+                        let executedAny = false;
+                        for (const toolCall of toolCalls) {
+                            if (toolCall.function && toolCall.function.name === 'web_search') {
+                                try {
+                                    const args = JSON.parse(toolCall.function.arguments || '{}');
+                                    const q = args.query;
+                                    if (q) {
+                                        // Execute search
+                                        const results = await performClientSideSearch(q);
+                                        currentMessages.push({
+                                            role: "tool",
+                                            tool_call_id: toolCall.id,
+                                            name: "web_search",
+                                            content: results || "No relevant search results found."
+                                        });
+                                        executedAny = true;
+                                    } else {
+                                        currentMessages.push({
+                                            role: "tool",
+                                            tool_call_id: toolCall.id,
+                                            name: "web_search",
+                                            content: "Error: No query provided."
+                                        });
+                                    }
+                                } catch (e) {
+                                    currentMessages.push({
+                                        role: "tool",
+                                        tool_call_id: toolCall.id,
+                                        name: "web_search",
+                                        content: "Error: Invalid arguments."
+                                    });
+                                }
+                            }
                         }
+                        
+                        if (!executedAny) {
+                             // Should not happen if we filtered tools correctly
+                             break;
+                        }
+                        turnCount++;
+                    } else {
+                        // Final response
+                        return message.content || "";
                     }
+                } // end while turns
+
+                // If we exit loop without return, return empty string?
+                return "";
+                
+            } catch (err: any) {
+                console.warn(`API call failed with key index ${i}:`, err);
+                lastError = err;
+                
+                const errStr = String(err).toLowerCase();
+                const isAuthError = errStr.includes("401") || errStr.includes("unauthorized") || errStr.includes("invalid api key");
+                const isRateLimit = errStr.includes("429") || errStr.includes("quota") || errStr.includes("rate limit") || errStr.includes("too many requests");
+                const isServerOverload = errStr.includes("503") || errStr.includes("500") || errStr.includes("502");
+                
+                // Retry only on specific errors if there are more keys
+                if ((isAuthError || isRateLimit || isServerOverload) && i < apiKeys.length - 1) {
+                    continue; // Try next key
+                } else {
+                    throw err; // Re-throw if it's not a retryable error or last key
                 }
-                turnCount++;
-            } else {
-                // No tool calls, return final response
-                const content = message && typeof message.content === 'string' 
-                    ? message.content 
-                    : Array.isArray(message?.content) 
-                        ? message.content.map((p: any) => (typeof p === 'string' ? p : p?.text || '')).join('') 
-                        : '';
-                return content || "";
             }
         }
         
-        return ""; // Exceeded max turns
-    } catch (e) {
-        console.error("Direct AI Chat failed:", e);
-        try {
-            useAIStore.getState().appendLog({
-                id: uuidv4(),
-                ts: Date.now(),
-                channel: 'ai',
-                provider: (useAIStore.getState().provider as any),
-                model: useAIStore.getState().model,
-                baseURL: useAIStore.getState().baseUrl,
-                request: { messages, temperature },
-                response: { error: e?.message || String(e) },
-                durationMs: undefined
-            });
-        } catch {}
-        return "";
+        throw lastError || new Error("All API keys failed");
+
+    } catch (e: any) {
+        console.error("AI Call Final Error:", e);
+        throw e;
     }
 };
 
@@ -2084,7 +2161,8 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
           }
       };
 
-      await Promise.all([worker(), worker(), worker()]);
+      // Increased concurrency from 3 to 6 to speed up enrichment
+      await Promise.all(Array(6).fill(null).map(() => worker()));
       if (diagEnabled) addStep('TMDB 详情补全', enrichT0, 'tmdb', { calls: detailCalls, items: toPatch.length });
       return items.map(i => byId.get(i.id) || i);
   };
@@ -2103,81 +2181,227 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
   return filtered;
 };
 
+export const getSearchSnippets = async (query: string): Promise<string> => {
+    const { 
+        enableSearch,
+        searchProvider,
+        getDecryptedGoogleKey,
+        googleSearchCx,
+        getDecryptedSerperKey,
+        getDecryptedYandexKey,
+        yandexSearchLogin,
+        useSystemProxy,
+        getProxyUrl
+    } = useAIStore.getState();
+
+    if (!enableSearch) return "";
+
+    try {
+        if (isTauriEnv) {
+            // Tauri Mode
+             const providerList = resolveTauriSearchProviderList({
+                provider: searchProvider,
+                googleKey: getDecryptedGoogleKey(),
+                googleCx: googleSearchCx,
+                serperKey: getDecryptedSerperKey(),
+                yandexKey: getDecryptedYandexKey(),
+                yandexUser: yandexSearchLogin
+            });
+
+            for (const eff of providerList) {
+                try {
+                    const rustConfig = {
+                        provider: eff.provider,
+                        api_key: eff.apiKey,
+                        cx: eff.cx,
+                        user: eff.user,
+                        search_type: 'text',
+                        proxy_url: getProxyUrl(),
+                        use_system_proxy: useSystemProxy
+                    };
+                    
+                    const resultStr = await invoke<string>('web_search', { query, config: rustConfig });
+                    const arr = JSON.parse(resultStr);
+                    if (Array.isArray(arr) && arr.length > 0) {
+                        return arr.slice(0, 3).map((i: any) => i.snippet || i.title).join('\n');
+                    }
+                } catch (e) { console.warn("Search snippet fetch failed", e); }
+            }
+        } else {
+            // Web Mode
+            if (searchProvider === 'google') {
+                const apiKeyStr = getDecryptedGoogleKey();
+                if (apiKeyStr && googleSearchCx) {
+                    const apiKeys = apiKeyStr.split(/[;；]/).map(k => k.trim()).filter(k => k);
+                    for (const apiKey of apiKeys) {
+                        const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(query)}&num=3`;
+                        try {
+                            await apiLimiter.acquire();
+                            const res = await fetchWithTimeout(url, { timeoutMs: 8000 });
+                            apiLimiter.release();
+                            if (res.ok) {
+                                const data = await res.json();
+                                if (data.items) {
+                                    return data.items.map((i: any) => i.snippet || i.title).join('\n');
+                                }
+                            }
+                        } catch (e) { 
+                            apiLimiter.release();
+                        }
+                    }
+                }
+            } else if (searchProvider === 'serper') {
+                 const apiKeyStr = getDecryptedSerperKey();
+                 if (apiKeyStr) {
+                    const apiKeys = apiKeyStr.split(/[;；]/).map(k => k.trim()).filter(k => k);
+                    for (const apiKey of apiKeys) {
+                        try {
+                            const res = await fetchWithTimeout('https://google.serper.dev/search', {
+                                method: 'POST',
+                                headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ q: query, num: 3 }),
+                                timeoutMs: 8000
+                            });
+                            if (res.ok) {
+                                const data = await res.json();
+                                if (data.organic) {
+                                    return data.organic.map((i: any) => i.snippet || i.title).join('\n');
+                                }
+                            }
+                        } catch {}
+                    }
+                 }
+            } else if (searchProvider === 'duckduckgo') {
+                try {
+                     const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_redirect=1&no_html=1`;
+                     const res = await fetchWithTimeout(url, { timeoutMs: 5000 });
+                     if (res.ok) {
+                         const data = await res.json();
+                         const items = [...(data.Results || []), ...(data.RelatedTopics || [])];
+                         return items.slice(0, 3).map((i: any) => i.Text || i.FirstURL).join('\n');
+                     }
+                } catch {}
+            }
+        }
+    } catch (e) {
+        console.warn("getSearchSnippets failed", e);
+    }
+    return "";
+};
+
 export const checkUpdates = async (items: MediaItem[]): Promise<{ id: string; latestUpdateInfo: string; isOngoing: boolean }[]> => {
   if (items.length === 0) return [];
-  
-  // Create a mapping of title -> id to map results back
-  const titleToId = new Map(items.map(i => [i.title.toLowerCase(), i.id]));
-  
-  const queryList = items.map(i => `"${i.title}" (${i.type})`).join(', ');
+
+  const { enableSearch } = useAIStore.getState();
   const isChinese = i18n.language.startsWith('zh');
-  let userPrompt = "";
   
-  if (isChinese) {
-      userPrompt = `请提供以下作品的最新更新状态: ${queryList}。
-      请提供截至今天的最新一集/一章信息。
-      返回一个包含以下对象的JSON数组:
-      - title: 字符串 (完全匹配)
-      - latestUpdateInfo: 字符串 (例如 "第4季 第8集" 或 "第1052章")
-      - isOngoing: 布尔值 (如果仍在更新则为 true)
+  // Batch processing
+  const BATCH_SIZE = 5;
+  const allUpdates: { id: string; latestUpdateInfo: string; isOngoing: boolean }[] = [];
+  
+  for (let i = 0; i < items.length; i += BATCH_SIZE) {
+      const batch = items.slice(i, i + BATCH_SIZE);
+      const titleToId = new Map(batch.map(item => [item.title.toLowerCase(), item.id]));
+      
+      let context = "";
+      let queryList = "";
+      
+      if (enableSearch) {
+          // Parallel search for the batch
+          const searchPromises = batch.map(async (item) => {
+              const typeTerm = isChinese ? 
+                  (item.type === MediaType.COMIC ? '漫画 最新话' : item.type === MediaType.BOOK ? '小说 最新章节' : '最新集 更新') : 
+                  (item.type === MediaType.COMIC ? 'latest chapter' : 'latest episode');
+              const q = `"${item.title}" ${typeTerm}`;
+              const snippets = await getSearchSnippets(q);
+              return { title: item.title, snippets };
+          });
+          
+          const results = await Promise.all(searchPromises);
+          context = results.map(r => `Work: ${r.title}\nSearch Results:\n${r.snippets || "No results"}\n---`).join('\n');
+          queryList = batch.map(item => `"${item.title}"`).join(', ');
+      } else {
+          queryList = batch.map(item => `"${item.title}" (${item.type})`).join(', ');
+      }
 
-      [注意] 如果联网搜索失败或没有找到相关结果，请利用你的内部知识库来判断并提供可能的最准确信息。即便信息不是最新的，也比返回空好。
-      `;
-  } else {
-      userPrompt = `Please check the latest status for: ${queryList}. 
-      Provide the absolute latest episode/chapter as of today.
-      Return a JSON array with objects containing:
-      - title: string (exact match)
-      - latestUpdateInfo: string (e.g. "Season 4 Episode 8" or "Chapter 1052")
-      - isOngoing: boolean (true if still updating)
+      let userPrompt = "";
+      if (isChinese) {
+          userPrompt = `请根据以下信息检查作品的最新更新状态: ${queryList}。
+          
+          ${enableSearch ? `参考搜索结果:\n${context}\n` : ''}
+          
+          请提供截至今天的最新一集/一章信息。
+          返回一个包含以下对象的JSON数组:
+          - title: 字符串 (完全匹配)
+          - latestUpdateInfo: 字符串 (例如 "第4季 第8集" 或 "第1052章")
+          - isOngoing: 布尔值 (如果仍在更新则为 true, 完结为 false)
+          
+          [注意] 
+          1. 如果有搜索结果，请优先依据搜索结果判断。
+          2. 如果搜索结果显示已完结，isOngoing 应为 false。
+          3. 如果没有搜索结果，请利用你的内部知识库。
+          4. 保持 JSON 格式合法。
+          `;
+      } else {
+          userPrompt = `Check the latest status for: ${queryList}.
+          
+          ${enableSearch ? `Reference Search Results:\n${context}\n` : ''}
+          
+          Provide the absolute latest episode/chapter as of today.
+          Return a JSON array with objects containing:
+          - title: string (exact match)
+          - latestUpdateInfo: string (e.g. "Season 4 Episode 8" or "Chapter 1052")
+          - isOngoing: boolean (true if still updating, false if ended)
+          
+          [Note]
+          1. Prioritize the provided search results.
+          2. If results indicate ended, set isOngoing to false.
+          3. If no search results, use internal knowledge.
+          4. Return strict JSON.
+          `;
+      }
 
-      [Note] If web search fails or yields no results, please use your internal knowledge base to provide the most accurate information possible. Even if the info is not real-time, it is better than returning nothing.
-      `;
+      const messages = [
+        { role: "system", content: isChinese ? "你是一个媒体更新追踪助手。仅返回原始JSON数组。不要使用Markdown。" : "You are a media update tracker. Return ONLY raw JSON array. No markdown." },
+        { role: "user", content: userPrompt }
+      ];
+
+      try {
+          const text = await callAI(messages, 0.1);
+          if (text) {
+              let jsonStr = "";
+              const jsonArrayMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
+              if (jsonArrayMatch) {
+                  jsonStr = jsonArrayMatch[0];
+              } else {
+                  jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+              }
+              
+              if (jsonStr.startsWith('[') || jsonStr.startsWith('{')) {
+                  const updates: any[] = JSON.parse(jsonStr);
+                  updates.forEach(u => {
+                      const id = titleToId.get(u.title.toLowerCase());
+                      if (id) {
+                          allUpdates.push({
+                              id,
+                              latestUpdateInfo: u.latestUpdateInfo,
+                              isOngoing: u.isOngoing
+                          });
+                      }
+                  });
+              }
+          }
+      } catch (e) {
+          console.error("Batch update check failed", e);
+      }
+      
+      // Small delay between batches to be nice to APIs
+      if (enableSearch && i + BATCH_SIZE < items.length) {
+          await new Promise(r => setTimeout(r, 1000));
+      }
   }
 
-  const messages = [
-    { role: "system", content: isChinese ? "你是一个媒体更新追踪助手。仅返回原始JSON数组。不要使用Markdown。" : "You are a media update tracker. Return ONLY raw JSON array. No markdown." },
-    { role: "user", content: userPrompt }
-  ];
-
-  const text = await callAI(messages, 0.1);
-  if (!text) return [];
-
-  // Improved JSON extraction
-  let jsonStr = "";
-  const jsonArrayMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
-  if (jsonArrayMatch) {
-      jsonStr = jsonArrayMatch[0];
-  } else {
-      jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
-  }
-
-  let updates: any[] = [];
-
-  if (!jsonStr.startsWith('[') && !jsonStr.startsWith('{')) {
-      console.warn("AI returned non-JSON response (updates):", text);
-      return [];
-  }
-
-  try {
-      updates = JSON.parse(jsonStr);
-  } catch (e) {
-      console.error("Failed to parse updates JSON", e);
-      return [];
-  }
-
-  // Map back to IDs
-  const results = updates.map(u => {
-      const id = titleToId.get(u.title.toLowerCase());
-      if (!id) return null;
-      return {
-          id,
-          latestUpdateInfo: u.latestUpdateInfo,
-          isOngoing: u.isOngoing
-      };
-  }).filter(Boolean) as { id: string; latestUpdateInfo: string; isOngoing: boolean }[];
-
-  return results;
+  return allUpdates;
 };
 
 export const repairMediaItem = async (item: MediaItem): Promise<Partial<MediaItem> | null> => {
@@ -2790,7 +3014,12 @@ export const testSearchConnection = async (
     const effYandexLogin = configOverride?.yandexSearchLogin || s.yandexSearchLogin;
     const effUseSystemProxy = s.useSystemProxy;
 
-    // Check cache
+    // Helper to split keys
+    const splitKeys = (k?: string) => (k || '').split(/[;；]/).map(x => x.trim()).filter(x => x);
+
+    // Check cache (only if single key or we accept cache for any key match - simplified for now)
+    // Actually for test connection we might want to bypass cache to really test?
+    // But existing logic uses cache. Let's keep cache logic simple: if inputs match exactly.
     const cacheKey = `test_conn:${effProvider}:${effGoogleKey || ''}:${effGoogleCx || ''}:${effSerperKey || ''}:${effYandexKey || ''}:${effYandexLogin || ''}`;
     const cached = testConnectionCache.get(cacheKey);
     if (cached && (Date.now() - cached.ts < TEST_CACHE_TTL)) {
@@ -2798,70 +3027,132 @@ export const testSearchConnection = async (
     }
 
     if (isTauriEnv) {
-        let apiKey: string | undefined = undefined;
+        let apiKeys: string[] = [];
+        let singleKeyProvider = false;
+
         switch (effProvider) {
-            case 'google': apiKey = effGoogleKey; break;
-            case 'serper': apiKey = effSerperKey; break;
-            case 'yandex': apiKey = effYandexKey; break;
-            default: apiKey = undefined;
+            case 'google': 
+                apiKeys = splitKeys(effGoogleKey); 
+                break;
+            case 'serper': 
+                apiKeys = splitKeys(effSerperKey); 
+                break;
+            case 'yandex': 
+                apiKeys = splitKeys(effYandexKey); 
+                break;
+            default: 
+                singleKeyProvider = true;
+                break;
         }
 
-        const rustConfig = {
-            provider: normalizeProvider(effProvider),
-            api_key: apiKey,
-            cx: effGoogleCx,
-            user: effYandexLogin,
-            search_type: 'text',
-            proxy_url: s.getProxyUrl(),
-            use_system_proxy: effUseSystemProxy
-        };
-        try {
-            const out = await invoke<string>('test_search_provider', { config: rustConfig });
-            const res = JSON.parse(out);
-            if (res.ok || (res.error && res.error.includes("429"))) {
-                 testConnectionCache.set(cacheKey, { ts: Date.now(), res });
+        if (singleKeyProvider) {
+             const rustConfig = {
+                provider: normalizeProvider(effProvider),
+                api_key: undefined,
+                cx: effGoogleCx,
+                user: effYandexLogin,
+                search_type: 'text',
+                proxy_url: s.getProxyUrl(),
+                use_system_proxy: effUseSystemProxy
+            };
+            try {
+                const out = await invoke<string>('test_search_provider', { config: rustConfig });
+                const res = JSON.parse(out);
+                if (res.ok) testConnectionCache.set(cacheKey, { ts: Date.now(), res });
+                return res;
+            } catch (e: any) {
+                return { ok: false, error: e?.message || String(e) };
             }
-            return res;
-        } catch (e: any) {
-            const errRes = { ok: false, error: e?.message || String(e) };
-            if (errRes.error && errRes.error.includes("429")) {
-                 testConnectionCache.set(cacheKey, { ts: Date.now(), res: errRes });
-            }
-            return errRes;
         }
+
+        // Multi-key loop for Tauri
+        let lastRes: any = { ok: false, error: 'no_keys_provided' };
+        if (apiKeys.length === 0) return { ok: false, error: 'missing_api_key' };
+
+        for (const apiKey of apiKeys) {
+            const rustConfig = {
+                provider: normalizeProvider(effProvider),
+                api_key: apiKey,
+                cx: effGoogleCx,
+                user: effYandexLogin,
+                search_type: 'text',
+                proxy_url: s.getProxyUrl(),
+                use_system_proxy: effUseSystemProxy
+            };
+            try {
+                const out = await invoke<string>('test_search_provider', { config: rustConfig });
+                const res = JSON.parse(out);
+                if (res.ok) {
+                    testConnectionCache.set(cacheKey, { ts: Date.now(), res });
+                    return res; // Return immediately on success
+                }
+                lastRes = res;
+                // If 429/Quota, try next. Else maybe stop? Let's try all for robustness in test.
+            } catch (e: any) {
+                lastRes = { ok: false, error: e?.message || String(e) };
+            }
+        }
+        return lastRes;
+
     } else {
+        // Web Mode
         try {
             if (effProvider === 'google') {
                 if (!effGoogleKey || !effGoogleCx) return { ok: false, error: 'missing_google_config' };
-                const url = `https://www.googleapis.com/customsearch/v1?key=${effGoogleKey}&cx=${effGoogleCx}&q=test&num=1`;
-                const res = await fetchWithTimeout(url, { timeoutMs: 15000 });
-                if (res.status === 429) {
-                     return { ok: false, provider: 'google', error: 'Quota Exceeded (429)' };
+                const apiKeys = splitKeys(effGoogleKey);
+                let lastError = 'no_keys';
+                
+                for (const apiKey of apiKeys) {
+                    const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${effGoogleCx}&q=test&num=1`;
+                    try {
+                        const res = await fetchWithTimeout(url, { timeoutMs: 15000 });
+                        if (res.ok) {
+                            return { ok: true, provider: 'google' };
+                        }
+                        if (res.status === 429) {
+                            lastError = 'Quota Exceeded (429)';
+                            continue; // Try next key
+                        }
+                        lastError = `HTTP ${res.status}`;
+                    } catch(e: any) {
+                        lastError = e?.message || String(e);
+                    }
                 }
-                const ok = res.ok;
-                return { ok, provider: 'google' };
+                return { ok: false, provider: 'google', error: lastError };
             }
+            
             if (effProvider === 'serper') {
                 if (!effSerperKey) return { ok: false, error: 'missing_serper_key' };
-                const res = await fetchWithTimeout('https://google.serper.dev/search', { method: 'POST', headers: { 'X-API-KEY': effSerperKey, 'Content-Type': 'application/json' }, body: JSON.stringify({ q: 'test' }), timeoutMs: 15000 });
-                if (res.status === 429) {
-                     return { ok: false, provider: 'serper', error: 'Quota Exceeded (429)' };
+                const apiKeys = splitKeys(effSerperKey);
+                let lastError = 'no_keys';
+
+                for (const apiKey of apiKeys) {
+                    try {
+                        const res = await fetchWithTimeout('https://google.serper.dev/search', { 
+                            method: 'POST', 
+                            headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' }, 
+                            body: JSON.stringify({ q: 'test' }), 
+                            timeoutMs: 15000 
+                        });
+                        if (res.ok) return { ok: true, provider: 'serper' };
+                        if (res.status === 429) {
+                            lastError = 'Quota Exceeded (429)';
+                            continue;
+                        }
+                        lastError = `HTTP ${res.status}`;
+                    } catch(e: any) {
+                        lastError = e?.message || String(e);
+                    }
                 }
-                return { ok: res.ok, provider: 'serper' };
+                return { ok: false, provider: 'serper', error: lastError };
             }
+
             if (effProvider === 'yandex') {
                 return { ok: false, error: 'web_preview_not_supported' };
             }
             return { ok: false, error: 'unsupported_provider' };
         } catch (e: any) {
-            if (e.name === 'AbortError' || e.message === 'timeout') {
-                 return { ok: false, error: 'Connection Timed Out (Check Network/Proxy)' };
-            }
-            // Network errors often appear as TypeErrors in fetch
-            if (e instanceof TypeError && e.message === 'Failed to fetch') {
-                 return { ok: false, error: 'Network Error (Check Proxy/VPN/CORS)' };
-            }
-            return { ok: false, error: e?.message || String(e) };
+             return { ok: false, error: e?.message || String(e) };
         }
     }
 };

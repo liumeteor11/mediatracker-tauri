@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { invoke } from '@tauri-apps/api/core';
 import CryptoJS from 'crypto-js';
 import { AIIOLogEntry, SearchDiagnostics } from '../types/types';
 
@@ -32,6 +33,9 @@ interface AIConfigState {
   bangumiToken: string;
   enableTmdb: boolean;
   enableBangumi: boolean;
+  enableNetworking: boolean;
+  enableDeepThinking: boolean;
+  enableTrending: boolean;
   trendingPrompt: string;
   lastSearchDurationMs: number | null;
   lastSearchAt: string | null;
@@ -74,6 +78,7 @@ interface AIConfigState {
   logs: AIIOLogEntry[];
   appendLog: (entry: AIIOLogEntry) => void;
   clearLogs: () => void;
+  initialize: () => Promise<void>;
 }
 
 const encrypt = (text: string) => {
@@ -127,6 +132,9 @@ Ensure data is accurate.`,
       bangumiToken: '',
       enableTmdb: true,
       enableBangumi: true,
+      enableNetworking: true,
+      enableDeepThinking: false,
+      enableTrending: true,
       trendingPrompt: '',
       lastSearchDurationMs: null,
       lastSearchAt: null,
@@ -224,7 +232,11 @@ Ensure data is accurate.`,
             break;
         }
         
-        set({ provider, baseUrl: defaultBaseUrl, model: defaultModel });
+        set((state) => ({ 
+            provider, 
+            baseUrl: defaultBaseUrl || state.baseUrl, 
+            model: defaultModel || state.model 
+        }));
       },
       setConfig: (config) => {
         const state = get();
@@ -272,7 +284,19 @@ Ensure data is accurate.`,
         const next = [entry, ...current].slice(0, 200);
         set({ logs: next });
       },
-      clearLogs: () => set({ logs: [] })
+      clearLogs: () => set({ logs: [] }),
+      initialize: async () => {
+        const isTauri = typeof window !== 'undefined' && (('__TAURI__' in window) || ('__TAURI_INTERNALS__' in window));
+        if (!isTauri) return;
+        try {
+            const [aiConfig, _] = await invoke<[any, any]>('get_app_configs');
+            if (aiConfig) {
+                set(state => ({ ...state, ...aiConfig }));
+            }
+        } catch (e) {
+            console.error("Failed to load AI config from backend", e);
+        }
+      }
     }),
     {
       name: 'ai-config-storage',
@@ -355,6 +379,9 @@ Ensure data is accurate.`,
         bangumiToken: state.bangumiToken,
         enableTmdb: state.enableTmdb,
         enableBangumi: state.enableBangumi,
+        enableNetworking: state.enableNetworking,
+        enableDeepThinking: state.enableDeepThinking,
+        enableTrending: state.enableTrending,
         trendingPrompt: state.trendingPrompt,
         lastSearchDurationMs: state.lastSearchDurationMs,
         lastSearchAt: state.lastSearchAt,
@@ -372,3 +399,44 @@ Ensure data is accurate.`,
     }
   )
 );
+
+// Auto-save to backend
+useAIStore.subscribe((state) => {
+    // Check for Tauri environment
+    const isTauri = typeof window !== 'undefined' && (('__TAURI__' in window) || ('__TAURI_INTERNALS__' in window));
+    if (isTauri) {
+         const config = {
+             provider: state.provider,
+             apiKey: state.apiKey,
+             model: state.model,
+             baseUrl: state.baseUrl,
+             temperature: state.temperature,
+             maxTokens: state.maxTokens,
+             systemPrompt: state.systemPrompt,
+             enableSearch: state.enableSearch,
+             searchProvider: state.searchProvider,
+             googleSearchApiKey: state.googleSearchApiKey,
+             googleSearchCx: state.googleSearchCx,
+             serperApiKey: state.serperApiKey,
+             yandexSearchApiKey: state.yandexSearchApiKey,
+             yandexSearchLogin: state.yandexSearchLogin,
+             omdbApiKey: state.omdbApiKey,
+             tmdbApiKey: state.tmdbApiKey,
+             bangumiToken: state.bangumiToken,
+             enableTmdb: state.enableTmdb,
+             enableBangumi: state.enableBangumi,
+             enableNetworking: state.enableNetworking,
+             enableDeepThinking: state.enableDeepThinking,
+             enableTrending: state.enableTrending,
+             trendingPrompt: state.trendingPrompt,
+             useSystemProxy: state.useSystemProxy,
+             proxyProtocol: state.proxyProtocol,
+             proxyHost: state.proxyHost,
+             proxyPort: state.proxyPort,
+             proxyUsername: state.proxyUsername,
+             proxyPassword: state.proxyPassword,
+             authoritativeDomains: state.authoritativeDomains
+         };
+         invoke('save_ai_config', { config }).catch(e => console.error("Failed to save AI config to backend", e));
+    }
+});

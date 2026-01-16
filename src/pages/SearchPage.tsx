@@ -13,7 +13,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 export const SearchPage: React.FC = () => {
   const { t, i18n } = useTranslation();
-  const { trendingPrompt, setConfig } = useAIStore();
+  const { trendingPrompt, setConfig, enableTrending } = useAIStore();
   
   // Use global search store
   const { 
@@ -95,10 +95,15 @@ export const SearchPage: React.FC = () => {
 
   // Initial load of trending if no results
   useEffect(() => {
-    if (results.length === 0 && isTrending && !loading) {
-        loadTrending();
+    if (enableTrending) {
+        if (results.length === 0 && !query.trim() && !loading) {
+            loadTrending();
+        }
+    } else if (isTrending) {
+        setIsTrending(false);
+        setResults([]);
     }
-  }, []);
+  }, [enableTrending]);
 
   const getTrendingPromptKey = () => {
     const langKey = i18n.language.split('-')[0];
@@ -510,8 +515,13 @@ export const SearchPage: React.FC = () => {
                     setError(null);
                     setSearchLoading(false);
                     setTrendingLoading(false);
-                    setIsTrending(true);
-                    if (!showCachedTrending()) loadTrending(false, { silent: true });
+                    if (enableTrending) {
+                        setIsTrending(true);
+                        if (!showCachedTrending()) loadTrending(false, { silent: true });
+                    } else {
+                        setIsTrending(false);
+                        setResults([]);
+                    }
                 }
             }}
             placeholder={t('search_page.input_placeholder')}
@@ -529,8 +539,13 @@ export const SearchPage: React.FC = () => {
                   setError(null);
                   setSearchLoading(false);
                   setTrendingLoading(false);
-                  setIsTrending(true);
-                  if (!showCachedTrending()) loadTrending(false, { silent: true });
+                  if (enableTrending) {
+                      setIsTrending(true);
+                      if (!showCachedTrending()) loadTrending(false, { silent: true });
+                  } else {
+                      setIsTrending(false);
+                      setResults([]);
+                  }
                 }}
                 className="p-2 rounded-full text-theme-subtext hover:bg-theme-bg transition-colors"
               >

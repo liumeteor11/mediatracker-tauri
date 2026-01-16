@@ -9,6 +9,8 @@ import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { useAuthStore } from './store/useAuthStore';
 import { useCollectionStore } from './store/useCollectionStore';
+import { useAIStore } from './store/useAIStore';
+import { useThemeStore } from './store/useThemeStore';
 import { checkUpdates } from './services/aiService';
 import { useTranslation } from 'react-i18next';
 
@@ -24,11 +26,15 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 const App: React.FC = () => {
   const { t } = useTranslation();
   const { initialize } = useCollectionStore();
+  const initAI = useAIStore(s => s.initialize);
+  const initTheme = useThemeStore(s => s.initialize);
 
   // Initialize store on mount
   useEffect(() => {
     initialize();
-  }, [initialize]);
+    initAI();
+    initTheme();
+  }, [initialize, initAI, initTheme]);
 
   // Auto-refresh logic on app mount
   useEffect(() => {

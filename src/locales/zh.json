@@ -58,6 +58,7 @@
     "base_url_label": "API 地址 (Base URL)",
     "api_key_label": "API 密钥",
     "stored_locally": "使用 AES 加密存储在本地",
+    "multi_key_hint": "支持多 Key 轮询 (分号分隔 ; 或 ；)，遇到额度不足自动切换。",
     "model_name_label": "模型名称",
     "enter_model_name": "输入模型名称",
     "enter_custom_model_name": "输入自定义模型名称",
@@ -72,6 +73,10 @@
     "enter_system_prompt": "输入系统提示词...",
     "web_search_capabilities": "联网搜索能力",
     "enable_web_search": "启用联网搜索",
+    "enable_networking": "开启内置联网功能",
+    "enable_deep_thinking": "开启深度思考功能",
+    "enable_trending": "开启热门推荐 (自动加载)",
+    "model_capabilities": "模型能力",
     "search_engine": "搜索引擎",
     "google_key_label": "Google 自定义搜索 API 密钥",
     "get_google_key": "获取 Google API 密钥",
@@ -217,7 +222,8 @@
     "test": "测试",
     "no_domains": "暂无域名",
     "clear_cache": "清除缓存",
-    "cache_cleared": "缓存已清除"
+    "cache_cleared": "缓存已清除",
+    "cache_clear_failed": "清除缓存失败"
   },
   "search_page": {
     "title": "发现你的下一部必看作品",

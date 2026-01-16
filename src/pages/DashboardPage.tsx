@@ -245,9 +245,13 @@ export const DashboardPage: React.FC = () => {
         <h1 className="text-3xl font-bold text-theme-accent">{t('dashboard.title')}</h1>
         <div className="flex items-center gap-2">
             <button
-               onClick={() => {
-                   clearSearchCache();
-                   toast.success(t('dashboard.cache_cleared'));
+               onClick={async () => {
+                   const success = await clearSearchCache();
+                   if (success) {
+                       toast.success(t('dashboard.cache_cleared'));
+                   } else {
+                       toast.error(t('dashboard.cache_clear_failed'));
+                   }
                }}
                className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50 focus:outline-none focus:ring-2 focus:ring-theme-accent"
                title={t('dashboard.clear_cache')}

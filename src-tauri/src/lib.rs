@@ -7,7 +7,7 @@ use reqwest::Client;
 use std::collections::HashMap;
 use std::error::Error;
 use database::Database;
-use models::{MediaItem, UserPublic, UserRecord};
+use models::{MediaItem, UserPublic, UserRecord, AIConfig, ThemeConfig};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use std::time::Duration;
@@ -910,6 +910,14 @@ async fn test_omdb(api_key: String, state: State<'_, AppState>) -> Result<String
     });
     Ok(body.to_string())
 }
+
+#[command]
+async fn clear_search_cache(state: State<'_, AppState>) -> Result<(), String> {
+    let mut guard = state.search_cache.write().await;
+    guard.clear();
+    Ok(())
+}
+
 #[command]
 async fn wiki_pageimages(title: String, lang_zh: bool, state: State<'_, AppState>) -> Result<String, String> {
     let base = if lang_zh { "https://zh.wikipedia.org/w/api.php" } else { "https://en.wikipedia.org/w/api.php" };
@@ -1088,6 +1096,21 @@ async fn test_proxy(config: ProxyTestConfig, state: State<'_, AppState>) -> Resu
 }
 
 // --- Database Commands ---
+
+#[command]
+fn save_ai_config(config: AIConfig, db: State<Arc<Database>>) -> Result<(), String> {
+    db.save_configs(Some(config), None)
+}
+
+#[command]
+fn save_theme_config(config: ThemeConfig, db: State<Arc<Database>>) -> Result<(), String> {
+    db.save_configs(None, Some(config))
+}
+
+#[command]
+fn get_app_configs(db: State<Arc<Database>>) -> Result<(Option<AIConfig>, Option<ThemeConfig>), String> {
+    db.get_configs()
+}
 
 #[command]
 fn get_collection(username: String, db: State<Arc<Database>>) -> Result<Vec<MediaItem>, String> {
@@ -1329,6 +1352,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             web_search, 
+            clear_search_cache, 
             bangumi_search,
             bangumi_details,
             ai_chat,
@@ -1338,6 +1362,9 @@ pub fn run() {
             test_proxy,
             test_search_provider,
             test_omdb,
+            save_ai_config,
+            save_theme_config,
+            get_app_configs,
             get_collection,
             save_item,
             remove_item,

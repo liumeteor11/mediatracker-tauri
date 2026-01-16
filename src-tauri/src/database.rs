@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri::Manager;
-use crate::models::{MediaItem, CollectionData, UserRecord};
+use crate::models::{MediaItem, CollectionData, UserRecord, AIConfig, ThemeConfig};
 use std::sync::Mutex;
 
 pub struct Database {
@@ -136,8 +136,33 @@ impl Database {
             }
         }
 
+        // Merge Configs
+        if let Some(config) = incoming.ai_config {
+            data.ai_config = Some(config);
+        }
+        if let Some(config) = incoming.theme_config {
+            data.theme_config = Some(config);
+        }
+
         drop(data);
         self.save()
+    }
+    
+    pub fn save_configs(&self, ai_config: Option<AIConfig>, theme_config: Option<ThemeConfig>) -> Result<(), String> {
+        let mut data = self.cache.lock().map_err(|e| e.to_string())?;
+        if let Some(config) = ai_config {
+            data.ai_config = Some(config);
+        }
+        if let Some(config) = theme_config {
+            data.theme_config = Some(config);
+        }
+        drop(data);
+        self.save()
+    }
+
+    pub fn get_configs(&self) -> Result<(Option<AIConfig>, Option<ThemeConfig>), String> {
+        let data = self.cache.lock().map_err(|e| e.to_string())?;
+        Ok((data.ai_config.clone(), data.theme_config.clone()))
     }
     
     #[allow(dead_code)]

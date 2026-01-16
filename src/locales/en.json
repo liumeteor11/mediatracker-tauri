@@ -58,6 +58,7 @@
     "base_url_label": "Base URL",
     "api_key_label": "API Key",
     "stored_locally": "Stored locally with AES encryption",
+    "multi_key_hint": "Support multiple keys separated by semicolons (; or ；). Auto-switch on error.",
     "model_name_label": "Model Name",
     "enter_model_name": "Enter model name",
     "enter_custom_model_name": "Enter custom model name",
@@ -72,6 +73,10 @@
     "enter_system_prompt": "Enter system prompt...",
     "web_search_capabilities": "Web Search Capabilities",
     "enable_web_search": "Enable Web Search",
+    "enable_networking": "Enable Built-in Networking",
+    "enable_deep_thinking": "Enable Deep Thinking",
+    "enable_trending": "Enable Trending Recommendations",
+    "model_capabilities": "Model Capabilities",
     "search_engine": "Search Engine",
     "google_key_label": "Google Custom Search API Key",
     "get_google_key": "Get Google API Key",
@@ -212,7 +217,8 @@
     "test": "Test",
     "no_domains": "No domains",
     "clear_cache": "Clear Cache",
-    "cache_cleared": "Cache cleared"
+    "cache_cleared": "Cache cleared",
+    "cache_clear_failed": "Failed to clear cache"
   },
   "search_page": {
     "title": "Discover Your Next Obsession",

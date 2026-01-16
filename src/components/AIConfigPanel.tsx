@@ -68,6 +68,7 @@ export const AIConfigPanel: React.FC = () => {
     provider, apiKey, model, baseUrl, temperature, maxTokens, systemPrompt,
     enableSearch, searchProvider, googleSearchCx, yandexSearchLogin,
     omdbApiKey, tmdbApiKey, bangumiToken, enableTmdb, enableBangumi,
+    enableNetworking, enableDeepThinking, enableTrending,
     useSystemProxy, proxyProtocol, proxyHost, proxyPort, proxyUsername,
     setProvider, setConfig, getDecryptedApiKey, getDecryptedGoogleKey, getDecryptedSerperKey, getDecryptedYandexKey, getDecryptedOmdbKey, getDecryptedTmdbKey, getDecryptedBangumiToken, getProxyUrl
   } = useAIStore();
@@ -285,6 +286,7 @@ export const AIConfigPanel: React.FC = () => {
           bangumiToken: localBangumiToken,
           enableTmdb: localEnableTmdb,
           enableBangumi: localEnableBangumi,
+          enableTrending,
           useSystemProxy: localUseSystemProxy,
           proxyProtocol: localProxyProtocol,
           proxyHost: localProxyHost,
@@ -352,7 +354,7 @@ export const AIConfigPanel: React.FC = () => {
                 value={localKey}
                 onChange={(e) => setLocalKey(e.target.value)}
                 className="w-full px-4 py-2 pr-10 rounded-lg border bg-theme-bg border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent outline-none"
-                placeholder="sk-..."
+                placeholder={t('ai_config.api_key_placeholder') || "sk-..."}
               />
               <button 
                 type="button"
@@ -363,10 +365,15 @@ export const AIConfigPanel: React.FC = () => {
               </button>
             </div>
             <div className="flex justify-between items-start mt-1">
-              <p className="text-xs text-theme-subtext flex items-center gap-1">
-                <Info className="w-3 h-3" />
-                {t('ai_config.stored_locally')}
-              </p>
+              <div className="flex flex-col gap-1">
+                <p className="text-xs text-theme-subtext flex items-center gap-1">
+                  <Info className="w-3 h-3" />
+                  {t('ai_config.stored_locally')}
+                </p>
+                <p className="text-xs text-theme-subtext/70 italic">
+                  {t('ai_config.multi_key_hint') || "Support multiple keys separated by semicolons (;). Auto-switch on error."}
+                </p>
+              </div>
               <div className="flex items-center gap-2">
                 {testResult.status && (
                     <div className={clsx(
@@ -476,6 +483,51 @@ export const AIConfigPanel: React.FC = () => {
               className="w-full px-4 py-2 rounded-lg border bg-theme-bg border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent outline-none"
             />
           </div>
+
+          <div>
+            <label className="block text-sm font-medium text-theme-text mb-2">{t('ai_config.model_capabilities')}</label>
+            <div className="space-y-3 bg-theme-bg/30 p-3 rounded-lg border border-theme-border">
+                 <div className="flex items-center justify-between">
+                    <span className="text-sm text-theme-text">{t('ai_config.enable_networking')}</span>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                        <input 
+                            type="checkbox" 
+                            checked={enableNetworking} 
+                            onChange={(e) => setConfig({ enableNetworking: e.target.checked })} 
+                            className="sr-only peer" 
+                        />
+                        <div className="w-11 h-6 bg-theme-border border-2 border-theme-subtext/20 rounded-full peer peer-focus:ring-2 peer-focus:ring-theme-accent peer-checked:bg-gradient-to-r peer-checked:from-theme-accent-warm peer-checked:to-theme-accent-warm-2 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                    </label>
+                </div>
+                
+                 <div className="flex items-center justify-between">
+                    <span className="text-sm text-theme-text">{t('ai_config.enable_deep_thinking')}</span>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                        <input 
+                            type="checkbox" 
+                            checked={enableDeepThinking} 
+                            onChange={(e) => setConfig({ enableDeepThinking: e.target.checked })} 
+                            className="sr-only peer" 
+                        />
+                        <div className="w-11 h-6 bg-theme-border border-2 border-theme-subtext/20 rounded-full peer peer-focus:ring-2 peer-focus:ring-theme-accent peer-checked:bg-gradient-to-r peer-checked:from-theme-accent-warm peer-checked:to-theme-accent-warm-2 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                    </label>
+                </div>
+
+                <div className="flex items-center justify-between">
+                    <span className="text-sm text-theme-text">{t('ai_config.enable_trending')}</span>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                        <input 
+                            type="checkbox" 
+                            checked={enableTrending} 
+                            onChange={(e) => setConfig({ enableTrending: e.target.checked })} 
+                            className="sr-only peer" 
+                        />
+                        <div className="w-11 h-6 bg-theme-border border-2 border-theme-subtext/20 rounded-full peer peer-focus:ring-2 peer-focus:ring-theme-accent peer-checked:bg-gradient-to-r peer-checked:from-theme-accent-warm peer-checked:to-theme-accent-warm-2 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
+                    </label>
+                </div>
+            </div>
+          </div>
+
           <div className="flex justify-end">
             <a 
                 href={
@@ -556,6 +608,9 @@ export const AIConfigPanel: React.FC = () => {
                                     {showGoogleKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                                   </button>
                             </div>
+                            <p className="text-xs text-theme-subtext/70 italic mt-1">
+                                {t('ai_config.multi_key_hint')}
+                            </p>
                              <a href="https://developers.google.com/custom-search/v1/overview" target="_blank" rel="noreferrer" className="text-xs text-theme-accent hover:underline mt-1 inline-block">
                                 {t('ai_config.get_google_key')}
                             </a>
@@ -601,6 +656,9 @@ export const AIConfigPanel: React.FC = () => {
                                 {showSerperKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                               </button>
                         </div>
+                        <p className="text-xs text-theme-subtext/70 italic mt-1">
+                            {t('ai_config.multi_key_hint')}
+                        </p>
                          <div className="flex justify-between items-center mt-1">
                              <a href="https://serper.dev/" target="_blank" rel="noreferrer" className="text-xs text-theme-accent hover:underline inline-block">
                                 {t('ai_config.get_serper_key')}
@@ -643,6 +701,9 @@ export const AIConfigPanel: React.FC = () => {
                                     {showYandexKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                                   </button>
                             </div>
+                            <p className="text-xs text-theme-subtext/70 italic mt-1">
+                                {t('ai_config.multi_key_hint')}
+                            </p>
                              <a href="https://xml.yandex.com/" target="_blank" rel="noreferrer" className="text-xs text-theme-accent hover:underline mt-1 inline-block">
                                 {t('ai_config.get_yandex_key')}
                             </a>
