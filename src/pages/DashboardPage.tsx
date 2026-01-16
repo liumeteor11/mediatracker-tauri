@@ -11,7 +11,7 @@ import { useTranslation } from 'react-i18next';
 import { Bell, Upload, Activity, ChevronDown, ChevronUp, BarChart2, X, Wifi } from 'lucide-react';
 import { useAIStore } from '../store/useAIStore';
 import { toast } from 'react-toastify';
-import { testAuthoritativeDomain } from '../services/aiService';
+import { testAuthoritativeDomain, clearSearchCache } from '../services/aiService';
 import { AIIOLogEntry } from '../types/types';
 
 const YearlyReport: React.FC<{ collection: MediaItem[] }> = ({ collection }) => {
