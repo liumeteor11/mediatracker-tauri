@@ -8,6 +8,10 @@
 
 专为速度、隐私和极致用户体验而设计。
 
+## 📌 当前版本
+
+v0.1.16
+
 ## ✨ 主要功能
 
 ### 🔍 AI 驱动的搜索与发现
@@ -63,7 +67,7 @@ npm run tauri build
 ```
 
 ## 📦 GitHub Actions 发布
-推送以 `v` 开头的标签（如 `v0.1.0`）即可自动触发构建流程。GitHub Actions 将生成 Windows、macOS 和 Linux 的安装包并发布到 Releases 页面。
+推送以 `v` 开头的标签（如 `v0.1.16`）即可自动触发构建流程。GitHub Actions 将生成 Windows、macOS 和 Linux 的安装包并发布到 Releases 草稿中。
 
 ## 🔒 隐私与安全
 - **本地存储**：所有收藏数据仅存储在您的设备上。

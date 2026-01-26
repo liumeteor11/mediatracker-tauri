@@ -8,6 +8,10 @@ Built with **React + Vite** (Frontend) and **Tauri/Rust** (Backend).
 
 Designed for speed, privacy, and an excellent user experience.
 
+## 📌 Current Version
+
+v0.1.16
+
 ## ✨ Key Features
 
 ### 🔍 AI-Powered Search & Discovery
@@ -63,7 +67,7 @@ npm run tauri build
 ```
 
 ## 📦 GitHub Actions Release
-Push a tag starting with `v` (e.g., `v0.1.0`) to automatically trigger the build workflow. It will generate installers for Windows, macOS, and Linux and publish them to GitHub Releases.
+Push a tag starting with `v` (e.g., `v0.1.16`) to automatically trigger the build workflow. It will generate installers for Windows, macOS, and Linux and publish them to GitHub Releases as a draft.
 
 ## 🔒 Privacy & Security
 - **Local Storage**: All collection data is stored locally on your device.
