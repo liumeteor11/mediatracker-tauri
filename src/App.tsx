@@ -45,12 +45,19 @@ const App: React.FC = () => {
 
       const now = Date.now();
       
-      // Filter items: Ongoing AND (Notification Enabled OR Undefined) AND (Not checked in last 24h)
-      const itemsToCheck = collection.filter(item => 
-        item.isOngoing && 
-        item.notificationEnabled !== false && 
-        (!item.lastCheckedAt || now - item.lastCheckedAt > 24 * 60 * 60 * 1000)
-      );
+      const getIntervalMs = (item: any) => {
+        if (!item.isOngoing) return Number.POSITIVE_INFINITY;
+        const notifOn = item.notificationEnabled !== false;
+        if (!notifOn) return Number.POSITIVE_INFINITY;
+        if (item.type === 'TV Series') return item.hasNewUpdate ? 6 * 60 * 60 * 1000 : 12 * 60 * 60 * 1000;
+        if (item.type === 'Comic') return 24 * 60 * 60 * 1000;
+        return 48 * 60 * 60 * 1000;
+      };
+      const itemsToCheck = collection.filter(item => {
+        const interval = getIntervalMs(item);
+        if (!item.lastCheckedAt) return interval < Number.POSITIVE_INFINITY;
+        return now - item.lastCheckedAt > interval;
+      });
 
       if (itemsToCheck.length > 0) {
         console.log("Checking updates for:", itemsToCheck.map(i => i.title));
@@ -65,7 +72,8 @@ const App: React.FC = () => {
                updateItem(update.id, {
                  latestUpdateInfo: update.latestUpdateInfo,
                  isOngoing: update.isOngoing,
-                 lastCheckedAt: now
+                 lastCheckedAt: now,
+                 hasNewUpdate: true
                });
                updateCount++;
              } else {

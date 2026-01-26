@@ -86,33 +86,25 @@ jobs:
         run: npm run tauri android init
 
       - name: Build Android APK
-        # Build APKs. Without signing config, this typically produces unsigned release APKs or debug APKs.
-        # Use --apk without value if it is a flag, but Tauri CLI v2 might treat it differently.
-        # For Tauri v2, 'tauri android build' builds APK by default or uses --apk as a flag.
-        # The error says "a value is required for '--apk <APK>'".
-        # This suggests it expects --apk=true or similar if parsed strictly, OR maybe just omit it if default.
-        # But actually, looking at Tauri v2 docs, 'tauri android build' builds app bundle by default?
-        # Let's try explicit format if needed, or check help. 
-        # Actually, the error "value is required" means clap parser expects a value.
-        # Let's try passing 'true' explicitly as suggested by the error message [possible values: true, false].
         run: npm run tauri android build -- --apk true
         env:
           NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
 
-      - name: Find and Rename APKs
-        run: |
-          mkdir -p release-apks
-          # Find all APKs
-          find src-tauri/gen/android/app/build/outputs/apk -name "*.apk" -type f -exec cp {} release-apks/ \;
-          
-          cd release-apks
-          # Rename to include version/tag if possible, or just upload
-          ls -la
-          
+      - name: Sign Android Release
+        id: sign_app
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: r0adkll/sign-android-release@v1
+        with:
+          releaseDirectory: src-tauri/gen/android/app/build/outputs/apk/release
+          signingKeyBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          alias: ${{ secrets.ANDROID_KEY_ALIAS }}
+          keyStorePassword: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
       - name: Upload Android Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/v')
         with:
-          files: release-apks/*.apk
+          files: ${{ steps.sign_app.outputs.signedReleaseFile }}
           draft: true
           tag_name: ${{ github.ref_name }}

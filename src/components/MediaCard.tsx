@@ -9,7 +9,7 @@ import { EditMediaModal } from './EditMediaModal';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import { toast } from 'react-toastify';
-import { checkUpdates, repairMediaItem } from '../services/aiService';
+import { checkUpdates, repairMediaItem, FALLBACK_POSTER, isPlaceholderPosterUrl } from '../services/aiService';
 
 const smartIncrement = (str: string): string => {
     const match = str.match(/(\d+)(?!.*\d)/);
@@ -135,7 +135,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
     }
   };
 
-  const fallbackPoster = 'https://placehold.co/600x400/1a1a1a/FFF?text=No+Image';
+  const fallbackPoster = FALLBACK_POSTER;
   const [imgSrc, setImgSrc] = useState(normalizeImgSrc(item.customPosterUrl || item.posterUrl) || fallbackPoster);
 
   useEffect(() => {
@@ -145,7 +145,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
   }, [item.customPosterUrl, item.posterUrl]);
 
   const handleImageError = () => {
-      setImgSrc('https://placehold.co/600x400/1a1a1a/FFF?text=Image+Error');
+      setImgSrc(FALLBACK_POSTER);
       setImgFailed(true);
       setImgLoading(false);
   };
@@ -157,6 +157,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
       const low = s.toLowerCase();
       return low === 'unknown' || s === '未知' || low === 'n/a' || low === 'na' || s === '-';
   };
+  const notificationEnabled = item.notificationEnabled !== false;
 
   const handleBackRefresh = async (e: React.MouseEvent) => {
       e.preventDefault();
@@ -167,12 +168,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
       try {
           const now = Date.now();
 
-          const isPosterMissing =
-              !item.posterUrl ||
-              item.posterUrl.includes('placehold.co') ||
-              item.posterUrl.includes('No+Image') ||
-              item.posterUrl.includes('Image+Error') ||
-              item.posterUrl.toLowerCase().includes('m.media-amazon.com');
+          const isPosterMissing = isPlaceholderPosterUrl(item.posterUrl);
           const isInfoMissing =
               isPosterMissing ||
               isUnknownText(item.releaseDate) ||
@@ -269,10 +265,18 @@ export const MediaCard: React.FC<MediaCardProps> = ({
           {/* Front Side */}
           <div className="absolute inset-0 backface-hidden rounded-theme overflow-hidden border-2 border-theme-border bg-theme-surface">
             <div className="relative h-full w-full">
-              {/* Collection Indicator */}
               {item.isCollection && (
                   <div className="absolute top-2 left-2 z-20 bg-black/60 backdrop-blur-md p-1.5 rounded-md text-white border border-white/10 shadow-lg">
                       <Layers className="w-4 h-4" />
+                  </div>
+              )}
+
+              {item.isPinned && (
+                  <div className={clsx(
+                      "absolute top-2 z-20 bg-theme-accent/80 backdrop-blur-md p-1.5 rounded-md text-theme-bg border border-theme-accent/40 shadow-lg",
+                      item.isCollection ? "left-10" : "left-2"
+                  )}>
+                      <ChevronsUp className="w-4 h-4" />
                   </div>
               )}
 
@@ -438,18 +442,34 @@ export const MediaCard: React.FC<MediaCardProps> = ({
                 </button>
               )}
 
-              {/* Create Collection Button */}
-              {variant === 'collection' && !item.isCollection && !isSelectionMode && onStartCollection && (
-                <div className="flex justify-end mb-3">
+              {variant === 'collection' && !isSelectionMode && (
+                <div className="flex justify-end gap-2 mb-3">
+                    {(!item.isCollection && onStartCollection) && (
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onStartCollection();
+                            }}
+                            className="p-2 rounded-lg bg-theme-bg border border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent transition-colors"
+                            title={t('collection.create_collection') || "Create Collection"}
+                        >
+                            <FolderPlus className="w-4 h-4" />
+                        </button>
+                    )}
                     <button
                         onClick={(e) => {
                             e.stopPropagation();
-                            onStartCollection();
+                            updateItem(item.id, { isPinned: !item.isPinned });
                         }}
-                        className="p-2 rounded-lg bg-theme-bg border border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent transition-colors"
-                        title={t('collection.create_collection') || "Create Collection"}
+                        className={clsx(
+                          "p-2 rounded-lg border transition-colors",
+                          item.isPinned
+                            ? "bg-theme-accent text-theme-bg border-theme-accent"
+                            : "bg-theme-bg border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent"
+                        )}
+                        title={item.isPinned ? t('media_card.unpin') : t('media_card.pin')}
                     >
-                        <FolderPlus className="w-4 h-4" />
+                        <ChevronsUp className="w-4 h-4" />
                     </button>
                 </div>
               )}
@@ -478,17 +498,17 @@ export const MediaCard: React.FC<MediaCardProps> = ({
                         <button 
                         onClick={(e) => {
                             e.stopPropagation();
-                            updateItem(item.id, { notificationEnabled: !item.notificationEnabled });
+                            updateItem(item.id, { notificationEnabled: !notificationEnabled });
                         }}
                         className={clsx(
                             "transition-colors",
-                            item.notificationEnabled 
+                            notificationEnabled 
                             ? "text-theme-accent"
                             : "text-theme-subtext"
                         )}
                         title={t('media_card.toggle_updates')}
                         >
-                        {item.notificationEnabled ? <Bell className="w-3.5 h-3.5 2xl:w-4 2xl:h-4" /> : <BellOff className="w-3.5 h-3.5 2xl:w-4 2xl:h-4" />}
+                        {notificationEnabled ? <Bell className="w-3.5 h-3.5 2xl:w-4 2xl:h-4" /> : <BellOff className="w-3.5 h-3.5 2xl:w-4 2xl:h-4" />}
                         </button>
                     </div>
                   </div>

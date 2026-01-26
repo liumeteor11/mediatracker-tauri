@@ -11,7 +11,7 @@ import { useTranslation } from 'react-i18next';
 import { Bell, Upload, Activity, ChevronDown, ChevronUp, BarChart2, X, Wifi } from 'lucide-react';
 import { useAIStore } from '../store/useAIStore';
 import { toast } from 'react-toastify';
-import { testAuthoritativeDomain, clearSearchCache } from '../services/aiService';
+import { testAuthoritativeDomain, clearSearchCache, checkUpdates } from '../services/aiService';
 import { AIIOLogEntry } from '../types/types';
 
 const YearlyReport: React.FC<{ collection: MediaItem[] }> = ({ collection }) => {
@@ -174,6 +174,7 @@ export const DashboardPage: React.FC = () => {
   const stats = getStats();
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isSyncOpen, setIsSyncOpen] = useState(false);
+  const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const lastSearchDurationMs = useAIStore(s => s.lastSearchDurationMs);
   const lastSearchAt = useAIStore(s => s.lastSearchAt);
   const lastSearchQuery = useAIStore(s => s.lastSearchQuery);
@@ -244,6 +245,49 @@ export const DashboardPage: React.FC = () => {
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold text-theme-accent">{t('dashboard.title')}</h1>
         <div className="flex items-center gap-2">
+            <button
+               onClick={async () => {
+                   if (isCheckingUpdates) return;
+                   const ongoing = collection.filter(item => item.isOngoing && item.notificationEnabled !== false);
+                   if (ongoing.length === 0) {
+                       toast.info(t('dashboard.no_ongoing_items'));
+                       return;
+                   }
+                   setIsCheckingUpdates(true);
+                   try {
+                       toast.info(t('dashboard.checking_updates'));
+                       const now = Date.now();
+                       const updates = await checkUpdates(ongoing);
+                       let count = 0;
+                       updates.forEach(u => {
+                           const original = ongoing.find(i => i.id === u.id);
+                           if (!original) return;
+                           const changed = u.latestUpdateInfo !== original.latestUpdateInfo;
+                           updateItem(u.id, {
+                               latestUpdateInfo: u.latestUpdateInfo,
+                               isOngoing: u.isOngoing,
+                               lastCheckedAt: now,
+                               hasNewUpdate: changed ? true : original.hasNewUpdate
+                           });
+                           if (changed) count++;
+                       });
+                       if (count > 0) {
+                           toast.success(t('dashboard.updates_found', { count }));
+                       } else {
+                           toast.info(t('dashboard.no_new_updates'));
+                       }
+                   } catch {
+                       toast.error(t('dashboard.update_check_failed'));
+                   } finally {
+                       setIsCheckingUpdates(false);
+                   }
+               }}
+               className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50 focus:outline-none focus:ring-2 focus:ring-theme-accent"
+               title={t('dashboard.check_updates')}
+            >
+               <Bell className={clsx("w-4 h-4", isCheckingUpdates && "animate-pulse")} />
+               <span className="hidden sm:inline">{t('dashboard.check_updates')}</span>
+            </button>
             <button
                onClick={async () => {
                    const success = await clearSearchCache();

@@ -291,7 +291,18 @@ Ensure data is accurate.`,
         try {
             const [aiConfig, _] = await invoke<[any, any]>('get_app_configs');
             if (aiConfig) {
-                set(state => ({ ...state, ...aiConfig }));
+                const hasLocal = (() => {
+                  try {
+                    if (typeof window === 'undefined' || !window.localStorage) return false;
+                    const raw = window.localStorage.getItem('ai-config-storage');
+                    if (!raw) return false;
+                    const parsed = JSON.parse(raw);
+                    return !!(parsed && typeof parsed === 'object' && parsed.state);
+                  } catch {
+                    return false;
+                  }
+                })();
+                set(state => (hasLocal ? { ...aiConfig, ...state } : { ...state, ...aiConfig }));
             }
         } catch (e) {
             console.error("Failed to load AI config from backend", e);

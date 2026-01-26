@@ -29,7 +29,10 @@ export const fetchCover = async (item: MediaItem): Promise<string | undefined> =
                     coverUrl = await fetchMusicCover(item);
                     break;
                 default:
-                    coverUrl = await fetchPosterFromSearch(item.title, item.releaseDate?.split('-')[0] || '', item.type);
+                    {
+                        const res = await fetchPosterFromSearch(item.title, item.releaseDate?.split('-')[0] || '', item.type);
+                        coverUrl = res?.picked;
+                    }
             }
             
             if (coverUrl) {
@@ -40,7 +43,8 @@ export const fetchCover = async (item: MediaItem): Promise<string | undefined> =
             // If specific fetch returned nothing, try generic search as last resort for all types
             // (Only if specific fetch didn't already fallback to search internally)
             if (item.type === MediaType.BOOK || item.type === MediaType.MUSIC) {
-                 coverUrl = await fetchPosterFromSearch(item.title, item.releaseDate?.split('-')[0] || '', item.type);
+                 const res = await fetchPosterFromSearch(item.title, item.releaseDate?.split('-')[0] || '', item.type);
+                 coverUrl = res?.picked;
                  if (coverUrl) return coverUrl;
             }
 
@@ -68,7 +72,10 @@ const fetchMovieCover = async (item: MediaItem): Promise<string | undefined> => 
         const poster = best ? (getTMDBPosterUrl(best.poster_path) || undefined) : undefined;
         if (poster) return poster;
     }
-    return fetchPosterFromSearch(item.title, item.releaseDate?.split('-')[0] || '', 'movie');
+    {
+        const res = await fetchPosterFromSearch(item.title, item.releaseDate?.split('-')[0] || '', 'movie');
+        return res?.picked;
+    }
 };
 
 const fetchBookCover = async (item: MediaItem): Promise<string | undefined> => {
@@ -105,7 +112,7 @@ const fetchMusicCover = async (item: MediaItem): Promise<string | undefined> => 
         // User-Agent is required by MusicBrainz
         const res = await fetch(`https://musicbrainz.org/ws/2/release?query=${query}${artist}&fmt=json&limit=1`, {
             headers: {
-                'User-Agent': 'MediaTrackerAI/1.0 ( contact@example.com )' 
+                'User-Agent': 'MediaTrackerAI/1.0'
             }
         });
         

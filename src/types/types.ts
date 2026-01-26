@@ -51,6 +51,7 @@ export interface MediaItem {
   // Collection fields
   parentCollectionId?: string; // If set, this item belongs to a collection
   isCollection?: boolean; // If true, this item is a container for other items
+  isPinned?: boolean;
 }
 
 export interface User {

@@ -2,12 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { useCollectionStore } from '../store/useCollectionStore';
 import { MediaCard } from '../components/MediaCard';
 import { CollectionCategory, MediaItem } from '../types/types';
-import { Filter, Search as SearchIcon, X, Download, Upload, MoreHorizontal, RefreshCw, Plus, Check, ArrowLeft } from 'lucide-react';
+import { Filter, Search as SearchIcon, X, Download, Upload, MoreHorizontal, RefreshCw, Plus, Check, ArrowLeft, Edit3 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
-import { checkUpdates, repairMediaItem } from '../services/aiService';
+import { checkUpdates, repairMediaItem, isPlaceholderPosterUrl } from '../services/aiService';
 import { AddMediaModal } from '../components/AddMediaModal';
 import { save } from '@tauri-apps/plugin-dialog';
 
@@ -78,7 +78,7 @@ const SortableItem = ({ item, index, onClick, onAction, isSelectionMode, isSelec
 
 export const CollectionPage: React.FC = () => {
   const { t } = useTranslation();
-  const { collection, moveCategory, importCollection, exportCollection, updateItem, reorderCollection, createCollection } = useCollectionStore();
+  const { collection, moveCategory, importCollection, exportCollection, updateItem, reorderCollection, createCollection, updateCollectionMembers } = useCollectionStore();
   const [filter, setFilter] = useState<CollectionCategory | 'All'>('All');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -91,6 +91,9 @@ export const CollectionPage: React.FC = () => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [collectionInitiatorId, setCollectionInitiatorId] = useState<string | null>(null);
   const [viewingCollectionId, setViewingCollectionId] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [editCollectionId, setEditCollectionId] = useState<string | null>(null);
+  const [editSelectedIds, setEditSelectedIds] = useState<string[]>([]);
 
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const menuRef = React.useRef<HTMLDivElement>(null);
@@ -106,21 +109,65 @@ export const CollectionPage: React.FC = () => {
     })
   );
 
+  const filteredCollection = React.useMemo(() => {
+    let base = collection;
+
+    if (editMode && viewingCollectionId) {
+        base = base.filter(item => !item.isCollection && (item.parentCollectionId === viewingCollectionId || !item.parentCollectionId));
+    } else if (viewingCollectionId) {
+        base = base.filter(item => item.parentCollectionId === viewingCollectionId);
+    } else {
+        base = base.filter(item => !item.parentCollectionId);
+    }
+
+    if (filter !== 'All') {
+      base = base.filter((item) => item.category === filter);
+    }
+    
+    if (searchTerm) {
+        const lower = searchTerm.toLowerCase();
+        base = base.filter((item) => 
+            item.title.toLowerCase().includes(lower)
+        );
+    }
+
+    const indexMap = new Map(collection.map((item, idx) => [item.id, idx]));
+    const sorted = [...base].sort((a, b) => {
+        const ap = !!a.isPinned;
+        const bp = !!b.isPinned;
+        if (ap !== bp) return ap ? -1 : 1;
+        return (indexMap.get(a.id) ?? 0) - (indexMap.get(b.id) ?? 0);
+    });
+
+    return sorted;
+  }, [collection, filter, searchTerm, viewingCollectionId, editMode]);
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     
     if (active.id !== over?.id) {
-      const oldIndex = collection.findIndex((item) => item.id === active.id);
-      const newIndex = collection.findIndex((item) => item.id === over?.id);
+      const oldIndex = filteredCollection.findIndex((item) => item.id === active.id);
+      const newIndex = filteredCollection.findIndex((item) => item.id === over?.id);
       
       if (oldIndex !== -1 && newIndex !== -1) {
-          const newOrder = arrayMove(collection, oldIndex, newIndex);
+          const nextVisible = arrayMove(filteredCollection, oldIndex, newIndex);
+          const nextVisibleIds = new Set(nextVisible.map(item => item.id));
+          const topLevel = collection.filter(item => !item.parentCollectionId && nextVisibleIds.has(item.id));
+          const topLevelMap = new Map(topLevel.map(item => [item.id, item]));
+          const reorderedTop = nextVisible.map(item => topLevelMap.get(item.id) || item);
+          let topIndex = 0;
+          const newOrder = collection.map(item => {
+              if (item.parentCollectionId || !nextVisibleIds.has(item.id)) return item;
+              const nextItem = reorderedTop[topIndex];
+              topIndex += 1;
+              return nextItem;
+          });
           reorderCollection(newOrder);
       }
     }
   };
 
-  const isDraggable = filter === 'All' && searchTerm === '';
+  const isDraggable = filter === 'All' && searchTerm === '' && !selectionMode && !editMode;
 
   const handleRefresh = async () => {
       setIsRefreshing(true);
@@ -132,9 +179,7 @@ export const CollectionPage: React.FC = () => {
           // 1. Repair missing metadata (posters, dates)
           // Process in chunks to avoid overwhelming APIs
           const itemsToRepair = collection.filter(item => 
-              !item.posterUrl || 
-              item.posterUrl.includes('placehold.co') || 
-              item.posterUrl.toLowerCase().includes('m.media-amazon.com') ||
+              isPlaceholderPosterUrl(item.posterUrl) ||
               !item.releaseDate
           );
           
@@ -203,6 +248,8 @@ export const CollectionPage: React.FC = () => {
       if (e.key === 'Escape') {
         if (selectionMode) {
              handleCancelCollection();
+        } else if (editMode) {
+             handleCancelEditCollection();
         } else if (viewingCollectionId) {
              setViewingCollectionId(null);
         } else {
@@ -262,28 +309,33 @@ export const CollectionPage: React.FC = () => {
       setSelectedIds([]);
   };
 
-  const filteredCollection = React.useMemo(() => {
-    let base = collection;
+  const handleStartEditCollection = () => {
+      if (!viewingCollectionId) return;
+      const currentMembers = collection.filter(i => i.parentCollectionId === viewingCollectionId).map(i => i.id);
+      setSelectionMode(false);
+      setCollectionInitiatorId(null);
+      setSelectedIds([]);
+      setEditMode(true);
+      setEditCollectionId(viewingCollectionId);
+      setEditSelectedIds(currentMembers);
+  };
 
-    // Hierarchy Filter
-    if (viewingCollectionId) {
-        base = base.filter(item => item.parentCollectionId === viewingCollectionId);
-    } else {
-        base = base.filter(item => !item.parentCollectionId);
-    }
+  const handleToggleEditSelection = (id: string) => {
+      setEditSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  };
 
-    if (filter !== 'All') {
-      base = base.filter((item) => item.category === filter);
-    }
-    
-    if (searchTerm) {
-        const lower = searchTerm.toLowerCase();
-        base = base.filter((item) => 
-            item.title.toLowerCase().includes(lower)
-        );
-    }
-    return base;
-  }, [collection, filter, searchTerm, viewingCollectionId]);
+  const handleConfirmEditCollection = () => {
+      if (!editCollectionId) return;
+      updateCollectionMembers(editCollectionId, editSelectedIds);
+      toast.success(t('collection.edit_saved') || "Collection updated");
+      handleCancelEditCollection();
+  };
+
+  const handleCancelEditCollection = () => {
+      setEditMode(false);
+      setEditCollectionId(null);
+      setEditSelectedIds([]);
+  };
 
   const handleMove = (item: MediaItem, category: CollectionCategory) => {
     moveCategory(item.id, category);
@@ -390,6 +442,11 @@ export const CollectionPage: React.FC = () => {
                         <h1 className="text-3xl font-bold text-theme-accent">{t('collection.selection_mode') || "Selection Mode"}</h1>
                         <p className="mt-1 text-theme-subtext">{t('collection.selection_hint') || "Select items to add to collection"}</p>
                      </>
+                ) : editMode ? (
+                     <>
+                        <h1 className="text-3xl font-bold text-theme-accent">{t('collection.edit_mode') || "Edit Collection"}</h1>
+                        <p className="mt-1 text-theme-subtext">{t('collection.edit_hint') || "Select items to keep in this collection"}</p>
+                     </>
                 ) : viewingCollectionId ? (
                      <>
                         <h1 className="text-3xl font-bold text-theme-accent">
@@ -406,17 +463,17 @@ export const CollectionPage: React.FC = () => {
             </div>
         </div>
 
-        {selectionMode ? (
+        {selectionMode || editMode ? (
             <div className="flex items-center gap-4">
                 <button
-                    onClick={handleCancelCollection}
+                    onClick={selectionMode ? handleCancelCollection : handleCancelEditCollection}
                     className="px-6 py-2 rounded-lg border border-theme-border text-theme-subtext hover:text-theme-text hover:bg-theme-bg transition-colors flex items-center gap-2"
                 >
                     <X className="w-5 h-5" />
                     {t('common.cancel')}
                 </button>
                 <button
-                    onClick={handleConfirmCollection}
+                    onClick={selectionMode ? handleConfirmCollection : handleConfirmEditCollection}
                     className="px-6 py-2 rounded-lg bg-theme-accent text-theme-bg font-bold hover:bg-theme-accent-hover transition-colors flex items-center gap-2 shadow-lg shadow-theme-accent/20"
                 >
                     <Check className="w-5 h-5" />
@@ -449,6 +506,16 @@ export const CollectionPage: React.FC = () => {
                 >
                     <RefreshCw className={clsx("w-5 h-5", isRefreshing && "animate-spin")} />
                 </button>
+
+                {viewingCollectionId && (
+                    <button
+                        onClick={handleStartEditCollection}
+                        className="p-2 rounded-lg border bg-theme-surface border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent transition-colors flex items-center justify-center"
+                        title={t('collection.edit_collection') || "Edit Collection"}
+                    >
+                        <Edit3 className="w-5 h-5" />
+                    </button>
+                )}
 
                 <button
                     onClick={() => setIsAddModalOpen(true)}
@@ -529,7 +596,7 @@ export const CollectionPage: React.FC = () => {
             onDragEnd={handleDragEnd}
           >
             <SortableContext 
-              items={collection.map(i => i.id)}
+              items={filteredCollection.map(i => i.id)}
               strategy={rectSortingStrategy}
             >
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-5 gap-y-8 gap-x-6">
@@ -540,6 +607,8 @@ export const CollectionPage: React.FC = () => {
                             onClick={() => {
                                 if (selectionMode) {
                                     handleToggleSelection(item.id);
+                                } else if (editMode) {
+                                    handleToggleEditSelection(item.id);
                                 } else if (item.isCollection) {
                                     setViewingCollectionId(item.id);
                                 } else {
@@ -548,9 +617,9 @@ export const CollectionPage: React.FC = () => {
                             }}
                             onAction={handleMove}
                             index={index}
-                            isSelectionMode={selectionMode}
-                            isSelected={selectedIds.includes(item.id)}
-                            onStartCollection={() => handleStartCollection(item.id)}
+                            isSelectionMode={selectionMode || editMode}
+                            isSelected={selectionMode ? selectedIds.includes(item.id) : editSelectedIds.includes(item.id)}
+                            onStartCollection={editMode ? undefined : () => handleStartCollection(item.id)}
                         />
                     ))}
                 </div>
@@ -567,6 +636,8 @@ export const CollectionPage: React.FC = () => {
                             onClick={() => {
                                 if (selectionMode) {
                                     handleToggleSelection(item.id);
+                                } else if (editMode) {
+                                    handleToggleEditSelection(item.id);
                                 } else if (item.isCollection) {
                                     setViewingCollectionId(item.id);
                                 } else {
@@ -576,9 +647,9 @@ export const CollectionPage: React.FC = () => {
                             onAction={handleMove}
                             index={index}
                             variant="collection"
-                            isSelectionMode={selectionMode}
-                            isSelected={selectedIds.includes(item.id)}
-                            onStartCollection={() => handleStartCollection(item.id)}
+                            isSelectionMode={selectionMode || editMode}
+                            isSelected={selectionMode ? selectedIds.includes(item.id) : editSelectedIds.includes(item.id)}
+                            onStartCollection={editMode ? undefined : () => handleStartCollection(item.id)}
                         />
                     ))}
                 </AnimatePresence>

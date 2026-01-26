@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Search, Loader2, TrendingUp, AlertCircle, RefreshCw, Edit, X, Save, RotateCcw } from 'lucide-react';
-import { searchMedia, getTrendingMedia, fetchPosterFromSearch, performClientSideSearch, processSearchResult, refreshTrendingCache } from '../services/aiService';
+import { searchMedia, getTrendingMedia, fetchPosterFromSearch, performClientSideSearch, processSearchResult, refreshTrendingCache, isPlaceholderPosterUrl } from '../services/aiService';
 import { MediaItem, CollectionCategory, MediaType } from '../types/types';
 import { MediaCard } from '../components/MediaCard';
 import { useCollectionStore } from '../store/useCollectionStore';
@@ -42,6 +42,34 @@ export const SearchPage: React.FC = () => {
     const id = uuidv4();
     setCurrentSearchId(id);
     return id;
+  };
+
+  const getRelevanceScore = (item: MediaItem, q: string) => {
+    const qLower = q.trim().toLowerCase();
+    if (!qLower) return 0;
+    const title = (item.title || '').toLowerCase();
+    const desc = (item.description || '').toLowerCase();
+    const people = `${item.directorOrAuthor || ''} ${(item.cast || []).join(' ')}`.toLowerCase();
+    const tokens = qLower
+      .split(/[\s,，。.;:：/\\\-_|]+/)
+      .map(s => s.trim())
+      .filter(s => s && (s.length > 1 || /\d/.test(s)));
+    if (!tokens.includes(qLower)) tokens.unshift(qLower);
+    let score = 0;
+    if (title === qLower) score += 200;
+    if (title.includes(qLower)) score += 120;
+    tokens.forEach(tk => {
+      if (title.includes(tk)) score += 40;
+      if (desc.includes(tk)) score += 10;
+      if (people.includes(tk)) score += 8;
+    });
+    const year = (item.releaseDate || '').split('-')[0];
+    if (year && qLower.includes(year)) score += 20;
+    return score;
+  };
+
+  const sortByRelevance = (items: MediaItem[], q: string) => {
+    return [...items].sort((a, b) => getRelevanceScore(b, q) - getRelevanceScore(a, q));
   };
 
   const cancelOps = () => {
@@ -236,12 +264,13 @@ export const SearchPage: React.FC = () => {
       
       if (!isOpActive(opId)) return;
       const duration = Math.round(performance.now() - startTs);
-      setResults(data);
-      writeSearchCache(q, selectedType, data);
+      const sorted = sortByRelevance(data, q);
+      setResults(sorted);
+      writeSearchCache(q, selectedType, sorted);
       useAIStore.getState().setConfig({ lastSearchDurationMs: duration, lastSearchAt: new Date().toISOString(), lastSearchQuery: q });
       
-      const verifiedData = await verifyResults(data, q, opId);
-      const dataForHydration = verifiedData || data;
+      const verifiedData = await verifyResults(sorted, q, opId);
+      const dataForHydration = verifiedData || sorted;
       void hydratePosters(dataForHydration, {}, opId).catch(() => {});
 
       if (data.length === 0) {
@@ -340,19 +369,13 @@ export const SearchPage: React.FC = () => {
           return next;
       });
 
+      const sorted = sortByRelevance(mapped, q);
       setResults(prev => {
         if (!isOpActive(opId)) return prev;
-        // Merge with prev? Or just replace?
-        // Since we verify the *initial* items, and no other ops should be modifying results (except hydratePosters),
-        // we should be careful.
-        // hydratePosters modifies `posterUrl`.
-        // If we just replace with `mapped`, we lose `hydratePosters` changes if they happened concurrently?
-        // But we are now awaiting verifyResults BEFORE hydratePosters. So hydratePosters hasn't run yet.
-        // So replacing is safe.
-        return mapped;
+        return sorted;
       });
-      try { writeSearchCache(q, selectedType, mapped); } catch {}
-      return mapped;
+      try { writeSearchCache(q, selectedType, sorted); } catch {}
+      return sorted;
     } catch {
         return undefined;
     }
@@ -366,7 +389,7 @@ export const SearchPage: React.FC = () => {
     const effOpId = opId ?? startOp();
     const force = !!opts.force;
     const persistTrending = !!opts.persistTrending;
-    const queue = items.filter(i => !i.customPosterUrl && (force || !i.posterUrl || i.posterUrl.includes('placehold.co') || (i.posterUrl || '').toLowerCase().includes('m.media-amazon.com')));
+    const queue = items.filter(i => !i.customPosterUrl && (force || isPlaceholderPosterUrl(i.posterUrl)));
     const mergedById = new Map<string, MediaItem>(items.map(i => [i.id, i]));
 
     const persist = (arr: MediaItem[]) => {
@@ -390,7 +413,6 @@ export const SearchPage: React.FC = () => {
       // Unless force is true? hydratePosters is called with force=true on manual refresh.
       // But even if force is true, we shouldn't replace a valid poster with a broken one if possible.
       // Actually, fetchPosterFromSearch returns undefined if failed.
-      // But if it returns a placehold.co link?
       // fetchPosterFromSearch logic ensures it tries to return a real image.
       
       // Additional safety: if the current item ALREADY has a valid poster (and we are not in force mode, OR even if we are),
@@ -399,9 +421,7 @@ export const SearchPage: React.FC = () => {
       // This implies multiple calls to applyUpdate or race condition.
       
       // Let's ensure we don't apply the same update redundantly or regress.
-      const isPlaceholder = (u?: string) => !u || u.includes('placehold.co') || u.includes('No+Image') || u.includes('m.media-amazon.com');
-      
-      if (patch.posterUrl && isPlaceholder(patch.posterUrl) && !isPlaceholder(cur.posterUrl)) {
+      if (patch.posterUrl && isPlaceholderPosterUrl(patch.posterUrl) && !isPlaceholderPosterUrl(cur.posterUrl)) {
           // New poster is placeholder, but old one was valid. Skip.
           return;
       }
@@ -433,9 +453,9 @@ export const SearchPage: React.FC = () => {
         const item = queue.shift()!;
         const year = item.releaseDate ? item.releaseDate.split('-')[0] : '';
         try {
-          const url = await fetchPosterFromSearch(item.title, year, item.type);
+          const { picked } = await fetchPosterFromSearch(item.title, year, item.type);
           if (!isOpActive(effOpId)) return;
-          if (url) applyUpdate(item.id, item.title, { posterUrl: url });
+          if (picked) applyUpdate(item.id, item.title, { posterUrl: picked });
         } catch {}
       }
     };

@@ -80,8 +80,6 @@ export const AIConfigPanel: React.FC = () => {
   const [localOmdbKey, setLocalOmdbKey] = useState(getDecryptedOmdbKey());
   const [localTmdbKey, setLocalTmdbKey] = useState(getDecryptedTmdbKey());
   const [localBangumiToken, setLocalBangumiToken] = useState(getDecryptedBangumiToken());
-  const [localEnableTmdb, setLocalEnableTmdb] = useState(enableTmdb);
-  const [localEnableBangumi, setLocalEnableBangumi] = useState(enableBangumi);
   
   const [showKey, setShowKey] = useState(false);
   const [showGoogleKey, setShowGoogleKey] = useState(false);
@@ -167,7 +165,7 @@ export const AIConfigPanel: React.FC = () => {
       const result = await testTmdbConnection(localTmdbKey);
       if (result.ok) {
         toast.success(t('ai_config.connection_verified'));
-        setConfig({ tmdbApiKey: localTmdbKey, enableTmdb: localEnableTmdb });
+        setConfig({ tmdbApiKey: localTmdbKey, enableTmdb });
       } else {
         toast.error(`${t('ai_config.connection_failed_prefix')}${result.error}`);
       }
@@ -182,7 +180,7 @@ export const AIConfigPanel: React.FC = () => {
         const result = await testBangumiConnection(localBangumiToken);
         if (result.ok) {
             toast.success(t('ai_config.connection_verified'));
-            setConfig({ bangumiToken: localBangumiToken, enableBangumi: localEnableBangumi });
+            setConfig({ bangumiToken: localBangumiToken, enableBangumi });
         } else {
             toast.error(`${t('ai_config.connection_failed_prefix')}${result.error}`);
         }
@@ -239,8 +237,6 @@ export const AIConfigPanel: React.FC = () => {
     setLocalOmdbKey(getDecryptedOmdbKey());
     setLocalTmdbKey(getDecryptedTmdbKey());
     setLocalBangumiToken(getDecryptedBangumiToken());
-    setLocalEnableTmdb(enableTmdb);
-    setLocalEnableBangumi(enableBangumi);
     setIsManualInput(false);
   }, [provider, getDecryptedApiKey, getDecryptedGoogleKey, getDecryptedSerperKey, getDecryptedYandexKey, getDecryptedOmdbKey, getDecryptedTmdbKey, getDecryptedBangumiToken, enableTmdb, enableBangumi]);
 
@@ -284,8 +280,8 @@ export const AIConfigPanel: React.FC = () => {
           omdbApiKey: localOmdbKey,
           tmdbApiKey: localTmdbKey,
           bangumiToken: localBangumiToken,
-          enableTmdb: localEnableTmdb,
-          enableBangumi: localEnableBangumi,
+          enableTmdb,
+          enableBangumi,
           enableTrending,
           useSystemProxy: localUseSystemProxy,
           proxyProtocol: localProxyProtocol,
@@ -747,14 +743,17 @@ export const AIConfigPanel: React.FC = () => {
                             <label className="relative inline-flex items-center cursor-pointer">
                                 <input 
                                     type="checkbox" 
-                                    checked={localEnableBangumi} 
-                                    onChange={(e) => setLocalEnableBangumi(e.target.checked)} 
+                                    checked={enableBangumi} 
+                                    onChange={(e) => {
+                                        const checked = e.target.checked;
+                                        setConfig({ enableBangumi: checked });
+                                    }} 
                                     className="sr-only peer" 
                                 />
                                 <div className="w-11 h-6 bg-theme-border border-2 border-theme-subtext/20 rounded-full peer peer-focus:ring-2 peer-focus:ring-theme-accent peer-checked:bg-gradient-to-r peer-checked:from-theme-accent-warm peer-checked:to-theme-accent-warm-2 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
                             </label>
                         </div>
-                        {localEnableBangumi && (
+                        {enableBangumi && (
                             <div className="pl-4 border-l-2 border-theme-border/50">
                                 <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.bangumi_token_label') || "Bangumi Access Token (Optional)"}</label>
                                 <div className="relative">
@@ -800,14 +799,14 @@ export const AIConfigPanel: React.FC = () => {
                                 <label className="relative inline-flex items-center cursor-pointer">
                                     <input 
                                         type="checkbox" 
-                                        checked={localEnableTmdb} 
-                                        onChange={(e) => setLocalEnableTmdb(e.target.checked)} 
+                                    checked={enableTmdb} 
+                                    onChange={(e) => setConfig({ enableTmdb: e.target.checked })} 
                                         className="sr-only peer" 
                                     />
                                     <div className="w-11 h-6 bg-theme-border border-2 border-theme-subtext/20 rounded-full peer peer-focus:ring-2 peer-focus:ring-theme-accent peer-checked:bg-gradient-to-r peer-checked:from-theme-accent-warm peer-checked:to-theme-accent-warm-2 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
                                 </label>
                             </div>
-                            {localEnableTmdb && (
+                        {enableTmdb && (
                                 <div className="pl-4 border-l-2 border-theme-border/50">
                                     <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.tmdb_key_label')}</label>
                                     <div className="relative">

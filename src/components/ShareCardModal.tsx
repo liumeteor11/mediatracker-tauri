@@ -5,6 +5,7 @@ import html2canvas from 'html2canvas';
 import { useTranslation } from 'react-i18next';
 import { useThemeStore } from '../store/useThemeStore';
 import clsx from 'clsx';
+import { FALLBACK_POSTER } from '../services/aiService';
 
 interface ShareCardModalProps {
   item: MediaItem;
@@ -87,7 +88,7 @@ export const ShareCardModal: React.FC<ShareCardModalProps> = ({ item, onClose })
             {/* Poster Image */}
             <div className="relative aspect-[2/3] w-full">
                 <img 
-                    src={normalizeImgSrc(item.customPosterUrl || item.posterUrl) || 'https://placehold.co/600x900/1a1a1a/FFF?text=No+Image'} 
+                    src={normalizeImgSrc(item.customPosterUrl || item.posterUrl) || FALLBACK_POSTER} 
                     alt={item.title}
                     className="w-full h-full object-cover"
                     crossOrigin="anonymous" 

@@ -150,7 +150,7 @@ const resolveTauriSearchProviderList = (input: {
 };
 
 const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit & { timeoutMs?: number } = {}) => {
-  const ms = init.timeoutMs ?? 12000;
+  const ms = init.timeoutMs ?? 10000;
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort('timeout'), ms);
   try {
@@ -200,14 +200,16 @@ class Semaphore {
 }
 
 // Limit concurrent requests to avoid rate limits
-const apiLimiter = new Semaphore(2);
-const searchLimiter = new Semaphore(4);
+const apiLimiter = new Semaphore(4);
+const searchLimiter = new Semaphore(6);
 
 const OMDB_API_KEY = import.meta.env.VITE_OMDB_API_KEY;
 
-// A curated list of placeholders to serve as "Posters" when real ones aren't found
+const FALLBACK_POSTER_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900" viewBox="0 0 600 900" data-placeholder="mediatracker-placeholder"><rect width="600" height="900" fill="#1a1a1a"/></svg>';
+export const FALLBACK_POSTER = `data:image/svg+xml;utf8,${encodeURIComponent(FALLBACK_POSTER_SVG)}`;
+
 const getPlaceholder = (type: string = 'Media') => {
-  return `https://placehold.co/600x900/1a1a1a/FFF?text=${encodeURIComponent(type)}`;
+  return FALLBACK_POSTER;
 };
 
 const normalizeImageUrl = (value: any): string | undefined => {
@@ -221,6 +223,7 @@ const normalizeImageUrl = (value: any): string | undefined => {
   const lower = s.toLowerCase();
   if (lower === 'n/a' || lower === 'na' || lower === 'null' || lower === 'undefined') return undefined;
   if (lower.startsWith('x-raw-image')) return undefined;
+  if (lower.includes('moviepostersgallery.com/wp-content/uploads/2020/08/movie-posters-gallery_social.jpg')) return undefined;
   if (lower.includes('m.media-amazon.com/')) return undefined;
   if (lower.includes('i.ebayimg.com/') || lower.includes('ebayimg.com/')) return undefined;
   if (lower.startsWith('data:') || lower.startsWith('blob:')) return s;
@@ -230,13 +233,22 @@ const normalizeImageUrl = (value: any): string | undefined => {
   return s;
 };
 
-const isBlockedPosterUrl = (value?: string): boolean => {
-  const s = String(value ?? '').trim().toLowerCase();
+export const isPlaceholderPosterUrl = (value?: string): boolean => {
+  const s = String(value ?? '').trim();
   if (!s) return true;
-  if (s.startsWith('x-raw-image')) return true;
-  if (s.includes('placehold.co') || s.includes('no+image') || s.includes('image+error')) return true;
-  if (s.includes('m.media-amazon.com/')) return true;
+  const lower = s.toLowerCase();
+  if (s === FALLBACK_POSTER) return true;
+  if (lower.startsWith('x-raw-image')) return true;
+  if (lower.includes('moviepostersgallery.com/wp-content/uploads/2020/08/movie-posters-gallery_social.jpg')) return true;
+  if (lower.includes('placehold.co') || lower.includes('no+image') || lower.includes('image+error')) return true;
+  if (lower.includes('mediatracker-placeholder')) return true;
+  if (lower.includes('m.media-amazon.com/')) return true;
+  if (lower.includes('i.ebayimg.com/') || lower.includes('ebayimg.com/')) return true;
   return false;
+};
+
+const isBlockedPosterUrl = (value?: string): boolean => {
+  return isPlaceholderPosterUrl(value);
 };
 
 const FRANCHISE_ALIASES: Record<string, string[]> = {
@@ -256,6 +268,86 @@ const FRANCHISE_ALIASES: Record<string, string[]> = {
 };
 
 const prefetchedImages = new Map<string, string>();
+
+type PosterCacheEntry = { candidates: string[]; preferred?: string; ts: number };
+export type PosterSearchResult = { picked?: string; candidates: string[] };
+const POSTER_CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
+let posterCacheStore: Record<string, PosterCacheEntry> | null = null;
+
+const normalizePosterKey = (v: any) => String(v ?? '').toLowerCase().trim().replace(/[^\p{L}\p{N}]+/gu, '');
+const makePosterCacheKey = (title: string, year: string, type: string) => {
+  const y = String(year || '').trim().slice(0, 4);
+  const yKey = /^\d{4}$/.test(y) ? y : '';
+  const t = normalizePosterKey(type || '');
+  const n = normalizePosterKey(title || '');
+  return `${t}|${n}|${yKey}`;
+};
+
+const readPosterCacheStore = () => {
+  if (posterCacheStore) return posterCacheStore;
+  try {
+    const raw = localStorage.getItem('media_tracker_poster_cache_v1');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        posterCacheStore = parsed;
+        return posterCacheStore;
+      }
+    }
+  } catch {}
+  posterCacheStore = {};
+  return posterCacheStore;
+};
+
+const writePosterCacheStore = (store: Record<string, PosterCacheEntry>) => {
+  posterCacheStore = store;
+  try {
+    localStorage.setItem('media_tracker_poster_cache_v1', JSON.stringify(store));
+  } catch {}
+};
+
+const getPosterCacheEntry = (key: string): PosterCacheEntry | undefined => {
+  const store = readPosterCacheStore();
+  const entry = store[key];
+  if (!entry) return undefined;
+  if (Date.now() - (entry.ts || 0) > POSTER_CACHE_TTL) return undefined;
+  return entry;
+};
+
+const updatePosterCacheEntry = (key: string, entry: PosterCacheEntry) => {
+  const store = readPosterCacheStore();
+  store[key] = entry;
+  writePosterCacheStore(store);
+};
+
+const updatePosterCandidates = (key: string, incoming: string[], preferred?: string) => {
+  const existing = getPosterCacheEntry(key);
+  const base = existing?.candidates || [];
+  const merged = [...base, ...incoming]
+    .map(u => normalizeImageUrl(u))
+    .filter((u): u is string => !!u && !isBlockedPosterUrl(u));
+  const uniq = Array.from(new Set(merged));
+  const limited = uniq.slice(0, 8);
+  const next: PosterCacheEntry = {
+    candidates: limited,
+    preferred: preferred || existing?.preferred,
+    ts: Date.now()
+  };
+  updatePosterCacheEntry(key, next);
+};
+
+const getPosterCandidates = (key: string) => getPosterCacheEntry(key)?.candidates || [];
+const getPreferredPoster = (key: string) => getPosterCacheEntry(key)?.preferred;
+const setPreferredPoster = (key: string, url: string) => {
+  if (!url || isBlockedPosterUrl(url)) return;
+  const existing = getPosterCacheEntry(key);
+  const next: PosterCacheEntry = {
+    candidates: existing?.candidates || [],
+    preferred: url,
+    ts: Date.now()
+  };
+  updatePosterCacheEntry(key, next);
+};
 
 const checkImage = async (url: string): Promise<boolean> => {
     if (!url) return false;
@@ -491,9 +583,9 @@ export const performClientSideSearch = async (
                     yandexKey: getDecryptedYandexKey(),
                     yandexUser: yandexSearchLogin
                 });
-                const providers = providerList.slice(0, 3);
+                const providers = providerList.slice(0, 2);
                 
-                const topN = (effType === MediaType.MOVIE || effType === MediaType.TV_SERIES) ? 3 : 2;
+                const topN = (effType === MediaType.MOVIE || effType === MediaType.TV_SERIES) ? (shortOrNumeric ? 1 : 2) : 1;
                 const ordered = [...precisionQueries.slice(0, topN), ...qList];
                 const uniq = new Map<string, any>();
                 
@@ -594,7 +686,7 @@ export const performClientSideSearch = async (
                   if (!taskUniq.has(k)) taskUniq.set(k, tsk);
                 }
 
-                const limitedTasks = Array.from(taskUniq.values()).slice(0, 6);
+                const limitedTasks = Array.from(taskUniq.values()).slice(0, shortOrNumeric ? 4 : 5);
                 const resultsArrays = await Promise.all(limitedTasks.map(t => runTauriSearch(t.p, t.qv)));
                 const allResults = resultsArrays.flat();
 
@@ -648,7 +740,7 @@ export const performClientSideSearch = async (
                     use_system_proxy: useAIStore.getState().useSystemProxy
                 };
                 
-                const ddgPromises = ordered.map(async (qv) => {
+                const ddgPromises = ordered.slice(0, shortOrNumeric ? 2 : 3).map(async (qv) => {
                     const start = performance.now();
                     try {
                         const resultStr = await invoke<string>("web_search", { query: qv, config: ddgConfig });
@@ -1185,9 +1277,9 @@ export const runBackgroundSearch = async (query: string, type?: MediaType | 'All
         for (const it of items) {
             try {
                 const year = it.releaseDate ? it.releaseDate.split('-')[0] : '';
-                const url = await fetchPosterFromSearch(it.title, year, it.type);
-                if (url && (!it.customPosterUrl)) {
-                    enriched.push({ ...it, posterUrl: url });
+                const { picked } = await fetchPosterFromSearch(it.title, year, it.type);
+                if (picked && (!it.customPosterUrl)) {
+                    enriched.push({ ...it, posterUrl: picked });
                 } else {
                     enriched.push(it);
                 }
@@ -1713,6 +1805,7 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
   if (diagEnabled) addStep('缓存检查', cacheStepT0, 'cache');
 
   const isChinese = i18n.language.startsWith('zh');
+  const enableBangumi = useAIStore.getState().enableBangumi;
 
   // Parallel Execution: TMDB, Bangumi, Plugins, and AI Search Context
   const parallelT0 = performance.now();
@@ -1728,7 +1821,22 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
     }
   };
 
-  const [tmdbRes, bangumiRes, pluginRes, searchContext] = await Promise.all([
+  const bangumiPromise = enableBangumi
+    ? timed(
+        'Bangumi 搜索',
+        'bangumi',
+        async () => {
+          let bType = undefined;
+          if (type === MediaType.BOOK) bType = 1;
+          if (type === MediaType.TV_SERIES || type === MediaType.COMIC) bType = 2;
+          if (type === MediaType.MUSIC) bType = 3;
+          return await searchBangumi(q, bType);
+        },
+        []
+      )
+    : Promise.resolve([]);
+
+  const [tmdbRes, bangumiRes, pluginRes] = await Promise.all([
     timed(
       'TMDB 搜索',
       'tmdb',
@@ -1741,18 +1849,7 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
       },
       []
     ),
-    timed(
-      'Bangumi 搜索',
-      'bangumi',
-      async () => {
-        let bType = undefined;
-        if (type === MediaType.BOOK) bType = 1;
-        if (type === MediaType.TV_SERIES || type === MediaType.COMIC) bType = 2;
-        if (type === MediaType.MUSIC) bType = 3;
-        return await searchBangumi(q, bType);
-      },
-      []
-    ),
+    bangumiPromise,
     timed(
       '插件搜索',
       'plugin',
@@ -1771,12 +1868,6 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
         return results.flat();
       },
       []
-    ),
-    timed(
-      '网页搜索上下文',
-      String(useAIStore.getState().searchProvider || 'search'),
-      async () => await performClientSideSearch(q, true, type),
-      ""
     )
   ]);
   if (diagEnabled) addStep('并行阶段', parallelT0, 'parallel');
@@ -1856,6 +1947,33 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
       };
   });
 
+  const baseItems = [...pluginItems, ...tmdbItems, ...bangumiItems];
+  const baseItemsForCount = (type && type !== 'All') ? baseItems.filter(it => it.type === type) : baseItems;
+  const baseUnique = new Map<string, MediaItem>();
+  for (const item of baseItemsForCount) {
+      const normTitle = item.title.trim().toLowerCase();
+      let key = normTitle;
+      if (item.releaseDate && item.releaseDate.length >= 4) {
+          key = `${normTitle}|${item.releaseDate.substring(0, 4)}`;
+      }
+      if (!baseUnique.has(key)) baseUnique.set(key, item);
+  }
+  const normalizeKey = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '').trim();
+  const qKey = normalizeKey(q);
+  const hasExactBaseMatch = Array.from(baseUnique.values()).some(it => normalizeKey(it.title) === qKey);
+  const shouldUseAI = baseUnique.size < 8 && !hasExactBaseMatch;
+
+  let searchContext = "";
+  const useSearchContext = shouldUseAI && baseUnique.size < 4;
+  if (useSearchContext) {
+      searchContext = await timed(
+        '网页搜索上下文',
+        String(useAIStore.getState().searchProvider || 'search'),
+        async () => await performClientSideSearch(q, true, type),
+        ""
+      );
+  }
+
   // Prefetch images from search context
   try {
     if (searchContext) {
@@ -1878,122 +1996,124 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
   
   const { systemPrompt, provider } = useAIStore.getState();
   
-  let userPrompt = "";
-
-  if (provider === 'moonshot') {
-      if (isChinese) {
-          userPrompt = `搜索符合以下查询的媒体作品: "${query}"。`;
-          if (type && type !== 'All') {
-              userPrompt += ` 严格限制结果类型为: "${type}"。`;
-          } else {
-              userPrompt += ` (包括书籍、电影、电视剧、漫画、短剧)`;
-          }
-          userPrompt += `\n[限制] 仅返回作品（小说、电影、电视剧、短剧、漫画、音乐专辑）。严禁返回新闻、产品评测、对比、参数、价格、手机/电子产品相关条目。`;
-          userPrompt += `\n[系列] 若查询为系列作品（如第一部/第二部/续集），请分别返回各部作品，并给出准确年份。`;
-          userPrompt += `\n[优先] 使用联网搜索工具 (web_search) 获取最新信息；如网络不可用或搜索无结果，请基于已有知识返回有效 JSON：\n${searchContext}\n请尽力补全缺失的元数据（导演、主演、简介（尽量详细，不少于50字）、上映日期）。若无法确认具体日期，可返回年份。`;
-      } else {
-          userPrompt = `Search for media works matching the query: "${query}".`;
-          if (type && type !== 'All') {
-              userPrompt += ` Strictly limit results to type: "${type}".`;
-          } else {
-              userPrompt += ` (books, movies, TV series, comics, short dramas)`;
-          }
-          userPrompt += `\n[Constraint] Only return works (novels, movies, TV series, short dramas, comics, music albums). Do NOT include news, product reviews, comparisons, specs, prices, or phone/electronics items.`;
-          userPrompt += `\n[PREFER] Use the web search tool; if unavailable or no results, rely on your internal knowledge to return a valid JSON array:\n${searchContext}\nPlease do your best to fill in missing metadata (Director, Cast, Description (detailed, >50 words), Release Date). If exact date is unknown, year is acceptable.`;
-      }
-  } else {
-      if (isChinese) {
-          userPrompt = `搜索符合以下查询的媒体作品: "${query}"。`;
-          if (type && type !== 'All') {
-              userPrompt += ` 严格限制结果类型为: "${type}"。`;
-          } else {
-              userPrompt += ` (包括书籍、电影、电视剧、漫画、短剧)`;
-          }
-          userPrompt += `\n[系列] 若查询为系列作品（如第一部/第二部/续集），请分别返回各部作品，并给出准确年份。`;
-          userPrompt += `\n请利用你的联网搜索工具或参考以下搜索结果来获取准确信息：\n${searchContext}\n如搜索结果不足，请使用你的内部知识补全信息（导演、主演、简介）。请务必返回有效JSON数组。`;
-      } else {
-          userPrompt = `Search for media works matching the query: "${query}".`;
-          if (type && type !== 'All') {
-              userPrompt += ` Strictly limit results to type: "${type}".`;
-          } else {
-              userPrompt += ` (books, movies, TV series, comics, short dramas)`;
-          }
-          userPrompt += `\nUse your web search tool or refer to the following search results to verify info:\n${searchContext}\nIf search results are insufficient, please use your internal knowledge to complete the metadata (especially detailed description). Return ONLY a valid JSON array.`;
-      }
-  }
-
-  const messages = [
-    { role: "system", content: systemPrompt + (isChinese ? " 请务必使用JSON格式返回。不要使用Markdown代码块。只返回JSON数组。" : " Please return strictly valid JSON. Do not use markdown code blocks. Return ONLY a JSON array.") },
-    ...(searchContext ? [{ role: "user", content: searchContext }] : []),
-    { role: "user", content: userPrompt }
-  ];
-
   let aiItems: MediaItem[] = [];
-  try {
-    const aiT0 = performance.now();
-    const text = await callAI(messages, 0.1, { forceSearch: true });
-    if (diagEnabled) addStep('AI 生成候选作品', aiT0, String(provider || 'ai'));
-    if (text) {
-        let jsonStr = "";
-        const jsonArrayMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
-        if (jsonArrayMatch) {
-            jsonStr = jsonArrayMatch[0];
-        } else {
-            jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
-        }
+  if (shouldUseAI) {
+      let userPrompt = "";
 
-        let rawData: any[] = [];
-        if (jsonStr.startsWith('[') || jsonStr.startsWith('{')) {
-            try {
-                rawData = JSON.parse(jsonStr);
-            } catch (e) {
-                const lastBracket = jsonStr.lastIndexOf('}');
-                if (lastBracket > 0) {
-                    try {
-                        rawData = JSON.parse(jsonStr.substring(0, lastBracket + 1) + ']');
-                    } catch {}
+      if (provider === 'moonshot') {
+          if (isChinese) {
+              userPrompt = `搜索符合以下查询的媒体作品: "${query}"。`;
+              if (type && type !== 'All') {
+                  userPrompt += ` 严格限制结果类型为: "${type}"。`;
+              } else {
+                  userPrompt += ` (包括书籍、电影、电视剧、漫画、短剧)`;
+              }
+              userPrompt += `\n[限制] 仅返回作品（小说、电影、电视剧、短剧、漫画、音乐专辑）。严禁返回新闻、产品评测、对比、参数、价格、手机/电子产品相关条目。`;
+              userPrompt += `\n[系列] 若查询为系列作品（如第一部/第二部/续集），请分别返回各部作品，并给出准确年份。`;
+              userPrompt += `\n[优先] 使用联网搜索工具 (web_search) 获取最新信息；如网络不可用或搜索无结果，请基于已有知识返回有效 JSON：\n${searchContext}\n请尽力补全缺失的元数据（导演、主演、简介（尽量详细，不少于50字）、上映日期）。若无法确认具体日期，可返回年份。`;
+          } else {
+              userPrompt = `Search for media works matching the query: "${query}".`;
+              if (type && type !== 'All') {
+                  userPrompt += ` Strictly limit results to type: "${type}".`;
+              } else {
+                  userPrompt += ` (books, movies, TV series, comics, short dramas)`;
+              }
+              userPrompt += `\n[Constraint] Only return works (novels, movies, TV series, short dramas, comics, music albums). Do NOT include news, product reviews, comparisons, specs, prices, or phone/electronics items.`;
+              userPrompt += `\n[PREFER] Use the web search tool; if unavailable or no results, rely on your internal knowledge to return a valid JSON array:\n${searchContext}\nPlease do your best to fill in missing metadata (Director, Cast, Description (detailed, >50 words), Release Date). If exact date is unknown, year is acceptable.`;
+          }
+      } else {
+          if (isChinese) {
+              userPrompt = `搜索符合以下查询的媒体作品: "${query}"。`;
+              if (type && type !== 'All') {
+                  userPrompt += ` 严格限制结果类型为: "${type}"。`;
+              } else {
+                  userPrompt += ` (包括书籍、电影、电视剧、漫画、短剧)`;
+              }
+              userPrompt += `\n[系列] 若查询为系列作品（如第一部/第二部/续集），请分别返回各部作品，并给出准确年份。`;
+              userPrompt += `\n请利用你的联网搜索工具或参考以下搜索结果来获取准确信息：\n${searchContext}\n如搜索结果不足，请使用你的内部知识补全信息（导演、主演、简介）。请务必返回有效JSON数组。`;
+          } else {
+              userPrompt = `Search for media works matching the query: "${query}".`;
+              if (type && type !== 'All') {
+                  userPrompt += ` Strictly limit results to type: "${type}".`;
+              } else {
+                  userPrompt += ` (books, movies, TV series, comics, short dramas)`;
+              }
+              userPrompt += `\nUse your web search tool or refer to the following search results to verify info:\n${searchContext}\nIf search results are insufficient, please use your internal knowledge to complete the metadata (especially detailed description). Return ONLY a valid JSON array.`;
+          }
+      }
+
+      const messages = [
+        { role: "system", content: systemPrompt + (isChinese ? " 请务必使用JSON格式返回。不要使用Markdown代码块。只返回JSON数组。" : " Please return strictly valid JSON. Do not use markdown code blocks. Return ONLY a JSON array.") },
+        ...(searchContext ? [{ role: "user", content: searchContext }] : []),
+        { role: "user", content: userPrompt }
+      ];
+
+      try {
+        const aiT0 = performance.now();
+        const text = await callAI(messages, 0.1, { forceSearch: true });
+        if (diagEnabled) addStep('AI 生成候选作品', aiT0, String(provider || 'ai'));
+        if (text) {
+            let jsonStr = "";
+            const jsonArrayMatch = text.match(/\[\s*\{[\s\S]*\}\s*\]/);
+            if (jsonArrayMatch) {
+                jsonStr = jsonArrayMatch[0];
+            } else {
+                jsonStr = text.replace(/```json/g, '').replace(/```/g, '').trim();
+            }
+
+            let rawData: any[] = [];
+            if (jsonStr.startsWith('[') || jsonStr.startsWith('{')) {
+                try {
+                    rawData = JSON.parse(jsonStr);
+                } catch (e) {
+                    const lastBracket = jsonStr.lastIndexOf('}');
+                    if (lastBracket > 0) {
+                        try {
+                            rawData = JSON.parse(jsonStr.substring(0, lastBracket + 1) + ']');
+                        } catch {}
+                    }
                 }
             }
-        }
 
-        if (rawData.length > 0) {
-             aiItems = rawData.map((rawItem) => {
-                const item = normalizeMediaItem(rawItem);
-                const id = uuidv4();
-                const placeholder = getPlaceholder(item.type || 'Media');
-                const posterUrl = prefetchedImages.get(item.title.toLowerCase()) || undefined;
-                const normalizeType = (v: any, title: string, desc?: string): MediaType => {
-                    const s = String(v || '').toLowerCase();
-                    if (s.includes('novel') || s.includes('book') || s.includes('小说') || s.includes('书')) return MediaType.BOOK;
-                    if (s.includes('album') || s.includes('music') || s.includes('专辑') || s.includes('音乐')) return MediaType.MUSIC;
-                    if (s.includes('tv') || s.includes('series') || s.includes('season') || s.includes('电视剧') || s.includes('剧集')) return MediaType.TV_SERIES;
-                    if (s.includes('comic') || s.includes('manga') || s.includes('漫画')) return MediaType.COMIC;
-                    if (s.includes('short') || s.includes('短剧')) return MediaType.SHORT_DRAMA;
-                    if (s.includes('movie') || s.includes('film') || s.includes('电影')) return MediaType.MOVIE;
-                    const inferred = processSearchResult(title, desc || '');
-                    return inferred.type || MediaType.MOVIE;
-                };
-                const normalizedType = normalizeType((item as any).type, item.title, (item as any).description);
-                return {
-                    ...item,
-                    type: normalizedType,
-                    id,
-                    posterUrl: posterUrl || placeholder,
-                    userRating: 0,
-                    status: 'To Watch',
-                    addedAt: new Date().toISOString()
-                } as MediaItem;
-            });
+            if (rawData.length > 0) {
+                 aiItems = rawData.map((rawItem) => {
+                    const item = normalizeMediaItem(rawItem);
+                    const id = uuidv4();
+                    const placeholder = getPlaceholder(item.type || 'Media');
+                    const posterUrl = prefetchedImages.get(item.title.toLowerCase()) || undefined;
+                    const normalizeType = (v: any, title: string, desc?: string): MediaType => {
+                        const s = String(v || '').toLowerCase();
+                        if (s.includes('novel') || s.includes('book') || s.includes('小说') || s.includes('书')) return MediaType.BOOK;
+                        if (s.includes('album') || s.includes('music') || s.includes('专辑') || s.includes('音乐')) return MediaType.MUSIC;
+                        if (s.includes('tv') || s.includes('series') || s.includes('season') || s.includes('电视剧') || s.includes('剧集')) return MediaType.TV_SERIES;
+                        if (s.includes('comic') || s.includes('manga') || s.includes('漫画')) return MediaType.COMIC;
+                        if (s.includes('short') || s.includes('短剧')) return MediaType.SHORT_DRAMA;
+                        if (s.includes('movie') || s.includes('film') || s.includes('电影')) return MediaType.MOVIE;
+                        const inferred = processSearchResult(title, desc || '');
+                        return inferred.type || MediaType.MOVIE;
+                    };
+                    const normalizedType = normalizeType((item as any).type, item.title, (item as any).description);
+                    return {
+                        ...item,
+                        type: normalizedType,
+                        id,
+                        posterUrl: posterUrl || placeholder,
+                        userRating: 0,
+                        status: 'To Watch',
+                        addedAt: new Date().toISOString()
+                    } as MediaItem;
+                });
+            }
         }
-    }
-    
-    if (aiItems.length === 0) {
-        try {
-            aiItems = await createFallbackItemsFromContext(searchContext) as MediaItem[];
-        } catch {}
-    }
-  } catch (e) {
-      console.error("AI Search Failed", e);
+        
+        if (aiItems.length === 0) {
+            try {
+                aiItems = await createFallbackItemsFromContext(searchContext) as MediaItem[];
+            } catch {}
+        }
+      } catch (e) {
+          console.error("AI Search Failed", e);
+      }
   }
 
   const norm = (v?: string) => String(v || '').trim();
@@ -2145,7 +2265,7 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
           }
 
           const poster = getTMDBPosterUrl(details.poster_path) || undefined;
-          if (poster && (!it.posterUrl || it.posterUrl.includes('placehold.co') || it.posterUrl.includes('No+Image') || it.posterUrl.includes('Image+Error'))) {
+          if (poster && isPlaceholderPosterUrl(it.posterUrl)) {
               next.posterUrl = poster;
           }
 
@@ -2174,11 +2294,13 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
       filtered = filtered.filter(it => it.type === type);
   }
 
+  const limited = filtered.slice(0, 12);
+
   try {
-    localStorage.setItem(cacheKey, JSON.stringify(filtered));
+    localStorage.setItem(cacheKey, JSON.stringify(limited));
     localStorage.setItem(cacheTsKey, Date.now().toString());
   } catch {}
-  return filtered;
+  return limited;
 };
 
 export const getSearchSnippets = async (query: string): Promise<string> => {
@@ -2294,6 +2416,7 @@ export const checkUpdates = async (items: MediaItem[]): Promise<{ id: string; la
 
   const { enableSearch } = useAIStore.getState();
   const isChinese = i18n.language.startsWith('zh');
+  const formatEp = (s: number, e: number) => isChinese ? `第${s}季 第${e}集` : `Season ${s} Episode ${e}`;
   
   // Batch processing
   const BATCH_SIZE = 5;
@@ -2302,13 +2425,78 @@ export const checkUpdates = async (items: MediaItem[]): Promise<{ id: string; la
   for (let i = 0; i < items.length; i += BATCH_SIZE) {
       const batch = items.slice(i, i + BATCH_SIZE);
       const titleToId = new Map(batch.map(item => [item.title.toLowerCase(), item.id]));
+      const norm = (v?: string) => (v || '').trim().toLowerCase();
+      const normalize = (s: string) => norm(s).replace(/[^\p{L}\p{N}]+/gu, '');
+      const titleNormMap = new Map(batch.map(item => [normalize(item.title), item.id]));
+      const editDistance = (a: string, b: string) => {
+          const m = a.length, n = b.length;
+          if (m === 0) return n;
+          if (n === 0) return m;
+          const dp = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+          for (let i2 = 0; i2 <= m; i2++) dp[i2][0] = i2;
+          for (let j2 = 0; j2 <= n; j2++) dp[0][j2] = j2;
+          for (let i2 = 1; i2 <= m; i2++) {
+              for (let j2 = 1; j2 <= n; j2++) {
+                  const cost = a[i2 - 1] === b[j2 - 1] ? 0 : 1;
+                  dp[i2][j2] = Math.min(
+                      dp[i2 - 1][j2] + 1,
+                      dp[i2][j2 - 1] + 1,
+                      dp[i2 - 1][j2 - 1] + cost
+                  );
+              }
+          }
+          return dp[m][n];
+      };
+      const similarity = (a: string, b: string) => {
+          const maxLen = Math.max(a.length, b.length);
+          if (maxLen === 0) return 1;
+          return 1 - editDistance(a, b) / maxLen;
+      };
+
+      const authoritativeUpdates: { id: string; latestUpdateInfo: string; isOngoing: boolean }[] = [];
+      const pendingForAI: MediaItem[] = [];
+      for (const it of batch) {
+          if (it.type === MediaType.TV_SERIES && it.tmdbId && it.tmdbMediaType === 'tv') {
+              try {
+                  const details = await getTMDBDetails(it.tmdbId, 'tv', isChinese ? 'zh-CN' : 'en-US');
+                  if (details) {
+                      const status = String(details.status || '').toLowerCase();
+                      const last = details.last_episode_to_air;
+                      const next = details.next_episode_to_air;
+                      if (last && typeof last.season_number === 'number' && typeof last.episode_number === 'number') {
+                          const info = formatEp(last.season_number, last.episode_number);
+                          const ongoing = status !== 'ended' && status !== 'canceled' && !!next;
+                          authoritativeUpdates.push({ id: it.id, latestUpdateInfo: info, isOngoing: ongoing });
+                          continue;
+                      }
+                      if (Array.isArray(details.seasons)) {
+                          const seasons = details.seasons.filter((s: any) => typeof s.season_number === 'number' && typeof s.episode_count === 'number');
+                          if (seasons.length > 0) {
+                              const maxSeason = seasons.reduce((a: any, b: any) => (a.season_number > b.season_number ? a : b));
+                              const info = formatEp(maxSeason.season_number, maxSeason.episode_count);
+                              const ongoing = status !== 'ended' && status !== 'canceled';
+                              authoritativeUpdates.push({ id: it.id, latestUpdateInfo: info, isOngoing: ongoing });
+                              continue;
+                          }
+                      }
+                  }
+              } catch {}
+          }
+          pendingForAI.push(it);
+      }
+      if (authoritativeUpdates.length > 0) {
+          authoritativeUpdates.forEach(u => allUpdates.push(u));
+      }
+      if (pendingForAI.length === 0) {
+          continue;
+      }
       
       let context = "";
       let queryList = "";
       
       if (enableSearch) {
           // Parallel search for the batch
-          const searchPromises = batch.map(async (item) => {
+          const searchPromises = pendingForAI.map(async (item) => {
               const typeTerm = isChinese ? 
                   (item.type === MediaType.COMIC ? '漫画 最新话' : item.type === MediaType.BOOK ? '小说 最新章节' : '最新集 更新') : 
                   (item.type === MediaType.COMIC ? 'latest chapter' : 'latest episode');
@@ -2319,9 +2507,18 @@ export const checkUpdates = async (items: MediaItem[]): Promise<{ id: string; la
           
           const results = await Promise.all(searchPromises);
           context = results.map(r => `Work: ${r.title}\nSearch Results:\n${r.snippets || "No results"}\n---`).join('\n');
-          queryList = batch.map(item => `"${item.title}"`).join(', ');
+          queryList = pendingForAI.map(item => {
+              const y = (item.releaseDate || '').slice(0, 4);
+              const hasY = !!y && /^\d{4}$/.test(y);
+              return hasY ? `"${item.title}" (${y})` : `"${item.title}"`;
+          }).join(', ');
       } else {
-          queryList = batch.map(item => `"${item.title}" (${item.type})`).join(', ');
+          queryList = pendingForAI.map(item => {
+              const y = (item.releaseDate || '').slice(0, 4);
+              const hasY = !!y && /^\d{4}$/.test(y);
+              const typeStr = `(${item.type})`;
+              return hasY ? `"${item.title}" (${y}) ${typeStr}` : `"${item.title}" ${typeStr}`;
+          }).join(', ');
       }
 
       let userPrompt = "";
@@ -2380,7 +2577,17 @@ export const checkUpdates = async (items: MediaItem[]): Promise<{ id: string; la
               if (jsonStr.startsWith('[') || jsonStr.startsWith('{')) {
                   const updates: any[] = JSON.parse(jsonStr);
                   updates.forEach(u => {
-                      const id = titleToId.get(u.title.toLowerCase());
+                      let id = titleToId.get(String(u.title || '').toLowerCase());
+                      if (!id) {
+                          const n = normalize(String(u.title || ''));
+                          id = titleNormMap.get(n);
+                          if (!id) {
+                              const candidates = pendingForAI.map(it => ({ id: it.id, score: similarity(n, normalize(it.title)) }));
+                              candidates.sort((a, b) => b.score - a.score);
+                              const best = candidates[0];
+                              if (best && best.score >= 0.8) id = best.id;
+                          }
+                      }
                       if (id) {
                           allUpdates.push({
                               id,
@@ -2429,9 +2636,9 @@ export const repairMediaItem = async (item: MediaItem): Promise<Partial<MediaIte
 
     if (isPosterMissing) {
         const year = !isUnknownText(item.releaseDate) ? item.releaseDate.split('-')[0] : '';
-        const url = await fetchPosterFromSearch(item.title, year, item.type);
-        if (url && !url.includes('placehold.co')) {
-            updates.posterUrl = url;
+        const { picked } = await fetchPosterFromSearch(item.title, year, item.type);
+        if (picked && !isPlaceholderPosterUrl(picked)) {
+            updates.posterUrl = picked;
         }
     }
 
@@ -2530,7 +2737,7 @@ export const repairMediaItem = async (item: MediaItem): Promise<Partial<MediaIte
                 if ((wantsFullDate ? !isFullDate(effective.releaseDate) : isUnknownText(effective.releaseDate)) && !isUnknownText(match.releaseDate)) {
                     updates.releaseDate = match.releaseDate;
                 }
-                if ((isPosterMissing && !updates.posterUrl) && match.posterUrl && !match.posterUrl.includes('placehold.co')) {
+                if ((isPosterMissing && !updates.posterUrl) && match.posterUrl && !isPlaceholderPosterUrl(match.posterUrl)) {
                     updates.posterUrl = match.posterUrl;
                 }
                 if (isUnknownText(effective.directorOrAuthor) && !isUnknownText(match.directorOrAuthor)) {
@@ -2552,7 +2759,7 @@ export const repairMediaItem = async (item: MediaItem): Promise<Partial<MediaIte
 
 
 // New Helper: Fetch Poster from Search
-export const fetchPosterFromSearch = async (title: string, year: string, type: string = 'movie'): Promise<string | undefined> => {
+export const fetchPosterFromSearch = async (title: string, year: string, type: string = 'movie'): Promise<PosterSearchResult> => {
     const { 
         enableSearch, 
         searchProvider, 
@@ -2566,14 +2773,34 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
         const v = String(sp || '').toLowerCase();
         return (v === 'google' || v === 'serper' || v === 'yandex') ? v : 'duckduckgo';
     };
-    if (!enableSearch) {
-        return await fetchPosterFromOMDB(title, year);
+    const yearToken = (() => {
+        const y = String(year || '').trim().slice(0, 4);
+        return /^\d{4}$/.test(y) ? y : '';
+    })();
+    const cacheKey = makePosterCacheKey(title, yearToken, type);
+    const cachedPreferred = getPreferredPoster(cacheKey);
+    const cachedCandidates = getPosterCandidates(cacheKey);
+    if (cachedPreferred && await checkImage(cachedPreferred)) return { picked: cachedPreferred, candidates: cachedCandidates.length > 0 ? cachedCandidates : [cachedPreferred] };
+    if (cachedCandidates.length > 0) {
+        for (const url of cachedCandidates) {
+            if (url && await checkImage(url)) { setPreferredPoster(cacheKey, url); return { picked: url, candidates: cachedCandidates }; }
+        }
     }
-    
+
+    if (!enableSearch) {
+        const omdb = await fetchPosterFromOMDB(title, year);
+        if (omdb) {
+            setPreferredPoster(cacheKey, omdb);
+            updatePosterCandidates(cacheKey, [omdb], omdb);
+            return { picked: omdb, candidates: [omdb] };
+        }
+        return { candidates: cachedCandidates };
+    }
+
     if (searchProvider === 'yandex') {
         try {
             const first = await fetchPosterFromOMDB(title, year);
-            if (first) return first;
+            if (first) return { picked: first, candidates: [first] };
             const langZh = i18n.language.startsWith('zh');
             if (isTauriEnv) {
                 const jsonStr = await invoke<string>('wiki_pageimages', { title, lang_zh: langZh });
@@ -2583,7 +2810,7 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                     if (pages.length > 0) {
                         const p: any = pages[0];
                         const img = p?.thumbnail?.source || p?.original?.source;
-                        if (typeof img === 'string' && img.length > 0) return img;
+                        if (typeof img === 'string' && img.length > 0) return { picked: img, candidates: [img] };
                     }
                 }
             } else {
@@ -2596,19 +2823,16 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                         if (pages.length > 0) {
                             const p: any = pages[0];
                             const img = p?.thumbnail?.source || p?.original?.source;
-                            if (typeof img === 'string' && img.length > 0) return img;
+                            if (typeof img === 'string' && img.length > 0) return { picked: img, candidates: [img] };
                         }
                     }
                 }
             }
         } catch {}
-        return await fetchPosterFromOMDB(title, year);
+        const omdb = await fetchPosterFromOMDB(title, year);
+        if (omdb) return { picked: omdb, candidates: [omdb] };
+        return { candidates: [] };
     }
-
-    const yearToken = (() => {
-        const y = String(year || '').trim().slice(0, 4);
-        return /^\d{4}$/.test(y) ? y : '';
-    })();
 
     // Construct a more specific query
     const isChinese = i18n.language.startsWith('zh');
@@ -2660,14 +2884,33 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
         const isPosterDetailLink = (u: string): boolean => {
             const host = normalizeHost(u);
             if (!host) return false;
+            const lower = u.toLowerCase();
+            if (lower.includes('douban.com/subject/')) return true;
             return posterDomains.some(d => {
                 const dom = String(d || '').toLowerCase().replace(/^www\./, '').split('/')[0];
                 return host === dom || host.endsWith(`.${dom}`) || u.toLowerCase().includes(dom);
             });
         };
 
-        const pickFromResults = async (arr: any[]): Promise<string | undefined> => {
-            if (!Array.isArray(arr) || arr.length === 0) return undefined;
+        const hasBannedImageKeyword = (value: string) => {
+            const s = String(value || '').toLowerCase();
+            return /(^|[\/_\-])(social|logo|site|default)([\/_\-]|$)/.test(s);
+        };
+        const pickFromResults = async (arr: any[]): Promise<{ picked?: string; candidates: string[] }> => {
+            if (!Array.isArray(arr) || arr.length === 0) return { candidates: [] };
+            const norm = (v: any) => String(v ?? '').toLowerCase().trim();
+            const normalizeMatch = (v: any) => norm(v).replace(/[^\p{L}\p{N}]+/gu, '');
+            const hasChinese = (v: any) => /[\u4e00-\u9fff]/.test(String(v || ''));
+            const tokenizeLatin = (v: any) => {
+                const stop = new Set(['the', 'a', 'an', 'of', 'and', 'or', 'to', 'in', 'on', 'for', 'movie', 'film', 'tv', 'series', 'poster', 'cover']);
+                return norm(v)
+                    .split(/[^a-z0-9]+/g)
+                    .filter(x => x.length > 1 && !stop.has(x));
+            };
+            const qTitle = String(title || '');
+            const qNorm = normalizeMatch(qTitle);
+            const qTokens = tokenizeLatin(qTitle);
+            const qHasChinese = hasChinese(qTitle);
             const scoreDomain = (u: string) => {
                 const url = u.toLowerCase();
                 if (url.includes('image.tmdb.org') || url.includes('themoviedb.org')) return 100;
@@ -2675,8 +2918,8 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                 if (url.includes('wikimedia.org') || url.includes('wikipedia.org')) return 85;
                 if (url.includes('goldposter.com')) return 82;
                 if (url.includes('impawards.com')) return 80;
-                if (url.includes('moviepostersgallery.com')) return 78;
-                if (url.includes('imdb.com')) return 70;
+                if (url.includes('moviepostersgallery.com')) return 55;
+                if (url.includes('imdb.com')) return 78;
                 if (url.includes('pinterest.com')) return 40;
                 return 50;
             };
@@ -2698,33 +2941,76 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                 }
                 return 0;
             };
+            const scoreMatch = (r: any) => {
+                let score = 0;
+                const rt = String(r?.title || r?.snippet || '').trim();
+                const pr = processSearchResult(rt || '', r?.snippet || '');
+                const tRaw = pr?.title || rt || '';
+                const tNorm = normalizeMatch(tRaw);
+                if (tNorm && qNorm) {
+                    if (tNorm === qNorm) score += 70;
+                    else if (tNorm.startsWith(qNorm) || qNorm.startsWith(tNorm)) score += 45;
+                    else if (tNorm.includes(qNorm) || qNorm.includes(tNorm)) score += 25;
+                }
+                if (!qHasChinese && qTokens.length > 0) {
+                    const tTokens = tokenizeLatin(tRaw);
+                    if (tTokens.length > 0) {
+                        const inter = tTokens.filter(t => qTokens.includes(t));
+                        const ratio = inter.length / Math.max(1, qTokens.length);
+                        if (ratio >= 0.7) score += 25;
+                        else if (ratio >= 0.45) score += 15;
+                    }
+                }
+                if (yearToken) {
+                    if (pr?.year && pr.year === yearToken) score += 15;
+                    else if (pr?.year && pr.year !== yearToken) score -= 10;
+                }
+                const combined = `${r?.image || ''} ${r?.link || ''} ${r?.title || ''}`.toLowerCase();
+                if (/soundtrack|ost|logo|icon|wallpaper|banner|background|album|cd/.test(combined)) score -= 25;
+                if (hasBannedImageKeyword(combined)) score -= 40;
+                if (/原声|配乐|壁纸|图标|徽标|专辑/.test(combined)) score -= 25;
+                return score;
+            };
 
             const candidates = arr
                 .flatMap((r: any) => {
-                    const out: string[] = [];
-                    if (typeof r?.image === 'string') out.push(r.image);
+                    const out: Array<{ url: string; score: number }> = [];
+                    if (typeof r?.image === 'string') out.push({ url: r.image, score: scoreMatch(r) });
                     const l = r?.link;
-                    if (typeof l === 'string' && isImageUrl(l)) out.push(l);
+                    if (typeof l === 'string' && isImageUrl(l)) out.push({ url: l, score: scoreMatch(r) });
                     return out;
                 })
-                .filter((u: any) => typeof u === 'string')
-                .filter((u: string) => {
-                    const url = u.toLowerCase();
+                .filter((u: any) => typeof u?.url === 'string')
+                .filter((u: { url: string }) => {
+                    const url = u.url.toLowerCase();
                     if (url.includes('instagram.com') || url.includes('facebook.com') || url.includes('twitter.com') || url.includes('x.com')) return false;
                     if (url.includes('tiktok.com/api/img')) return false;
                     if (url.includes('m.media-amazon.com')) return false;
                     if (url.includes('i.ebayimg.com') || url.includes('ebayimg.com')) return false;
+                    if (hasBannedImageKeyword(url)) return false;
                     return true;
                 })
-                .sort((a: string, b: string) => (scoreDomain(b) + scoreSizeHint(b)) - (scoreDomain(a) + scoreSizeHint(a)));
+                .map((u: { url: string; score: number }) => ({
+                    url: u.url,
+                    score: u.score + scoreDomain(u.url) + scoreSizeHint(u.url)
+                }))
+                .sort((a: { url: string; score: number }, b: { url: string; score: number }) => b.score - a.score);
 
-            if (candidates.length === 0) return undefined;
+            if (candidates.length === 0) return { candidates: [] };
 
-            for (const url of candidates) {
-                const normalized = normalizeImageUrl(url);
-                if (normalized && await checkImage(normalized)) return normalized;
+            const seen = new Set<string>();
+            const ordered = candidates
+                .map(c => normalizeImageUrl(c.url))
+                .filter((u): u is string => !!u);
+            const uniqueOrdered = ordered.filter(u => {
+                if (seen.has(u)) return false;
+                seen.add(u);
+                return true;
+            });
+            for (const url of uniqueOrdered) {
+                if (url && await checkImage(url)) return { picked: url, candidates: uniqueOrdered };
             }
-            return undefined;
+            return { candidates: uniqueOrdered };
         };
 
         const tryPickOgImageFromPages = async (arr: any[]): Promise<string | undefined> => {
@@ -2764,6 +3050,7 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                     try { parsed = JSON.parse(out); } catch {}
                     const img = parsed?.ok ? parsed?.image : undefined;
                     if (typeof img === 'string' && img.length > 0) {
+                        if (hasBannedImageKeyword(img)) continue;
                         if (await checkImage(img)) return img;
                     }
                 } catch {}
@@ -2830,10 +3117,11 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                 for (const p of imageProviders) {
                     try {
                         const parsed = await runWebSearch(qv, p, 'image');
-                        const picked = await pickFromResults(parsed);
-                        if (picked) return picked;
+                        const { picked, candidates } = await pickFromResults(parsed);
+                        if (candidates && candidates.length > 0) updatePosterCandidates(cacheKey, candidates, picked);
+                        if (picked) { setPreferredPoster(cacheKey, picked); return { picked, candidates }; }
                         const ogPicked = await tryPickOgImageFromPages(parsed);
-                        if (ogPicked) return ogPicked;
+                        if (ogPicked) { setPreferredPoster(cacheKey, ogPicked); return { picked: ogPicked, candidates }; }
                     } catch {}
                 }
             }
@@ -2850,10 +3138,11 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                 for (const p of textProviders) {
                     try {
                         const parsed = await runWebSearch(qv, p, 'text');
-                        const picked = await pickFromResults(parsed);
-                        if (picked) return picked;
+                        const { picked, candidates } = await pickFromResults(parsed);
+                        if (candidates && candidates.length > 0) updatePosterCandidates(cacheKey, candidates, picked);
+                        if (picked) { setPreferredPoster(cacheKey, picked); return { picked, candidates }; }
                         const ogPicked = await tryPickOgImageFromPages(parsed);
-                        if (ogPicked) return ogPicked;
+                        if (ogPicked) { setPreferredPoster(cacheKey, ogPicked); return { picked: ogPicked, candidates }; }
                     } catch {}
                 }
             }
@@ -2877,7 +3166,7 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                 } catch {}
                 try {
                     const v = JSON.parse(outD || '{}');
-                    if (v && v.image) return v.image;
+                    if (v && v.image) { setPreferredPoster(cacheKey, v.image); return { picked: v.image, candidates: [v.image] }; }
                 } catch {}
             } catch {}
         }
@@ -2913,7 +3202,7 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                         if (data && data.items) {
                             results = data.items.map((item: any) => {
                                 const img = item?.link || item?.image?.thumbnailLink || item?.pagemap?.cse_image?.[0]?.src;
-                                return { image: img, link: item?.link };
+                                return { image: img, link: item?.link, title: item?.title, snippet: item?.snippet };
                             });
                         }
                     }
@@ -2939,7 +3228,7 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                             } else if (response.ok) {
                                 const data = await response.json();
                                 if (data.images) {
-                                    results = data.images.map((img: any) => ({ image: img.imageUrl }));
+                                    results = data.images.map((img: any) => ({ image: img.imageUrl, link: img?.link, title: img?.title, snippet: img?.snippet }));
                                 }
                             }
                         } catch (e) {
@@ -2948,8 +3237,9 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                     }
                 }
 
-                const picked = await pickFromResults(results);
-                if (picked) return picked;
+                const { picked, candidates } = await pickFromResults(results);
+                if (candidates && candidates.length > 0) updatePosterCandidates(cacheKey, candidates, picked);
+                if (picked) { setPreferredPoster(cacheKey, picked); return { picked, candidates }; }
             }
         }
 
@@ -2963,7 +3253,7 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                     if (pages.length > 0) {
                         const p: any = pages[0];
                         const img = p?.thumbnail?.source || p?.original?.source;
-                        if (typeof img === 'string' && img.length > 0) return img;
+                        if (typeof img === 'string' && img.length > 0) return { picked: img, candidates: [img] };
                     }
                 }
             } else {
@@ -2976,7 +3266,7 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
                         if (pages.length > 0) {
                             const p: any = pages[0];
                             const img = p?.thumbnail?.source || p?.original?.source;
-                            if (typeof img === 'string' && img.length > 0) return img;
+                            if (typeof img === 'string' && img.length > 0) return { picked: img, candidates: [img] };
                         }
                     }
                 }
@@ -2988,7 +3278,9 @@ export const fetchPosterFromSearch = async (title: string, year: string, type: s
     }
 
     // Final fallback: Try OMDB if available
-    return await fetchPosterFromOMDB(title, year);
+    const omdb = await fetchPosterFromOMDB(title, year);
+    if (omdb) { setPreferredPoster(cacheKey, omdb); return { picked: omdb, candidates: [omdb] }; }
+    return { candidates: [] };
 };
 
 export const testSearchConnection = async (
@@ -3484,7 +3776,7 @@ export const getTrendingMedia = async (excludeItems: MediaItem[] = []): Promise<
       const directorNeeded = isUnknownText(it.directorOrAuthor);
       const descNeeded = isUnknownText(it.description) || norm(it.description).length < 60;
       const castNeeded = !it.cast || it.cast.length === 0;
-      const posterNeeded = !it.posterUrl || it.posterUrl.includes('placehold.co') || it.posterUrl.includes('No+Image') || it.posterUrl.includes('Image+Error');
+      const posterNeeded = !it.posterUrl || isPlaceholderPosterUrl(it.posterUrl);
       return dateNeeded || directorNeeded || descNeeded || castNeeded || posterNeeded;
   };
 
@@ -3556,7 +3848,7 @@ export const getTrendingMedia = async (excludeItems: MediaItem[] = []): Promise<
       }
 
       const poster = getTMDBPosterUrl(details.poster_path) || undefined;
-      if (poster && (!it.posterUrl || it.posterUrl.includes('placehold.co') || it.posterUrl.includes('No+Image') || it.posterUrl.includes('Image+Error'))) {
+      if (poster && isPlaceholderPosterUrl(it.posterUrl)) {
           patch.posterUrl = poster;
       }
 
@@ -3575,16 +3867,7 @@ export const getTrendingMedia = async (excludeItems: MediaItem[] = []): Promise<
   await Promise.all([worker(), worker()]);
 
   const afterTmdb = results.map(r => byId.get(r.id) || r);
-  const isPosterPlaceholder = (u?: string) => {
-      const s = String(u || '').trim().toLowerCase();
-      if (!s) return true;
-      if (s.includes('placehold.co')) return true;
-      if (s.includes('no+image')) return true;
-      if (s.includes('image+error')) return true;
-      if (s.includes('m.media-amazon.com')) return true;
-      if (s.includes('i.ebayimg.com') || s.includes('ebayimg.com')) return true;
-      return false;
-  };
+  const isPosterPlaceholder = (u?: string) => isPlaceholderPosterUrl(u);
 
   const typeToPosterQuery = (t: MediaType) => {
       switch (t) {
@@ -3621,11 +3904,11 @@ export const getTrendingMedia = async (excludeItems: MediaItem[] = []): Promise<
       needPoster.map(async (it) => {
           try {
               const year = norm(it.releaseDate).slice(0, 4);
-              const poster = await withTimeout(
+              const posterRes = await withTimeout(
                   fetchPosterFromSearch(it.title, year, typeToPosterQuery(it.type)),
                   9000
               );
-              if (poster) patched.set(it.id, { ...it, posterUrl: poster });
+              if (posterRes?.picked) patched.set(it.id, { ...it, posterUrl: posterRes.picked });
           } catch {}
       })
   );

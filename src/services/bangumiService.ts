@@ -34,6 +34,9 @@ export interface BangumiSubject {
 export const searchBangumi = async (query: string, type?: number): Promise<BangumiSubject[]> => {
     try {
         const s = useAIStore.getState();
+        if (!s.enableBangumi) {
+            return [];
+        }
         const token = s.getDecryptedBangumiToken && s.getDecryptedBangumiToken();
 
         if (isTauriEnv) {
@@ -65,6 +68,9 @@ export const searchBangumi = async (query: string, type?: number): Promise<Bangu
 export const getBangumiDetails = async (id: number): Promise<any> => {
     try {
         const s = useAIStore.getState();
+        if (!s.enableBangumi) {
+            return null;
+        }
         const token = s.getDecryptedBangumiToken && s.getDecryptedBangumiToken();
 
         if (isTauriEnv) {

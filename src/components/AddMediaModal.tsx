@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { toast } from 'react-toastify';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
+import { FALLBACK_POSTER } from '../services/aiService';
 
 interface AddMediaModalProps {
     onClose: () => void;
@@ -37,7 +38,7 @@ export const AddMediaModal: React.FC<AddMediaModalProps> = ({ onClose }) => {
             directorOrAuthor: director.trim() || '',
             releaseDate: year.trim() || '',
             description: description.trim() || '',
-            posterUrl: posterUrl.trim() || `https://placehold.co/600x900/1a1a1a/FFF?text=${encodeURIComponent(type)}`,
+            posterUrl: posterUrl.trim() || FALLBACK_POSTER,
             status: 'To Watch',
             addedAt: new Date().toISOString(),
             isOngoing: type === MediaType.TV_SERIES || type === MediaType.COMIC || type === MediaType.SHORT_DRAMA,

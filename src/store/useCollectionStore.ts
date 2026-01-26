@@ -17,6 +17,7 @@ interface CollectionState {
   updateItem: (id: string, updates: Partial<MediaItem>) => void;
   moveCategory: (id: string, category: CollectionCategory) => void;
   createCollection: (primaryItem: MediaItem, selectedItems: MediaItem[]) => void;
+  updateCollectionMembers: (collectionId: string, memberIds: string[]) => void;
   importCollection: (items: MediaItem[]) => void;
   reorderCollection: (newOrder: MediaItem[]) => void;
   exportCollection: (targetDir?: string, redactSensitive?: boolean) => Promise<string | null>;
@@ -254,6 +255,43 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
       }
 
       return { collection: finalCollection };
+  }),
+
+  updateCollectionMembers: (collectionId, memberIds) => set((state) => {
+      const memberSet = new Set(memberIds);
+      const updatedItems: MediaItem[] = [];
+      const updatedCollection = state.collection.map(item => {
+          if (item.isCollection && item.id === collectionId) {
+              return item;
+          }
+          if (memberSet.has(item.id)) {
+              if (item.parentCollectionId !== collectionId) {
+                  const next = { ...item, parentCollectionId: collectionId };
+                  updatedItems.push(next);
+                  return next;
+              }
+              return item;
+          }
+          if (item.parentCollectionId === collectionId) {
+              const next = { ...item, parentCollectionId: undefined };
+              updatedItems.push(next);
+              return next;
+          }
+          return item;
+      });
+
+      if (updatedItems.length > 0) {
+          if (isTauri) {
+              const username = useAuthStore.getState().user?.username || 'guest';
+              updatedItems.forEach(item => {
+                  invoke('save_item', { username, item }).catch(console.error);
+              });
+          } else {
+              localStorage.setItem('media-tracker-collection', JSON.stringify({ state: { collection: updatedCollection }, version: 0 }));
+          }
+      }
+
+      return { collection: updatedCollection };
   }),
 
   getStats: () => {
