@@ -10,7 +10,7 @@ Designed for speed, privacy, and an excellent user experience.
 
 ## 📌 Current Version
 
-v0.1.16
+v0.1.17
 
 ## ✨ Key Features
 
