@@ -718,6 +718,44 @@ async fn fetch_og_image(url: String, config: Option<FetchPageConfig>, state: Sta
 }
 
 
+/// Search credentials may hold several keys separated by ';' / '；' — the UI
+/// advertises key rotation, so split them and try each one in turn.
+fn split_search_keys(raw: Option<&str>) -> Vec<String> {
+    raw.map(|v| {
+        v.split([';', '；'])
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// Runs `attempt` for each key until one returns results. A successful but empty
+/// response outranks a later key's error, since the provider accepted that key.
+async fn search_with_key_rotation<F, Fut>(keys: Vec<String>, attempt: F) -> Result<Vec<SearchResultItem>, String>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<SearchResultItem>, String>>,
+{
+    let mut accepted_empty = false;
+    let mut last_err: Option<String> = None;
+    for key in keys {
+        match attempt(key).await {
+            Ok(items) if !items.is_empty() => return Ok(items),
+            Ok(_) => accepted_empty = true,
+            Err(e) => last_err = Some(e),
+        }
+    }
+    if accepted_empty {
+        return Ok(Vec::new());
+    }
+    match last_err {
+        Some(e) => Err(e),
+        None => Ok(Vec::new()),
+    }
+}
+
 #[command]
 async fn web_search(query: String, config: SearchConfig, state: State<'_, AppState>) -> Result<String, String> {
     println!("Rust web_search called. Provider: {}, Type: {:?}", config.provider, config.search_type);
@@ -742,6 +780,7 @@ async fn web_search(query: String, config: SearchConfig, state: State<'_, AppSta
     let api_key = clean_opt(config.api_key.as_deref());
     let cx = clean_opt(config.cx.as_deref());
     let user = clean_opt(config.user.as_deref());
+    let api_keys = split_search_keys(api_key);
 
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -766,34 +805,58 @@ async fn web_search(query: String, config: SearchConfig, state: State<'_, AppSta
     
     let result = match config.provider.as_str() {
         "google" => {
-            if let (Some(key), Some(cx)) = (api_key, cx) {
-                google_search(client, &query, key, cx, search_type).await
+            if let Some(cx) = cx {
+                if api_keys.is_empty() {
+                    if search_type == Some("image") {
+                        Ok(Vec::new())
+                    } else {
+                        duckduckgo_search(client, &query).await.map_err(|e| e.to_string())
+                    }
+                } else {
+                    search_with_key_rotation(api_keys.clone(), |key| {
+                        let q = query.as_str();
+                        async move { google_search(client, q, &key, cx, search_type).await.map_err(|e| e.to_string()) }
+                    }).await
+                }
             } else if search_type == Some("image") {
                 Ok(Vec::new())
             } else {
-                duckduckgo_search(client, &query).await
+                duckduckgo_search(client, &query).await.map_err(|e| e.to_string())
             }
         },
         "serper" => {
-            if let Some(key) = api_key {
-                serper_search(client, &query, key, search_type).await
-            } else if search_type == Some("image") {
-                Ok(Vec::new())
+            if api_keys.is_empty() {
+                if search_type == Some("image") {
+                    Ok(Vec::new())
+                } else {
+                    duckduckgo_search(client, &query).await.map_err(|e| e.to_string())
+                }
             } else {
-                duckduckgo_search(client, &query).await
+                search_with_key_rotation(api_keys.clone(), |key| {
+                    let q = query.as_str();
+                    async move { serper_search(client, q, &key, search_type).await.map_err(|e| e.to_string()) }
+                }).await
             }
         },
         "yandex" => {
             if search_type == Some("image") {
                 return Err("Yandex image search not supported".to_string());
             }
-            if let (Some(key), Some(user)) = (api_key, user) {
-                yandex_search(&state.direct_client, &query, user, key).await
+            if let Some(user) = user {
+                if api_keys.is_empty() {
+                    duckduckgo_search(client, &query).await.map_err(|e| e.to_string())
+                } else {
+                    let yandex_client = &state.direct_client;
+                    search_with_key_rotation(api_keys.clone(), |key| {
+                        let q = query.as_str();
+                        async move { yandex_search(yandex_client, q, user, &key).await.map_err(|e| e.to_string()) }
+                    }).await
+                }
             } else {
-                duckduckgo_search(client, &query).await
+                duckduckgo_search(client, &query).await.map_err(|e| e.to_string())
             }
         },
-        "duckduckgo" => duckduckgo_search(client, &query).await,
+        "duckduckgo" => duckduckgo_search(client, &query).await.map_err(|e| e.to_string()),
         _ => Err("Unsupported search provider".into()),
     };
     let result: Result<Vec<SearchResultItem>, String> = result.map_err(|e| e.to_string());
@@ -944,7 +1007,7 @@ async fn wiki_pageimages(title: String, lang_zh: bool, state: State<'_, AppState
 }
 
 #[command]
-async fn ai_chat(messages: Vec<Value>, temperature: f32, tools: Option<Value>, extra_body: Option<Value>, config: AIChatConfig, state: State<'_, AppState>) -> Result<String, String> {
+async fn ai_chat(messages: Vec<Value>, temperature: Option<f32>, tools: Option<Value>, extra_body: Option<Value>, config: AIChatConfig, state: State<'_, AppState>) -> Result<String, String> {
     let start = std::time::Instant::now();
     let api_key = config.api_key.ok_or("Missing API Key")?;
     let raw_base = config.base_url.unwrap_or("https://api.moonshot.cn/v1".to_string());
@@ -988,8 +1051,12 @@ async fn ai_chat(messages: Vec<Value>, temperature: f32, tools: Option<Value>, e
     let mut body = serde_json::json!({
         "model": model,
         "messages": messages,
-        "temperature": temperature,
     });
+    // Reasoning-only models reject the sampling temperature entirely, so the
+    // frontend omits it for them (None) and the provider default applies.
+    if let Some(t) = temperature {
+        body["temperature"] = serde_json::json!(t);
+    }
     if let Some(eb) = extra_body {
         if let Some(obj) = eb.as_object() {
             for (k, v) in obj {
@@ -1081,7 +1148,7 @@ async fn ai_chat(messages: Vec<Value>, temperature: f32, tools: Option<Value>, e
 #[command]
 async fn ai_chat_stream(
     messages: Vec<Value>,
-    temperature: f32,
+    temperature: Option<f32>,
     extra_body: Option<Value>,
     config: AIChatConfig,
     on_event: tauri::ipc::Channel<Value>,
@@ -1122,9 +1189,11 @@ async fn ai_chat_stream(
     let mut body = serde_json::json!({
         "model": model,
         "messages": messages,
-        "temperature": temperature,
         "stream": true,
     });
+    if let Some(t) = temperature {
+        body["temperature"] = serde_json::json!(t);
+    }
     if let Some(eb) = extra_body {
         if let Some(obj) = eb.as_object() {
             for (k, v) in obj {

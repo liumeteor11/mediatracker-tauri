@@ -179,3 +179,67 @@ fn test_chat_session_serialization() {
     assert!(minimal.messages.is_empty());
     assert_eq!(minimal.summarized_up_to, 0);
 }
+
+#[test]
+fn test_split_search_keys() {
+    // The UI advertises multi-key search credentials separated by ; or ；.
+    assert_eq!(
+        crate::split_search_keys(Some("key-a; key-b； key-c ;; ")),
+        vec!["key-a".to_string(), "key-b".to_string(), "key-c".to_string()]
+    );
+    assert!(crate::split_search_keys(None).is_empty());
+    assert!(crate::split_search_keys(Some("   ")).is_empty());
+    assert_eq!(
+        crate::split_search_keys(Some("single")),
+        vec!["single".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn test_search_with_key_rotation() {
+    let item = || crate::SearchResultItem {
+        title: "t".to_string(),
+        snippet: "s".to_string(),
+        link: "https://example.com".to_string(),
+        image: None,
+        metadata: None,
+    };
+
+    // A rejected key rotates to the next one instead of failing the search.
+    let items = crate::search_with_key_rotation(
+        vec!["rejected".to_string(), "accepted".to_string()],
+        |key| async move {
+            if key == "accepted" {
+                Ok(vec![item()])
+            } else {
+                Err("API key not valid".to_string())
+            }
+        },
+    )
+    .await
+    .expect("second key should be used");
+    assert_eq!(items.len(), 1);
+
+    // Every key rejected -> the provider's error is surfaced.
+    let err = crate::search_with_key_rotation(vec!["a".to_string()], |_key| async move {
+        Err::<Vec<crate::SearchResultItem>, String>("quota".to_string())
+    })
+    .await
+    .expect_err("all keys failed");
+    assert_eq!(err, "quota");
+
+    // An accepted-but-empty response outranks a later key's error.
+    let items = crate::search_with_key_rotation(
+        vec!["empty".to_string(), "rejected".to_string()],
+        |key| async move {
+            if key == "empty" {
+                Ok(Vec::new())
+            } else {
+                Err("boom".to_string())
+            }
+        },
+    )
+    .await
+    .expect("accepted key wins");
+    assert!(items.is_empty());
+}
