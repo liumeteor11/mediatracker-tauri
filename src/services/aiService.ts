@@ -1328,7 +1328,82 @@ export const refreshTrendingCache = async (): Promise<void> => {
     } catch (e) { console.error("Refresh trending failed", e); }
 };
 
-export const callAI = async (messages: any[], temperature: number = 0.7, options: { forceSearch?: boolean; disableSearch?: boolean; configOverride?: { baseURL?: string; apiKey?: string; model?: string; provider?: AIProvider } } = {}): Promise<string> => {
+/**
+ * Classify a failed AI call so callers can tell "your key/provider is wrong"
+ * (needs a config fix) apart from transient or model-side failures.
+ */
+export const describeAIError = (e: unknown): { auth: boolean; detail: string } => {
+    const err: any = e;
+    const detail = String(err?.message || e || '').trim();
+    const status = Number(err?.status || err?.response?.status || 0) || Number((detail.match(/\((\d{3})\)/) || [])[1] || 0);
+    const auth = status === 401 || status === 403 ||
+        /unauthorized|invalid api key|authentication fails|api key.*(invalid|incorrect)|missing api key/i.test(detail);
+    return { auth, detail };
+};
+
+/**
+ * Temperature policy per model, learned from the provider at runtime.
+ * `value` = only that temperature is accepted, `null` = the parameter is
+ * rejected outright. Learned once per session so later calls skip the rejected
+ * request instead of paying for it again — this is what makes models the
+ * catalog does not know about (custom endpoints, new releases) work.
+ */
+const learnedTemperaturePolicy = new Map<string, number | null>();
+
+/** Models that reject tool definitions at all (learned the same way). */
+const learnedNoTools = new Set<string>();
+
+const modelPolicyKey = (provider: string, model?: string | null): string => `${provider}|${model || ''}`;
+
+/** What a model wants instead of the requested temperature. */
+type TemperatureRequirement = { kind: 'value'; value: number } | { kind: 'unsupported' };
+
+/** Read a provider's temperature complaint, e.g. "only 1 is allowed for this model". */
+const parseTemperatureRequirement = (e: any): TemperatureRequirement | null => {
+    const msg = String(e?.message || e?.error?.message || '');
+    if (!/temperature/i.test(msg)) return null;
+    const byValue = msg.match(/only\s+(\d+(?:\.\d+)?)\s+is allowed/i)
+        || msg.match(/only the default \((\d+(?:\.\d+)?)\)/i)
+        || msg.match(/temperature\s*(?:must be|is)\s*(\d+(?:\.\d+)?)/i);
+    if (byValue) {
+        const value = Number(byValue[1]);
+        if (Number.isFinite(value)) return { kind: 'value', value };
+    }
+    if (/(unsupported|not supported|does not support)/i.test(msg)) return { kind: 'unsupported' };
+    return null;
+};
+
+/** Temperature to send: a learned/catalogued value, `undefined` when the model rejects the field. */
+const resolveTemperature = (provider: AIProvider, model: string | null | undefined, requested: number): number | undefined => {
+    const key = modelPolicyKey(provider, model);
+    if (learnedTemperaturePolicy.has(key)) {
+        const learned = learnedTemperaturePolicy.get(key);
+        return learned === null ? undefined : learned;
+    }
+    return getModelCapabilities(provider, model).fixedTemperature ?? requested;
+};
+
+const rememberTemperaturePolicy = (provider: AIProvider, model: string | null | undefined, requirement: TemperatureRequirement): void => {
+    learnedTemperaturePolicy.set(modelPolicyKey(provider, model), requirement.kind === 'value' ? requirement.value : null);
+};
+
+/** True when the provider rejected the tool/function definitions we sent. */
+const isToolsUnsupportedError = (e: any): boolean => {
+    const msg = String(e?.message || e?.error?.message || '');
+    if (!/\b(tools|tool_choice|functions|function_calling)\b/i.test(msg)) return false;
+    return /unsupported|not supported|does not support|unknown (parameter|field|argument)|invalid (parameter|field|argument)/i.test(msg);
+};
+
+/** Room a thinking model needs before it can write anything: it reasons first, then answers. */
+const REASONING_TOKEN_FLOOR = 8000;
+const MAX_TOKEN_CEILING = 32000;
+
+/** Providers whose chat-completions endpoint takes tool definitions (used for web search). */
+const TOOL_CALLING_PROVIDERS: AIProvider[] = ['moonshot', 'deepseek', 'openai', 'qwen', 'google', 'mistral', 'mimo', 'zhipu'];
+
+export const providerSupportsTools = (provider: AIProvider): boolean => TOOL_CALLING_PROVIDERS.includes(provider);
+
+export const callAI = async (messages: any[], temperature: number = 0.7, options: { forceSearch?: boolean; disableSearch?: boolean; maxTokens?: number; configOverride?: { baseURL?: string; apiKey?: string; model?: string; provider?: AIProvider } } = {}): Promise<string> => {
     const state = useAIStore.getState();
     const { 
         provider,
@@ -1394,6 +1469,12 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
     };
     finalBaseURL = ensureV1IfNeeded(effProvider as AIProvider, finalBaseURL);
 
+    // Some models accept exactly one temperature value, others reject the field
+    // entirely (see modelCatalog + the runtime-learned policy above).
+    const caps = getModelCapabilities(effProvider, model);
+    let effTemperature = resolveTemperature(effProvider, model, temperature);
+    let effMaxTokens = options.maxTokens ?? maxTokens;
+
     // Proxy handling for Web Mode to avoid CORS (only in local dev)
     const isLocalDev = typeof window !== 'undefined' && /^https?:\/\/(localhost|127\.|0\.0\.0\.0)/.test(window.location.origin || '');
     if (!isTauri && isLocalDev && finalBaseURL.includes('api.moonshot.cn')) {
@@ -1419,8 +1500,8 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
             // Call Rust
             const resultJson = await invoke<string>("ai_chat", { 
                 messages: msgs, 
-                temperature, 
-                tools, 
+                temperature: effTemperature, 
+                tools: tools.length > 0 ? tools : undefined, 
                 extra_body: extraBody || {},
                 config: rustConfig 
             });
@@ -1444,7 +1525,7 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
             return await client.chat.completions.create({
                 model: model || "gpt-5.6-terra",
                 messages: msgs,
-                temperature: temperature,
+                temperature: effTemperature,
                 tools: tools.length > 0 ? tools : undefined,
                 tool_choice: tools.length > 0 ? "auto" : undefined,
                 ...(extraBody || {})
@@ -1454,10 +1535,10 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
 
     try {
         const shouldSearch = (enableSearch || !!options.forceSearch) && !options.disableSearch;
-        const toolCallingProviders: AIProvider[] = ['moonshot', 'deepseek', 'openai', 'qwen', 'google', 'mistral', 'mimo', 'zhipu'];
-        const supportsTools = toolCallingProviders.includes(effProvider);
-        const caps = getModelCapabilities(effProvider, model);
+        const supportsTools = providerSupportsTools(effProvider);
         const useNativeSearch = shouldSearch && supportsTools && !!enableNetworking && caps.nativeSearch;
+        // A model that rejected tool definitions before is called without them.
+        let toolsAllowed = !learnedNoTools.has(modelPolicyKey(effProvider, model));
         const externalTools: any[] = (shouldSearch && supportsTools) ? [
                 {
                     type: "function",
@@ -1483,13 +1564,24 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
         // Handle multiple API keys with retry logic
         const apiKeys = apiKey.split(/[;；]/).map(k => k.trim()).filter(k => k);
         let lastError: any = null;
+        let temperatureAdjusted = false;
         
         for (let i = 0; i < apiKeys.length; i++) {
             const currentKey = apiKeys[i];
             
             try {
                 let turnCount = 0;
-                const MAX_TURNS = 2;
+                // How many web_search rounds the model may run before it has to
+                // answer; the loop below still allows one final tool-less turn.
+                const MAX_SEARCH_ROUNDS = 2;
+                // Set once the search rounds are used up: the next request runs
+                // without tools so the model has to produce its answer.
+                let toolsDisabled = false;
+                // Thinking models often close a search round with an empty message
+                // when they wanted to search again; ask once more, without tools.
+                let emptyAnswerNudged = false;
+                // Truncated answers (reasoning ate the whole budget) get a bigger one.
+                let budgetRaises = 0;
                 let currentMessages = [...messages]; // Clone for each key retry to start fresh conversation state if needed? 
                                                      // Actually we probably want to resume conversation, but if a key fails mid-way, 
                                                      // the conversation state in 'currentMessages' might be dirty if we mutated it?
@@ -1500,7 +1592,7 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
                                                      // YES.
                 currentMessages = [...messages];
 
-                while (turnCount < MAX_TURNS) {
+                while (turnCount <= MAX_SEARCH_ROUNDS) {
                     let completion;
                     const startTs = performance.now();
                     
@@ -1516,12 +1608,12 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
                             await apiLimiter.acquire();
                             try {
                                  const nativeActive = useNativeSearch && !nativeSearchBlocked;
-                                 effTools = nativeActive ? nativeSearchTools : externalTools;
+                                 effTools = (!toolsAllowed || toolsDisabled) ? [] : (nativeActive ? nativeSearchTools : externalTools);
                                  const extraBody = buildRequestExtras({
                                      provider: effProvider,
                                      model,
                                      reasoningEffort,
-                                     maxTokens,
+                                     maxTokens: effMaxTokens,
                                      nativeSearch: nativeActive
                                  });
                                  completion = await createCompletion(currentMessages, effTools, webBaseURLOverride, currentKey, extraBody);
@@ -1546,6 +1638,24 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
                             // fall back to the app's external search on the next attempt.
                             if (useNativeSearch && !nativeSearchBlocked && isUnsupportedParamError(apiError)) {
                                 nativeSearchBlocked = true;
+                                continue;
+                            }
+
+                            // Some endpoints reject tool definitions outright: drop
+                            // them for this model and try the request again.
+                            if (toolsAllowed && !toolsDisabled && isToolsUnsupportedError(apiError)) {
+                                toolsAllowed = false;
+                                learnedNoTools.add(modelPolicyKey(effProvider, model));
+                                continue;
+                            }
+
+                            // Models may reject the value we picked or the field itself;
+                            // learn the rule so the next call sends what they accept.
+                            const temperatureRequirement = parseTemperatureRequirement(apiError);
+                            if (temperatureRequirement && !temperatureAdjusted) {
+                                temperatureAdjusted = true;
+                                rememberTemperaturePolicy(effProvider, model, temperatureRequirement);
+                                effTemperature = temperatureRequirement.kind === 'value' ? temperatureRequirement.value : undefined;
                                 continue;
                             }
 
@@ -1620,8 +1730,9 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
                                     const args = JSON.parse(toolCall.function.arguments || '{}');
                                     const q = args.query;
                                     if (q) {
-                                        // Execute search
-                                        const results = await performClientSideSearch(q);
+                                        // Execute search (forced when the caller asked for it
+                                        // even though the global search toggle is off).
+                                        const results = await performClientSideSearch(q, !!options.forceSearch);
                                         currentMessages.push({
                                             role: "tool",
                                             tool_call_id: toolCall.id,
@@ -1653,9 +1764,38 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
                              break;
                         }
                         turnCount++;
+                        // Search budget spent: let the loop run once more without
+                        // tools so the model still answers instead of returning "".
+                        if (turnCount >= MAX_SEARCH_ROUNDS) toolsDisabled = true;
                     } else {
                         // Final response
-                        return message.content || "";
+                        const content = message.content || "";
+                        if (content) return content;
+
+                        // Truncated before any output: thinking models can burn the
+                        // whole token budget on reasoning (finish_reason=length with
+                        // empty content). Raise the budget and ask again.
+                        const finishReason = completion?.choices?.[0]?.finish_reason;
+                        if (finishReason === 'length' && budgetRaises < 2) {
+                            budgetRaises++;
+                            effMaxTokens = budgetRaises === 1
+                                ? Math.min(Math.max(effMaxTokens * 4, REASONING_TOKEN_FLOOR), MAX_TOKEN_CEILING)
+                                : Math.min(effMaxTokens * 2, MAX_TOKEN_CEILING);
+                            toolsDisabled = true;
+                            currentMessages.push({
+                                role: "user",
+                                content: "Output the final answer now, in the format requested above, without calling any tools."
+                            });
+                            continue;
+                        }
+
+                        if (!turnCount || emptyAnswerNudged) return content;
+                        emptyAnswerNudged = true;
+                        toolsDisabled = true;
+                        currentMessages.push({
+                            role: "user",
+                            content: "Output the final answer now, in the format requested above, without calling any tools."
+                        });
                     }
                 } // end while turns
 
@@ -1787,78 +1927,96 @@ export const callAIStream = async (
     };
     finalBaseURL = ensureV1IfNeeded(effProvider as AIProvider, finalBaseURL);
 
+    // Same temperature policy as the non-streaming path (catalog + learned).
+    let effTemperature = resolveTemperature(effProvider, model, temperature);
+
     let lastError: any = null;
+    let temperatureAdjusted = false;
 
     for (let keyIndex = 0; keyIndex < keyList.length; keyIndex++) {
         const effApiKey = keyList[keyIndex];
-        let streamStarted = false;
-        let full = '';
+        // The same key may be retried once after the temperature policy is learned.
+        let keyExhausted = false;
+        for (let attempt = 0; attempt < 2 && !keyExhausted; attempt++) {
+            let streamStarted = false;
+            let full = '';
 
-        try {
-            if (isTauri) {
-                const { useSystemProxy, getProxyUrl } = useAIStore.getState();
-                const rustConfig = {
-                    model,
-                    baseURL: finalBaseURL,
-                    apiKey: effApiKey,
-                    proxy_url: getProxyUrl(),
-                    use_system_proxy: useSystemProxy
-                };
-                const { Channel } = await import('@tauri-apps/api/core');
-                const channel = new Channel<any>();
-                let streamError: string | null = null;
-                channel.onmessage = (evt: any) => {
-                    const event = typeof evt === 'string' ? JSON.parse(evt) : evt;
-                    if (event?.type === 'delta' && event.text) {
-                        streamStarted = true;
-                        full += event.text;
-                        onDelta(event.text);
-                    } else if (event?.type === 'error') {
-                        streamError = event.message || 'stream error';
+            try {
+                if (isTauri) {
+                    const { useSystemProxy, getProxyUrl } = useAIStore.getState();
+                    const rustConfig = {
+                        model,
+                        baseURL: finalBaseURL,
+                        apiKey: effApiKey,
+                        proxy_url: getProxyUrl(),
+                        use_system_proxy: useSystemProxy
+                    };
+                    const { Channel } = await import('@tauri-apps/api/core');
+                    const channel = new Channel<any>();
+                    let streamError: string | null = null;
+                    channel.onmessage = (evt: any) => {
+                        const event = typeof evt === 'string' ? JSON.parse(evt) : evt;
+                        if (event?.type === 'delta' && event.text) {
+                            streamStarted = true;
+                            full += event.text;
+                            onDelta(event.text);
+                        } else if (event?.type === 'error') {
+                            streamError = event.message || 'stream error';
+                        }
+                    };
+                    await invoke('ai_chat_stream', {
+                        messages,
+                        temperature: effTemperature,
+                        extra_body: {},
+                        config: rustConfig,
+                        on_event: channel
+                    });
+                    if (!full) throw new Error(streamError || 'empty-ai-response');
+                    return full;
+                } else {
+                    const client = new OpenAI({
+                        apiKey: effApiKey,
+                        baseURL: finalBaseURL,
+                        dangerouslyAllowBrowser: true
+                    });
+                    const stream = await client.chat.completions.create({
+                        model: model || "gpt-5.6-terra",
+                        messages,
+                        temperature: effTemperature,
+                        stream: true
+                    } as any);
+                    for await (const chunk of stream as any) {
+                        const delta = chunk?.choices?.[0]?.delta?.content || '';
+                        if (delta) {
+                            streamStarted = true;
+                            full += delta;
+                            onDelta(delta);
+                        }
                     }
-                };
-                await invoke('ai_chat_stream', {
-                    messages,
-                    temperature,
-                    extra_body: {},
-                    config: rustConfig,
-                    on_event: channel
-                });
-                if (!full) throw new Error(streamError || 'empty-ai-response');
-                return full;
-            } else {
-                const client = new OpenAI({
-                    apiKey: effApiKey,
-                    baseURL: finalBaseURL,
-                    dangerouslyAllowBrowser: true
-                });
-                const stream = await client.chat.completions.create({
-                    model: model || "gpt-5.6-terra",
-                    messages,
-                    temperature,
-                    stream: true
-                } as any);
-                for await (const chunk of stream as any) {
-                    const delta = chunk?.choices?.[0]?.delta?.content || '';
-                    if (delta) {
-                        streamStarted = true;
-                        full += delta;
-                        onDelta(delta);
-                    }
+                    if (!full) throw new Error('empty-ai-response');
+                    return full;
                 }
-                if (!full) throw new Error('empty-ai-response');
-                return full;
+            } catch (e: any) {
+                lastError = e;
+                // Models may reject the temperature value or the field itself; learn
+                // the rule and re-issue the request before falling back to another key.
+                const temperatureRequirement = streamStarted ? null : parseTemperatureRequirement(e);
+                if (temperatureRequirement && !temperatureAdjusted) {
+                    temperatureAdjusted = true;
+                    rememberTemperaturePolicy(effProvider, model, temperatureRequirement);
+                    effTemperature = temperatureRequirement.kind === 'value' ? temperatureRequirement.value : undefined;
+                    continue;
+                }
+                // A key rotation is only safe before the first delta reached the UI;
+                // afterwards the consumer already rendered partial output.
+                const msg = String(e?.message || e || '');
+                const retryable = !streamStarted && (msg.includes('401') || msg.includes('429') || msg.includes('API Error'));
+                if (retryable && keyIndex < keyList.length - 1) {
+                    keyExhausted = true;
+                    continue;
+                }
+                throw e;
             }
-        } catch (e: any) {
-            lastError = e;
-            // A key rotation is only safe before the first delta reached the UI;
-            // afterwards the consumer already rendered partial output.
-            const msg = String(e?.message || e || '');
-            const retryable = !streamStarted && (msg.includes('401') || msg.includes('429') || msg.includes('API Error'));
-            if (retryable && keyIndex < keyList.length - 1) {
-                continue;
-            }
-            throw e;
         }
     }
 

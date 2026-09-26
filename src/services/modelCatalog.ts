@@ -10,6 +10,14 @@ import type { AIProvider } from '../store/useAIStore';
  *    over the app's external search (Google/Serper/Yandex/DuckDuckGo).
  *  - reasoningLevels: which reasoning-effort options the model accepts.
  *  - maxTokensParam: correct request field name for the output token cap.
+ *  - fixedTemperature: the model accepts exactly this temperature value; other
+ *    values are rejected by the provider, so callers must substitute it.
+ *
+ * Only fill in what is known for sure. Anything not listed here (other
+ * providers, custom endpoints, models newer than this file) is adapted at
+ * runtime: aiService learns from the provider's own rejection which temperature
+ * to use, when to drop the parameter or the tool definitions, and gives
+ * thinking models room by raising a truncated token budget.
  */
 export type ReasoningLevel = 'off' | 'auto' | 'low' | 'medium' | 'high' | 'max';
 
@@ -25,6 +33,8 @@ export interface CatalogModel {
   nativeSearch?: boolean;
   reasoningLevels?: ReasoningLevel[];
   maxTokensParam?: 'max_tokens' | 'max_completion_tokens';
+  /** Only this temperature value is accepted by the provider (e.g. thinking-only models). */
+  fixedTemperature?: number;
 }
 
 export interface ProviderDefaults {
@@ -47,12 +57,15 @@ export const PROVIDER_DEFAULTS: Record<string, ProviderDefaults> = {
 
 export const MODEL_CATALOG: Record<AIProvider, CatalogModel[]> = {
   moonshot: [
-    // Kimi K3 is a thinking-only model: reasoning_effort accepts only "max".
-    // Native web search on Moonshot is under maintenance, so it stays external.
-    { name: 'kimi-k3', version: 'Kimi K3', releaseDate: '2026-07', nativeSearch: false, reasoningLevels: ['auto', 'max'] },
-    { name: 'kimi-k2.6', version: 'Kimi K2.6', releaseDate: '2026-04', nativeSearch: false, reasoningLevels: ['off', 'auto', 'high'] },
-    { name: 'kimi-k2.7-code', version: 'Kimi K2.7 Code', releaseDate: '2026-07', nativeSearch: false, reasoningLevels: ['auto'] },
-    { name: 'kimi-k2.7-code-highspeed', version: 'Kimi K2.7 Code HighSpeed', releaseDate: '2026-07', nativeSearch: false, reasoningLevels: ['auto'] },
+    // Moonshot's current Kimi models all pin the sampling temperature to 1
+    // ("invalid temperature: only 1 is allowed for this model"); the app's
+    // analysis/roleplay temperatures have to be substituted. Kimi K3 is also a
+    // thinking-only model: reasoning_effort accepts only "max". Native web
+    // search on Moonshot is under maintenance, so it stays external.
+    { name: 'kimi-k3', version: 'Kimi K3', releaseDate: '2026-07', nativeSearch: false, reasoningLevels: ['auto', 'max'], fixedTemperature: 1 },
+    { name: 'kimi-k2.6', version: 'Kimi K2.6', releaseDate: '2026-04', nativeSearch: false, reasoningLevels: ['off', 'auto', 'high'], fixedTemperature: 1 },
+    { name: 'kimi-k2.7-code', version: 'Kimi K2.7 Code', releaseDate: '2026-07', nativeSearch: false, reasoningLevels: ['auto'], fixedTemperature: 1 },
+    { name: 'kimi-k2.7-code-highspeed', version: 'Kimi K2.7 Code HighSpeed', releaseDate: '2026-07', nativeSearch: false, reasoningLevels: ['auto'], fixedTemperature: 1 },
     { name: 'kimi-k2.5', version: 'Kimi K2.5 (Sunset 2026-08-31)', releaseDate: '2025-12', deprecated: true, nativeSearch: false, reasoningLevels: ['off', 'auto', 'high'] }
   ],
   openai: [
@@ -121,6 +134,7 @@ export interface ModelCapabilities {
   nativeSearch: boolean;
   reasoningLevels: ReasoningLevel[];
   maxTokensParam: 'max_tokens' | 'max_completion_tokens';
+  fixedTemperature?: number;
 }
 
 export function getModelCapabilities(provider: AIProvider, model?: string | null): ModelCapabilities {
@@ -130,6 +144,7 @@ export function getModelCapabilities(provider: AIProvider, model?: string | null
     nativeSearch: m?.nativeSearch ?? def.nativeSearch,
     reasoningLevels: m?.reasoningLevels ?? def.reasoningLevels,
     maxTokensParam: m?.maxTokensParam ?? def.maxTokensParam,
+    fixedTemperature: m?.fixedTemperature,
   };
 }
 

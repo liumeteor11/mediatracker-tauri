@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { callAI, callAIStream } from './aiService';
+import { callAI, callAIStream, providerSupportsTools } from './aiService';
 import { getTMDBDetails } from './tmdbService';
 import { MediaItem } from '../types/types';
 import {
@@ -32,6 +32,12 @@ import { useAIStore } from '../store/useAIStore';
 
 // Roleplay reads better a bit above the media-analysis default temperature.
 const CHAT_TEMPERATURE = 0.8;
+// A persona profile is a large JSON document, and thinking-only models spend
+// most of their completion budget on reasoning before emitting it — at the
+// default 2000 tokens Kimi K3 returns empty content with finish_reason=length.
+// Search stays on: profiles are grounded in web research about the work and the
+// character (plus TMDb credits and the user's extra material).
+const DISTILL_MAX_TOKENS = 8000;
 // History window: nanobot-style newest-first budget (messages + chars).
 const HISTORY_MAX_MESSAGES = 40;
 const HISTORY_MAX_CHARS = 24000;
@@ -187,9 +193,12 @@ Each array element must use exactly these fields:
 }`;
 };
 
-const buildDistillUserPrompt = (item: MediaItem, opts: DistillOptions, creditLines: string[], existingNames: string[]): string => {
+const buildDistillUserPrompt = (item: MediaItem, opts: DistillOptions, creditLines: string[], existingNames: string[], searchEnabled: boolean): string => {
   const parts: string[] = [];
   parts.push(`[Work] ${item.title} (${item.type}${item.releaseDate ? `, ${item.releaseDate}` : ''}${item.directorOrAuthor ? `, by ${item.directorOrAuthor}` : ''})`);
+  if (searchEnabled) {
+    parts.push('[Research] You have a web_search tool. Search for this work and the target character — cast list, plot, background, notable scenes and quotes — before writing the profile, and ground the quote/timeline fields in what the search returns. Never fabricate quotes; leave the field empty instead.');
+  }
   if (item.description) parts.push(`[Synopsis] ${item.description}`);
   if (creditLines.length > 0) parts.push(`[Cast & characters]\n${creditLines.join('\n')}`);
   else if (item.cast && item.cast.length > 0) parts.push(`[Cast & characters]\n${item.cast.join(', ')}`);
@@ -276,10 +285,12 @@ export const distillCharacters = async (
 
   const messages = [
     { role: 'system', content: buildDistillSystemPrompt(language) },
-    { role: 'user', content: buildDistillUserPrompt(item, { ...opts, maxCharacters }, creditLines, sameSource.map(c => c.name)) },
+    // The [Research] directive is only honest for providers that actually get
+    // the web_search tool injected (see providerSupportsTools).
+    { role: 'user', content: buildDistillUserPrompt(item, { ...opts, maxCharacters }, creditLines, sameSource.map(c => c.name), providerSupportsTools(useAIStore.getState().provider)) },
   ];
 
-  const text = await callAI(messages, 0.3);
+  const text = await callAI(messages, 0.3, { maxTokens: DISTILL_MAX_TOKENS, forceSearch: true });
   if (!text) throw new Error('empty-ai-response');
   const rawList = extractJsonArray(text);
   if (!rawList || rawList.length === 0) throw new Error('no-json-array');
