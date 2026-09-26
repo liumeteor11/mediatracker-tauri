@@ -8,8 +8,18 @@ pub struct CollectionData {
     // Legacy field for compatibility
     #[serde(default)]
     pub items: Vec<MediaItem>,
+    /// Distilled character profiles, per user.
+    #[serde(default)]
+    pub characters_by_user: HashMap<String, Vec<DistilledCharacter>>,
+    /// Roleplay chat sessions with distilled characters, per user.
+    #[serde(default)]
+    pub chat_sessions_by_user: HashMap<String, Vec<ChatSession>>,
     pub ai_config: Option<AIConfig>,
     pub theme_config: Option<ThemeConfig>,
+    /// Shared pairing secret required by the LAN sync endpoints.
+    /// Never transmitted as part of sync payloads.
+    #[serde(default)]
+    pub sync_token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,11 +83,136 @@ pub struct MediaItem {
     pub parent_collection_id: Option<String>,
     #[serde(rename = "isCollection")]
     pub is_collection: Option<bool>,
+    #[serde(rename = "isPinned")]
+    pub is_pinned: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThemeConfig {
     pub theme: String,
+}
+
+// --- Distilled characters (persona profiles) ---
+
+/// How the character speaks; distilled from the work and enforced in chat prompts.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ExpressionDNA {
+    pub tone: Option<String>,
+    /// Formality from 1 (very formal) to 5 (very colloquial); 0 = unknown.
+    #[serde(default)]
+    pub formality: i32,
+    #[serde(default)]
+    pub catchphrases: Vec<String>,
+    #[serde(default)]
+    pub vocabulary: Vec<String>,
+    #[serde(rename = "sentenceStyle")]
+    pub sentence_style: Option<String>,
+    #[serde(rename = "exampleLines", default)]
+    pub example_lines: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CharacterRelation {
+    pub name: String,
+    pub relation: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineEvent {
+    pub period: String,
+    pub event: String,
+}
+
+/// User-issued correction (distilly-style correction layer). Corrections are
+/// injected into the chat system prompt and take precedence over the persona.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CharacterCorrection {
+    pub scene: String,
+    pub wrong: String,
+    pub correct: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DistilledCharacter {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(rename = "sourceTitle")]
+    pub source_title: String,
+    #[serde(rename = "sourceMediaId")]
+    pub source_media_id: Option<String>,
+    #[serde(rename = "sourceType")]
+    pub source_type: Option<String>,
+    pub tagline: Option<String>,
+    pub appearance: Option<String>,
+    #[serde(default)]
+    pub personality: Vec<String>,
+    #[serde(rename = "mentalModels", default)]
+    pub mental_models: Vec<String>,
+    #[serde(rename = "decisionHeuristics", default)]
+    pub decision_heuristics: Vec<String>,
+    pub interpersonal: Option<String>,
+    #[serde(default)]
+    pub boundaries: Vec<String>,
+    pub background: Option<String>,
+    pub expression: Option<ExpressionDNA>,
+    #[serde(default)]
+    pub relationships: Vec<CharacterRelation>,
+    #[serde(default)]
+    pub quotes: Vec<String>,
+    #[serde(rename = "externalViews", default)]
+    pub external_views: Vec<String>,
+    #[serde(default)]
+    pub timeline: Vec<TimelineEvent>,
+    #[serde(default)]
+    pub corrections: Vec<CharacterCorrection>,
+    /// Bumped on every incremental re-distillation / correction.
+    #[serde(default)]
+    pub version: u32,
+    #[serde(rename = "avatarUrl")]
+    pub avatar_url: Option<String>,
+    /// In-character first message inserted into new chat sessions.
+    pub greeting: Option<String>,
+    #[serde(rename = "createdAt")]
+    pub created_at: f64,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: f64,
+}
+
+// --- Roleplay chat sessions ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub id: String,
+    /// "user" | "assistant"
+    pub role: String,
+    pub content: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatSession {
+    pub id: String,
+    #[serde(rename = "characterId")]
+    pub character_id: String,
+    pub title: String,
+    /// Rolling summary of the archived message prefix (see summarizedUpTo).
+    #[serde(default)]
+    pub summary: Option<String>,
+    /// Messages up to (exclusive of) this index are covered by `summary`
+    /// and are no longer replayed verbatim (nanobot-style archive offset).
+    #[serde(rename = "summarizedUpTo", default)]
+    pub summarized_up_to: usize,
+    #[serde(default)]
+    pub messages: Vec<ChatMessage>,
+    #[serde(rename = "createdAt")]
+    pub created_at: f64,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,8 +254,8 @@ pub struct AIConfig {
     pub enable_bangumi: bool,
     #[serde(rename = "enableNetworking")]
     pub enable_networking: bool,
-    #[serde(rename = "enableDeepThinking")]
-    pub enable_deep_thinking: bool,
+    #[serde(rename = "reasoningEffort", default = "default_reasoning_effort")]
+    pub reasoning_effort: String,
     #[serde(rename = "enableTrending")]
     pub enable_trending: bool,
     #[serde(rename = "trendingPrompt")]
@@ -139,6 +274,10 @@ pub struct AIConfig {
     pub proxy_password: String,
     #[serde(rename = "authoritativeDomains")]
     pub authoritative_domains: AuthoritativeDomains,
+}
+
+fn default_reasoning_effort() -> String {
+    "auto".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

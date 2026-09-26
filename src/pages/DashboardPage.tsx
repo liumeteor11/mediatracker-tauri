@@ -432,7 +432,7 @@ export const DashboardPage: React.FC = () => {
       </div>
 
       {/* AI Configuration Panel */}
-      <div className="mb-8">
+      <div className="mb-6">
         <AIConfigPanel />
       </div>
 

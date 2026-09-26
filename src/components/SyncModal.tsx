@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { useAuthStore } from '../store/useAuthStore';
 
 interface PeerInfo {
     name: string;
@@ -17,14 +18,52 @@ export const SyncModal: React.FC<SyncModalProps> = ({ isOpen, onClose }) => {
     const [peers, setPeers] = useState<PeerInfo[]>([]);
     const [status, setStatus] = useState<string>('Idle');
     const [isSyncing, setIsSyncing] = useState(false);
+    const [syncToken, setSyncToken] = useState<string>('');
+    const [tokenInput, setTokenInput] = useState<string>('');
 
     useEffect(() => {
         if (isOpen) {
             startServer();
+            loadSyncToken();
             const interval = setInterval(fetchPeers, 3000);
             return () => clearInterval(interval);
         }
     }, [isOpen]);
+
+    const loadSyncToken = async () => {
+        try {
+            const token = await invoke<string>('get_sync_token');
+            setSyncToken(token || '');
+            setTokenInput(token || '');
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    const saveSyncToken = async () => {
+        const trimmed = tokenInput.trim();
+        if (trimmed.length < 4) {
+            setStatus('Pairing code must be at least 4 characters');
+            return;
+        }
+        try {
+            await invoke('set_sync_token', { token: trimmed });
+            setSyncToken(trimmed);
+            setStatus('Pairing code saved');
+        } catch (e) {
+            setStatus('Failed to save pairing code: ' + String(e));
+        }
+    };
+
+    const copySyncToken = async () => {
+        if (!syncToken) return;
+        try {
+            await navigator.clipboard.writeText(syncToken);
+            setStatus('Pairing code copied');
+        } catch {
+            setStatus('Copy failed - select the code manually');
+        }
+    };
 
     const startServer = async () => {
         try {
@@ -51,13 +90,17 @@ export const SyncModal: React.FC<SyncModalProps> = ({ isOpen, onClose }) => {
         setIsSyncing(true);
         setStatus(`Syncing with ${peer.name}...`);
         try {
-            await invoke('sync_with_peer', { peerIp: peer.ip, peerPort: peer.port });
+            const username = useAuthStore.getState().user?.username || 'guest';
+            await invoke('sync_with_peer', { peerIp: peer.ip, peerPort: peer.port, username });
             setStatus('Sync Completed!');
             setTimeout(() => {
                 window.location.reload(); 
             }, 1000);
         } catch (e) {
-            setStatus('Sync Failed: ' + String(e));
+            const msg = String(e);
+            setStatus(msg.includes('sync_auth_failed')
+                ? 'Sync Failed: pairing code mismatch. Set the same code on both devices.'
+                : 'Sync Failed: ' + msg);
         } finally {
             setIsSyncing(false);
         }
@@ -75,6 +118,36 @@ export const SyncModal: React.FC<SyncModalProps> = ({ isOpen, onClose }) => {
                     Device Sync
                 </h2>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">{status}</p>
+
+                <div className="mb-4 p-3 rounded border dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                        <span className="text-xs font-medium text-gray-600 dark:text-gray-400">Pairing Code (shared with peers)</span>
+                        <button
+                            onClick={copySyncToken}
+                            className="text-xs px-2 py-1 rounded border dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                        >
+                            Copy
+                        </button>
+                    </div>
+                    <div className="flex gap-2">
+                        <input
+                            type="text"
+                            value={tokenInput}
+                            onChange={(e) => setTokenInput(e.target.value)}
+                            placeholder="e.g. MT-4821"
+                            className="flex-1 px-3 py-1.5 text-sm rounded border dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 outline-none"
+                        />
+                        <button
+                            onClick={saveSyncToken}
+                            className="px-3 py-1.5 text-xs rounded bg-blue-600 text-white hover:bg-blue-700"
+                        >
+                            Save
+                        </button>
+                    </div>
+                    <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                        Both devices must use the same code. Copy it from this device and paste it on the peer, or set a code you both agree on.
+                    </p>
+                </div>
                 
                 <div className="min-h-[200px] max-h-[300px] overflow-y-auto border rounded p-2 mb-4 bg-gray-50 dark:bg-gray-900 dark:border-gray-700">
                     {peers.length === 0 ? (

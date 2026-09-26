@@ -1,15 +1,17 @@
 use tauri::{command, State, Manager};
 use std::sync::Arc;
-use crate::models::CollectionData;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::error::Error;
 use database::Database;
-use models::{MediaItem, UserPublic, UserRecord, AIConfig, ThemeConfig};
+use models::{MediaItem, DistilledCharacter, ChatSession, UserPublic, UserRecord, AIConfig, ThemeConfig};
 use quick_xml::events::Event;
 use quick_xml::Reader;
+
+#[cfg(test)]
+mod tests;
 use std::time::Duration;
 use tokio::sync::RwLock;
 #[cfg(target_os = "windows")]
@@ -942,7 +944,7 @@ async fn wiki_pageimages(title: String, lang_zh: bool, state: State<'_, AppState
 }
 
 #[command]
-async fn ai_chat(messages: Vec<Value>, temperature: f32, tools: Option<Value>, config: AIChatConfig, state: State<'_, AppState>) -> Result<String, String> {
+async fn ai_chat(messages: Vec<Value>, temperature: f32, tools: Option<Value>, extra_body: Option<Value>, config: AIChatConfig, state: State<'_, AppState>) -> Result<String, String> {
     let start = std::time::Instant::now();
     let api_key = config.api_key.ok_or("Missing API Key")?;
     let raw_base = config.base_url.unwrap_or("https://api.moonshot.cn/v1".to_string());
@@ -950,7 +952,7 @@ async fn ai_chat(messages: Vec<Value>, temperature: f32, tools: Option<Value>, c
     if base_url.is_empty() { base_url = "https://api.moonshot.cn/v1".to_string(); }
     let is_google_openai = base_url.contains("/openai/");
     let has_v1 = base_url.ends_with("/v1") || base_url.contains("/v1/");
-    let need_v1 = (base_url.contains("openai.com") || base_url.contains("deepseek.com") || base_url.contains("mistral.ai") || base_url.contains("moonshot.cn")) && !is_google_openai && !has_v1;
+    let need_v1 = (base_url.contains("openai.com") || base_url.contains("mistral.ai") || base_url.contains("moonshot.cn")) && !is_google_openai && !has_v1;
     if need_v1 {
         if base_url.ends_with('/') { base_url.push_str("v1"); } else { base_url.push_str("/v1"); }
     }
@@ -958,12 +960,14 @@ async fn ai_chat(messages: Vec<Value>, temperature: f32, tools: Option<Value>, c
     // INTELLIGENT CLIENT SELECTION
     // If the URL contains "api.moonshot.cn" or other domestic domains, use direct_client.
     // Otherwise, use proxy_client (e.g. OpenAI).
-    let use_direct = base_url.contains("moonshot.cn") 
-        || base_url.contains("aliyun") 
+    let use_direct = base_url.contains("moonshot.cn")
+        || base_url.contains("aliyun")
         || base_url.contains("baidu")
         || base_url.contains("deepseek")
         || base_url.contains("volcengine")
         || base_url.contains("tencent")
+        || base_url.contains("xiaomimimo.com")
+        || base_url.contains("bigmodel.cn")
         || base_url.contains("localhost")
         || base_url.contains("127.0.0.1");
         
@@ -986,6 +990,13 @@ async fn ai_chat(messages: Vec<Value>, temperature: f32, tools: Option<Value>, c
         "messages": messages,
         "temperature": temperature,
     });
+    if let Some(eb) = extra_body {
+        if let Some(obj) = eb.as_object() {
+            for (k, v) in obj {
+                body[k] = v.clone();
+            }
+        }
+    }
     if let Some(t) = tools {
         body["tools"] = t;
         body["tool_choice"] = serde_json::Value::String("auto".to_string());
@@ -1058,6 +1069,179 @@ async fn ai_chat(messages: Vec<Value>, temperature: f32, tools: Option<Value>, c
             }
             return Err(format!("API Error ({}): {}", status, err_body));
         }
+    }
+
+    Err("API Error: exceeded retries".to_string())
+}
+
+/// Streaming variant of `ai_chat`: emits `{type:"delta",text}` events through
+/// the Tauri channel as SSE chunks arrive, then a final `{type:"done",fullText}`.
+/// Mirrors ai_chat's URL normalization and client selection, minus tool support
+/// (character chat runs with search disabled).
+#[command]
+async fn ai_chat_stream(
+    messages: Vec<Value>,
+    temperature: f32,
+    extra_body: Option<Value>,
+    config: AIChatConfig,
+    on_event: tauri::ipc::Channel<Value>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let api_key = config.api_key.ok_or("Missing API Key")?;
+    let raw_base = config.base_url.unwrap_or("https://api.moonshot.cn/v1".to_string());
+    let mut base_url = raw_base.trim().trim_end_matches(')').trim_matches('"').trim_matches('\'').to_string();
+    if base_url.is_empty() { base_url = "https://api.moonshot.cn/v1".to_string(); }
+    let is_google_openai = base_url.contains("/openai/");
+    let has_v1 = base_url.ends_with("/v1") || base_url.contains("/v1/");
+    let need_v1 = (base_url.contains("openai.com") || base_url.contains("mistral.ai") || base_url.contains("moonshot.cn")) && !is_google_openai && !has_v1;
+    if need_v1 {
+        if base_url.ends_with('/') { base_url.push_str("v1"); } else { base_url.push_str("/v1"); }
+    }
+
+    let use_direct = base_url.contains("moonshot.cn")
+        || base_url.contains("aliyun")
+        || base_url.contains("baidu")
+        || base_url.contains("deepseek")
+        || base_url.contains("volcengine")
+        || base_url.contains("tencent")
+        || base_url.contains("xiaomimimo.com")
+        || base_url.contains("bigmodel.cn")
+        || base_url.contains("localhost")
+        || base_url.contains("127.0.0.1");
+
+    let local_client = client_with_proxy(config.proxy_url.clone(), config.use_system_proxy);
+    let client = if let Some(c) = local_client.as_ref() {
+        c
+    } else if use_direct {
+        &state.direct_client
+    } else {
+        &state.proxy_client
+    };
+
+    let model = config.model.unwrap_or("moonshot-v1-8k".to_string());
+    let mut body = serde_json::json!({
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "stream": true,
+    });
+    if let Some(eb) = extra_body {
+        if let Some(obj) = eb.as_object() {
+            for (k, v) in obj {
+                body[k] = v.clone();
+            }
+        }
+    }
+
+    let url = if base_url.ends_with('/') {
+        format!("{}chat/completions", base_url)
+    } else {
+        format!("{}/chat/completions", base_url)
+    };
+
+    // Retry only while nothing has been forwarded: once deltas reached the UI,
+    // a retry would duplicate partial output.
+    let max_retries = 3;
+    for attempt in 0..max_retries {
+        let resp = match client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                if attempt < max_retries - 1 {
+                    let delay_ms = 2000u64 * (1u64 << attempt);
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    continue;
+                }
+                return Err(format!("Request failed: {}", e));
+            }
+        };
+
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let err_body = match resp.bytes().await {
+                Ok(b) => String::from_utf8_lossy(&b).to_string(),
+                Err(_) => String::new(),
+            };
+            if (status == 429 || (500u16..600u16).contains(&status)) && attempt < max_retries - 1 {
+                let delay_ms = 2000u64 * (1u64 << attempt);
+                println!("Stream request {} ({}). Backing off {} ms...", status, err_body, delay_ms);
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                continue;
+            }
+            return Err(format!("API Error ({}): {}", status, err_body));
+        }
+
+        let is_sse = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.contains("text/event-stream"))
+            .unwrap_or(false);
+
+        let mut full = String::new();
+        if !is_sse {
+            // Provider ignored stream=true; deliver the body in one shot.
+            let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+            let text = match serde_json::from_slice::<Value>(&bytes) {
+                Ok(v) => v["choices"][0]["message"]["content"].as_str().unwrap_or_default().to_string(),
+                Err(_) => String::from_utf8_lossy(&bytes).to_string(),
+            };
+            if !text.is_empty() {
+                on_event
+                    .send(serde_json::json!({ "type": "delta", "text": text }))
+                    .map_err(|e| e.to_string())?;
+                full.push_str(&text);
+            }
+        } else {
+            let mut resp = resp;
+            let mut buf: Vec<u8> = Vec::new();
+            loop {
+                let chunk = match resp.chunk().await {
+                    Ok(Some(c)) => c,
+                    Ok(None) => break,
+                    Err(e) => {
+                        let msg = format!("Stream interrupted: {}", e);
+                        let _ = on_event.send(serde_json::json!({ "type": "error", "message": msg }));
+                        return Err(msg);
+                    }
+                };
+                buf.extend_from_slice(&chunk);
+                while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+                    let line_bytes: Vec<u8> = buf.drain(..=pos).collect();
+                    let line = String::from_utf8_lossy(&line_bytes).trim_end().to_string();
+                    if line.is_empty() || line.starts_with(':') {
+                        continue;
+                    }
+                    let data = match line.strip_prefix("data:") {
+                        Some(d) => d.trim(),
+                        None => continue,
+                    };
+                    if data == "[DONE]" {
+                        continue;
+                    }
+                    if let Ok(v) = serde_json::from_str::<Value>(data) {
+                        let text = v["choices"][0]["delta"]["content"].as_str().unwrap_or("");
+                        if !text.is_empty() {
+                            full.push_str(text);
+                            on_event
+                                .send(serde_json::json!({ "type": "delta", "text": text }))
+                                .map_err(|e| e.to_string())?;
+                        }
+                    }
+                }
+            }
+        }
+
+        on_event
+            .send(serde_json::json!({ "type": "done", "fullText": full }))
+            .map_err(|e| e.to_string())?;
+        return Ok(());
     }
 
     Err("API Error: exceeded retries".to_string())
@@ -1137,6 +1321,36 @@ fn reorder_collection(username: String, ids: Vec<String>, db: State<Arc<Database
     db.reorder_items_for_user(&username, ids)
 }
 
+#[command]
+fn get_characters(username: String, db: State<Arc<Database>>) -> Result<Vec<DistilledCharacter>, String> {
+    db.get_characters_for_user(&username)
+}
+
+#[command]
+fn save_character(username: String, character: DistilledCharacter, db: State<Arc<Database>>) -> Result<(), String> {
+    db.upsert_character_for_user(&username, character)
+}
+
+#[command]
+fn remove_character(username: String, id: String, db: State<Arc<Database>>) -> Result<(), String> {
+    db.remove_character_for_user(&username, &id)
+}
+
+#[command]
+fn get_chat_sessions(username: String, db: State<Arc<Database>>) -> Result<Vec<ChatSession>, String> {
+    db.get_chat_sessions_for_user(&username)
+}
+
+#[command]
+fn save_chat_session(username: String, session: ChatSession, db: State<Arc<Database>>) -> Result<(), String> {
+    db.upsert_chat_session_for_user(&username, session)
+}
+
+#[command]
+fn remove_chat_session(username: String, id: String, db: State<Arc<Database>>) -> Result<(), String> {
+    db.remove_chat_session_for_user(&username, &id)
+}
+
 
 #[command]
 fn export_collection(
@@ -1149,14 +1363,12 @@ fn export_collection(
     let items = db.get_all_for_user(&username)?;
     let redact = redact_sensitive.unwrap_or(true);
     let mut export_items = Vec::new();
-    if redact {
-        for mut it in items.clone() {
+    for mut it in items {
+        if redact {
             it.user_review = None;
             it.notification_enabled = None;
-            export_items.push(it);
         }
-    } else {
-        export_items = items;
+        export_items.push(it);
     }
 
     let out_path = if let Some(path) = target_path {
@@ -1290,17 +1502,44 @@ fn get_peers(sync: State<'_, sync::SyncService>) -> Result<Vec<sync::PeerInfo>, 
 }
 
 #[command]
-async fn sync_with_peer(peer_ip: String, peer_port: u16, db: State<'_, Arc<Database>>) -> Result<(), String> {
-    let url = format!("http://{}:{}/sync/data", peer_ip, peer_port);
+async fn sync_with_peer(peer_ip: String, peer_port: u16, username: String, db: State<'_, Arc<Database>>) -> Result<(), String> {
+    let token = db.get_sync_token();
+    if token.is_empty() {
+        return Err("sync_token_not_set".to_string());
+    }
+    let url = format!("http://{}:{}/sync/data?user={}", peer_ip, peer_port, urlencoding::encode(&username));
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())?;
         
-    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
-    let data: CollectionData = resp.json().await.map_err(|e| e.to_string())?;
-    db.merge_full_data(data)?;
+    let resp = client.get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("sync_auth_failed: {}", resp.status()));
+    }
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let items: Vec<MediaItem> = serde_json::from_value(body.get("items").cloned().unwrap_or(serde_json::Value::Null))
+        .map_err(|e| e.to_string())?;
+    db.merge_user_items(&username, items)?;
     Ok(())
+}
+
+#[command]
+fn get_sync_token(db: State<'_, Arc<Database>>) -> Result<String, String> {
+    Ok(db.get_sync_token())
+}
+
+#[command]
+fn set_sync_token(token: String, db: State<'_, Arc<Database>>) -> Result<(), String> {
+    let trimmed = token.trim().to_string();
+    if trimmed.len() < 4 {
+        return Err("sync_token_too_short".to_string());
+    }
+    db.set_sync_token(trimmed)
 }
 
 // Password hashing (Argon2)
@@ -1356,6 +1595,7 @@ pub fn run() {
             bangumi_search,
             bangumi_details,
             ai_chat,
+            ai_chat_stream,
             wiki_pageimages,
             douban_cover,
             fetch_og_image,
@@ -1371,8 +1611,16 @@ pub fn run() {
             import_collection,
             reorder_collection,
             export_collection,
+            get_characters,
+            save_character,
+            remove_character,
+            get_chat_sessions,
+            save_chat_session,
+            remove_chat_session,
             register_user,
             login_user,
+            get_sync_token,
+            set_sync_token,
             start_sync_server,
             get_peers,
             sync_with_peer

@@ -78,7 +78,10 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
       // Optimistic update
       set((state) => {
         const existingIds = new Set(state.collection.map(i => i.id));
-        const newItems = items.filter(i => !existingIds.has(i.id));
+        const now = Date.now();
+        const newItems = items
+            .filter(i => !existingIds.has(i.id))
+            .map(i => ({ ...i, lastEditedAt: i.lastEditedAt || now }));
         const updatedCollection = [...newItems, ...state.collection];
         
         // Persist
@@ -122,15 +125,49 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
 
   addToCollection: (item, category) => {
     set((state) => {
-        const exists = state.collection.find(c => c.title === item.title && c.type === item.type);
+        const normTitle = (s?: string) => (s || '').trim().toLowerCase();
+        const itemYear = (item.releaseDate || '').slice(0, 4);
+        const exists = state.collection.find(c =>
+            normTitle(c.title) === normTitle(item.title) &&
+            c.type === item.type &&
+            (!itemYear || (c.releaseDate || '').slice(0, 4) === itemYear)
+        );
         let updatedCollection;
         let newItem;
+        const now = Date.now();
 
         if (exists) {
-            newItem = { ...exists, category, savedAt: Date.now() };
+            // Merge richer metadata from the newly added item without clobbering
+            // user-managed fields (category, progress, review, custom poster).
+            const fill = <K extends keyof MediaItem>(key: K, has: (v: any) => boolean) => {
+                const cur = exists[key];
+                const inc = item[key];
+                return (has(cur) && !has(inc)) ? cur : (inc ?? cur);
+            };
+            newItem = {
+                ...exists,
+                ...item,
+                id: exists.id,
+                category,
+                savedAt: now,
+                lastEditedAt: now,
+                title: exists.title || item.title,
+                description: fill('description', (v: any) => !!String(v || '').trim()),
+                directorOrAuthor: fill('directorOrAuthor', (v: any) => !!String(v || '').trim()),
+                releaseDate: fill('releaseDate', (v: any) => !!String(v || '').trim()),
+                cast: (exists.cast && exists.cast.length > 0) ? exists.cast : item.cast,
+                rating: exists.rating || item.rating,
+                posterUrl: exists.posterUrl || item.posterUrl,
+                userReview: exists.userReview,
+                customPosterUrl: exists.customPosterUrl,
+                userProgress: exists.userProgress,
+                notificationEnabled: exists.notificationEnabled,
+                tmdbId: exists.tmdbId ?? item.tmdbId,
+                tmdbMediaType: exists.tmdbMediaType ?? item.tmdbMediaType
+            };
             updatedCollection = state.collection.map(c => c.id === exists.id ? newItem : c);
         } else {
-            newItem = { ...item, category, savedAt: Date.now() };
+            newItem = { ...item, category, savedAt: now, lastEditedAt: now };
             updatedCollection = [ newItem, ...state.collection ];
         }
 
@@ -175,7 +212,7 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
     let updatedItem: MediaItem | undefined;
     const updatedCollection = state.collection.map((item) => {
       if (item.id === id) {
-          updatedItem = { ...item, ...updates };
+          updatedItem = { ...item, ...updates, lastEditedAt: Date.now() };
           return updatedItem;
       }
       return item;
@@ -195,7 +232,7 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
     let updatedItem: MediaItem | undefined;
     const updatedCollection = state.collection.map((item) => {
         if (item.id === id) {
-            updatedItem = { ...item, category };
+            updatedItem = { ...item, category, lastEditedAt: Date.now() };
             return updatedItem;
         }
         return item;
@@ -213,6 +250,7 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
 
   createCollection: (primaryItem, selectedItems) => set((state) => {
       const collectionId = uuidv4();
+      const now = Date.now();
       // Create the collection container item
       const collectionItem: MediaItem = {
           ...primaryItem,
@@ -220,26 +258,32 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
           title: primaryItem.title, // Keep original title or maybe append (Collection)?
           isCollection: true,
           parentCollectionId: undefined, // Top level
-          savedAt: Date.now()
+          savedAt: now,
+          lastEditedAt: now
       };
 
       // Items to be updated (primary + selected)
       const itemsToUpdate = [primaryItem, ...selectedItems].map(item => ({
           ...item,
-          parentCollectionId: collectionId
+          parentCollectionId: collectionId,
+          lastEditedAt: now
       }));
 
       // Update collection state
       // 1. Add collectionItem
       // 2. Update existing items with parentCollectionId
-      
-      const updatedCollection = state.collection.map(item => {
+
+      const existingIds = new Set(state.collection.map(i => i.id));
+      // Persist any member items that are not yet in the local collection
+      // (e.g. a freshly searched item) so they are not orphaned.
+      const orphans = itemsToUpdate.filter(i => !existingIds.has(i.id));
+      let updatedCollection = state.collection.map(item => {
           const foundUpdate = itemsToUpdate.find(u => u.id === item.id);
           return foundUpdate || item;
       });
       
       // Add the new collection item
-      const finalCollection = [collectionItem, ...updatedCollection];
+      const finalCollection = [collectionItem, ...orphans, ...updatedCollection];
 
       // Persist
       if (isTauri) {
@@ -247,7 +291,7 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
           // Save collection item
           invoke('save_item', { username, item: collectionItem }).catch(console.error);
           // Save updated children
-          itemsToUpdate.forEach(item => {
+          [...orphans, ...itemsToUpdate].forEach(item => {
               invoke('save_item', { username, item }).catch(console.error);
           });
       } else {
@@ -266,14 +310,14 @@ export const useCollectionStore = create<CollectionState>((set, get) => ({
           }
           if (memberSet.has(item.id)) {
               if (item.parentCollectionId !== collectionId) {
-                  const next = { ...item, parentCollectionId: collectionId };
+                  const next = { ...item, parentCollectionId: collectionId, lastEditedAt: Date.now() };
                   updatedItems.push(next);
                   return next;
               }
               return item;
           }
           if (item.parentCollectionId === collectionId) {
-              const next = { ...item, parentCollectionId: undefined };
+              const next = { ...item, parentCollectionId: undefined, lastEditedAt: Date.now() };
               updatedItems.push(next);
               return next;
           }

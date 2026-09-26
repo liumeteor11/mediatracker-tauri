@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri::Manager;
-use crate::models::{MediaItem, CollectionData, UserRecord, AIConfig, ThemeConfig};
+use crate::models::{MediaItem, DistilledCharacter, ChatSession, CollectionData, UserRecord, AIConfig, ThemeConfig};
 use std::sync::Mutex;
 
 pub struct Database {
@@ -100,50 +100,46 @@ impl Database {
         self.save()
     }
 
-    pub fn get_full_data(&self) -> Result<CollectionData, String> {
-        let data = self.cache.lock().map_err(|e| e.to_string())?;
-        Ok(data.clone())
+    /// Return only a single user's collection for LAN sync, so credentials,
+    /// configs, and other users' data are never exposed to peers.
+    pub fn get_user_items(&self, username: &str) -> Result<Vec<MediaItem>, String> {
+        self.get_all_for_user(username)
     }
 
-    pub fn merge_full_data(&self, incoming: CollectionData) -> Result<(), String> {
+    /// Merge remote collection items for a single user.
+    /// Users, configs, and sync tokens are intentionally not merged: LAN sync is
+    /// scoped to collection data, not credentials or settings.
+    pub fn merge_user_items(&self, username: &str, incoming_items: Vec<MediaItem>) -> Result<(), String> {
         let mut data = self.cache.lock().map_err(|e| e.to_string())?;
-        
-        // Merge Users
-        for user in incoming.users {
-            if !data.users.iter().any(|u| u.username == user.username) {
-                data.users.push(user);
-            }
-        }
 
-        // Merge Items per User
-        for (username, incoming_items) in incoming.items_by_user {
-            let local_items = data.items_by_user.entry(username).or_default();
-            
-            for item in incoming_items {
-                if let Some(existing_idx) = local_items.iter().position(|i| i.id == item.id) {
-                    // Update if incoming is newer (naive check: always update or check timestamps if available)
-                    // Assuming last_edited_at exists
-                    let existing = &local_items[existing_idx];
-                    let incoming_ts = item.last_edited_at.unwrap_or(0);
-                    let existing_ts = existing.last_edited_at.unwrap_or(0);
-                    
-                    if incoming_ts > existing_ts {
-                        local_items[existing_idx] = item;
-                    }
-                } else {
-                    local_items.push(item);
+        let local_items = data.items_by_user.entry(username.to_string()).or_default();
+        for item in incoming_items {
+            if let Some(existing_idx) = local_items.iter().position(|i| i.id == item.id) {
+                let existing = &local_items[existing_idx];
+                let incoming_ts = item.last_edited_at.unwrap_or(0);
+                let existing_ts = existing.last_edited_at.unwrap_or(0);
+                if incoming_ts > existing_ts {
+                    local_items[existing_idx] = item;
                 }
+            } else {
+                local_items.push(item);
             }
         }
 
-        // Merge Configs
-        if let Some(config) = incoming.ai_config {
-            data.ai_config = Some(config);
-        }
-        if let Some(config) = incoming.theme_config {
-            data.theme_config = Some(config);
-        }
+        drop(data);
+        self.save()
+    }
 
+    pub fn get_sync_token(&self) -> String {
+        match self.cache.lock() {
+            Ok(data) => data.sync_token.clone(),
+            Err(_) => String::new(),
+        }
+    }
+
+    pub fn set_sync_token(&self, token: String) -> Result<(), String> {
+        let mut data = self.cache.lock().map_err(|e| e.to_string())?;
+        data.sync_token = token;
         drop(data);
         self.save()
     }
@@ -188,6 +184,62 @@ impl Database {
     pub fn find_user(&self, username: &str) -> Option<UserRecord> {
         let data = self.cache.lock().ok()?;
         data.users.iter().find(|u| u.username == username).cloned()
+    }
+
+    // --- Distilled characters ---
+    pub fn get_characters_for_user(&self, username: &str) -> Result<Vec<DistilledCharacter>, String> {
+        let data = self.cache.lock().map_err(|e| e.to_string())?;
+        Ok(data.characters_by_user.get(username).cloned().unwrap_or_default())
+    }
+
+    pub fn upsert_character_for_user(&self, username: &str, character: DistilledCharacter) -> Result<(), String> {
+        let mut data = self.cache.lock().map_err(|e| e.to_string())?;
+        let list = data.characters_by_user.entry(username.to_string()).or_default();
+        match list.iter().position(|c| c.id == character.id) {
+            Some(idx) => list[idx] = character,
+            None => list.insert(0, character),
+        }
+        drop(data);
+        self.save()
+    }
+
+    /// Remove a character and cascade-delete its chat sessions.
+    pub fn remove_character_for_user(&self, username: &str, id: &str) -> Result<(), String> {
+        let mut data = self.cache.lock().map_err(|e| e.to_string())?;
+        if let Some(list) = data.characters_by_user.get_mut(username) {
+            list.retain(|c| c.id != id);
+        }
+        if let Some(list) = data.chat_sessions_by_user.get_mut(username) {
+            list.retain(|s| s.character_id != id);
+        }
+        drop(data);
+        self.save()
+    }
+
+    // --- Character chat sessions ---
+    pub fn get_chat_sessions_for_user(&self, username: &str) -> Result<Vec<ChatSession>, String> {
+        let data = self.cache.lock().map_err(|e| e.to_string())?;
+        Ok(data.chat_sessions_by_user.get(username).cloned().unwrap_or_default())
+    }
+
+    pub fn upsert_chat_session_for_user(&self, username: &str, session: ChatSession) -> Result<(), String> {
+        let mut data = self.cache.lock().map_err(|e| e.to_string())?;
+        let list = data.chat_sessions_by_user.entry(username.to_string()).or_default();
+        match list.iter().position(|s| s.id == session.id) {
+            Some(idx) => list[idx] = session,
+            None => list.insert(0, session),
+        }
+        drop(data);
+        self.save()
+    }
+
+    pub fn remove_chat_session_for_user(&self, username: &str, id: &str) -> Result<(), String> {
+        let mut data = self.cache.lock().map_err(|e| e.to_string())?;
+        if let Some(list) = data.chat_sessions_by_user.get_mut(username) {
+            list.retain(|s| s.id != id);
+        }
+        drop(data);
+        self.save()
     }
 
     pub fn add_user(&self, user: UserRecord) -> Result<(), String> {

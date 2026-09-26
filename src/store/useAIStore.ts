@@ -3,13 +3,14 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import { invoke } from '@tauri-apps/api/core';
 import CryptoJS from 'crypto-js';
 import { AIIOLogEntry, SearchDiagnostics } from '../types/types';
+import type { ReasoningLevel } from '../services/modelCatalog';
 
 // Simple encryption key (In a real app, this should not be hardcoded or should be user-provided)
 // For this requirement, we use a static key to satisfy "encrypted storage" vs plain text in localStorage
 const SECRET_KEY = import.meta.env.VITE_SECRET_KEY || 'media-tracker-ai-config-secret';
 
 
-export type AIProvider = 'moonshot' | 'openai' | 'deepseek' | 'qwen' | 'google' | 'mistral' | 'custom';
+export type AIProvider = 'moonshot' | 'openai' | 'deepseek' | 'qwen' | 'google' | 'mistral' | 'mimo' | 'zhipu' | 'custom';
 export type SearchProvider = 'google' | 'serper' | 'yandex' | 'duckduckgo';
 
 interface AIConfigState {
@@ -34,7 +35,7 @@ interface AIConfigState {
   enableTmdb: boolean;
   enableBangumi: boolean;
   enableNetworking: boolean;
-  enableDeepThinking: boolean;
+  reasoningEffort: ReasoningLevel;
   enableTrending: boolean;
   trendingPrompt: string;
   lastSearchDurationMs: number | null;
@@ -101,7 +102,7 @@ export const useAIStore = create<AIConfigState>()(
     (set, get) => ({
       provider: 'moonshot',
       apiKey: '', // Stores encrypted key
-      model: 'kimi-latest',
+      model: 'kimi-k3',
       baseUrl: 'https://api.moonshot.cn/v1',
       temperature: 0.7,
       maxTokens: 2000,
@@ -133,7 +134,7 @@ Ensure data is accurate.`,
       enableTmdb: true,
       enableBangumi: true,
       enableNetworking: true,
-      enableDeepThinking: false,
+      reasoningEffort: 'auto',
       enableTrending: true,
       trendingPrompt: '',
       lastSearchDurationMs: null,
@@ -204,27 +205,35 @@ Ensure data is accurate.`,
         switch (provider) {
           case 'moonshot':
             defaultBaseUrl = 'https://api.moonshot.cn/v1';
-            defaultModel = 'kimi-latest';
+            defaultModel = 'kimi-k3';
             break;
           case 'openai':
             defaultBaseUrl = 'https://api.openai.com/v1';
-            defaultModel = 'gpt-4o';
+            defaultModel = 'gpt-5.6-terra';
             break;
           case 'deepseek':
-            defaultBaseUrl = 'https://api.deepseek.com/v1';
-            defaultModel = 'deepseek-chat';
+            defaultBaseUrl = 'https://api.deepseek.com';
+            defaultModel = 'deepseek-v4-pro';
             break;
           case 'qwen':
             defaultBaseUrl = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-            defaultModel = 'qwen-max-latest';
+            defaultModel = 'qwen3.8-max';
             break;
           case 'google':
             defaultBaseUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-            defaultModel = 'gemini-2.5-flash';
+            defaultModel = 'gemini-3.8-flash';
             break;
           case 'mistral':
             defaultBaseUrl = 'https://api.mistral.ai/v1';
             defaultModel = 'mistral-large-latest';
+            break;
+          case 'mimo':
+            defaultBaseUrl = 'https://api.xiaomimimo.com/v1';
+            defaultModel = 'mimo-v2.6-pro';
+            break;
+          case 'zhipu':
+            defaultBaseUrl = 'https://open.bigmodel.cn/api/paas/v4';
+            defaultModel = 'glm-5.3';
             break;
           case 'custom':
             defaultBaseUrl = '';
@@ -311,7 +320,7 @@ Ensure data is accurate.`,
     }),
     {
       name: 'ai-config-storage',
-      version: 5,
+      version: 7,
       storage: createJSONStorage(() => {
         try {
           if (typeof window !== 'undefined' && window.localStorage) {
@@ -349,7 +358,11 @@ Ensure data is accurate.`,
             const url: string = persistedState.baseUrl || '';
             const ensureV1 = (u: string) => u.endsWith('/v1') || u.includes('/v1/') ? u : (u.endsWith('/') ? `${u}v1` : `${u}/v1`);
             if (prov === 'deepseek' && url && !url.includes('/openai/')) {
-              persistedState.baseUrl = ensureV1(url);
+              if (url.includes('api.deepseek.com')) {
+                persistedState.baseUrl = 'https://api.deepseek.com';
+              } else {
+                persistedState.baseUrl = ensureV1(url);
+              }
             }
             if (prov === 'openai' && url && !url.includes('/openai/')) {
               persistedState.baseUrl = ensureV1(url);
@@ -360,12 +373,54 @@ Ensure data is accurate.`,
             if (prov === 'moonshot' && url && !url.includes('/openai/')) {
               persistedState.baseUrl = ensureV1(url);
             }
+            if (prov === 'moonshot' && (persistedState.model === 'kimi-latest' || persistedState.model === 'moonshot-v1-128k' || persistedState.model === 'kimi-k2-thinking-preview')) {
+              persistedState.model = 'kimi-k3';
+            }
+            if (prov === 'deepseek' && (persistedState.model === 'deepseek-chat' || persistedState.model === 'deepseek-reasoner')) {
+              persistedState.model = 'deepseek-v4-flash';
+            }
+            if (prov === 'openai' && (persistedState.model === 'gpt-4o' || persistedState.model === 'gpt-4.1' || persistedState.model === 'gpt-4.1-mini')) {
+              persistedState.model = 'gpt-5.6-terra';
+            }
+            if (prov === 'openai' && (persistedState.model === 'gpt-3.5-turbo' || persistedState.model === 'gpt-4')) {
+              persistedState.model = 'gpt-5.6-luna';
+            }
+            if (prov === 'qwen' && persistedState.model === 'qwen3-235b-a22b') {
+              persistedState.model = 'qwen3.7-max';
+            }
+            // v7: graduate the 3.8 preview to the 0902 flagship; retire sunset models.
+            if (prov === 'qwen' && persistedState.model === 'qwen3.8-max-preview') {
+              persistedState.model = 'qwen3.8-max';
+            }
+            if (prov === 'qwen' && persistedState.model === 'qwen3.6-flash') {
+              persistedState.model = 'qwen3.7-flash';
+            }
+            if (prov === 'google' && (persistedState.model === 'gemini-2.0-flash' || persistedState.model === 'gemini-2.0-flash-lite' || persistedState.model === 'gemini-2.5-flash' || persistedState.model === 'gemini-2.5-flash-lite')) {
+              persistedState.model = 'gemini-3.6-flash';
+            }
+            if (prov === 'google' && (persistedState.model === 'gemini-2.5-pro' || persistedState.model === 'gemini-3.5-flash-lite')) {
+              persistedState.model = persistedState.model === 'gemini-2.5-pro' ? 'gemini-3.1-pro' : 'gemini-3.8-flash-lite';
+            }
+            if (prov === 'mimo' && (persistedState.model === 'mimo-v2-pro' || persistedState.model === 'mimo-v2-flash' || persistedState.model === 'mimo-v2-omni')) {
+              persistedState.model = 'mimo-v2.5-pro';
+            }
+            if (prov === 'mimo' && (persistedState.model === 'mimo-v2.5-pro' || persistedState.model === 'mimo-v2.5-pro-ultraspeed' || persistedState.model === 'mimo-v2.5')) {
+              persistedState.model = persistedState.model === 'mimo-v2.5' ? 'mimo-v2.6-flash' : 'mimo-v2.6-pro';
+            }
+            if (prov === 'zhipu' && persistedState.model === 'glm-4.7') {
+              persistedState.model = 'glm-5.1';
+            }
             if (typeof persistedState.enableSearchDiagnostics !== 'boolean') {
               persistedState.enableSearchDiagnostics = true;
             }
             if (!('lastSearchDiagnostics' in persistedState)) {
               persistedState.lastSearchDiagnostics = null;
             }
+            // v6: replace the dead enableDeepThinking switch with reasoningEffort.
+            if (typeof persistedState.reasoningEffort !== 'string') {
+              persistedState.reasoningEffort = persistedState.enableDeepThinking === true ? 'high' : 'auto';
+            }
+            try { delete persistedState.enableDeepThinking; } catch {}
           }
         } catch {}
         return persistedState;
@@ -391,7 +446,7 @@ Ensure data is accurate.`,
         enableTmdb: state.enableTmdb,
         enableBangumi: state.enableBangumi,
         enableNetworking: state.enableNetworking,
-        enableDeepThinking: state.enableDeepThinking,
+        reasoningEffort: state.reasoningEffort,
         enableTrending: state.enableTrending,
         trendingPrompt: state.trendingPrompt,
         lastSearchDurationMs: state.lastSearchDurationMs,
@@ -437,7 +492,7 @@ useAIStore.subscribe((state) => {
              enableTmdb: state.enableTmdb,
              enableBangumi: state.enableBangumi,
              enableNetworking: state.enableNetworking,
-             enableDeepThinking: state.enableDeepThinking,
+             reasoningEffort: state.reasoningEffort,
              enableTrending: state.enableTrending,
              trendingPrompt: state.trendingPrompt,
              useSystemProxy: state.useSystemProxy,

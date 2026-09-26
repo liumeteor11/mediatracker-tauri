@@ -11,7 +11,7 @@ fn test_media_item_serialization() {
         director_or_author: "Director".to_string(),
         description: "Desc".to_string(),
         release_date: "2024".to_string(),
-        media_type: crate::models::MediaType::Movie,
+        kind: "Movie".to_string(),
         is_ongoing: false,
         latest_update_info: None,
         category: None,
@@ -19,6 +19,8 @@ fn test_media_item_serialization() {
         poster_url: None,
         rating: None,
         cast: None,
+        tmdb_id: None,
+        tmdb_media_type: None,
         user_progress: None,
         notification_enabled: None,
         last_checked_at: None,
@@ -31,11 +33,13 @@ fn test_media_item_serialization() {
         user_rating: None,
         parent_collection_id: None,
         is_collection: None,
+        is_pinned: Some(true),
     };
 
     let json = serde_json::to_string(&item).unwrap();
     assert!(json.contains("\"title\":\"Test Movie\""));
     assert!(json.contains("\"type\":\"Movie\""));
+    assert!(json.contains("\"isPinned\":true"));
 }
 
 #[test]
@@ -75,4 +79,103 @@ fn test_duckduckgo_parsing() {
     // Check uddg decoding
     assert_eq!(results[1].title, "Redirected Link");
     assert_eq!(results[1].link, "https://other.com/foo"); 
+}
+
+#[test]
+fn test_distilled_character_serialization() {
+    use crate::models::{CharacterCorrection, DistilledCharacter, ExpressionDNA};
+
+    let character = DistilledCharacter {
+        id: "char-1".to_string(),
+        name: "Sherlock".to_string(),
+        aliases: vec!["Holmes".to_string()],
+        source_title: "A Study in Scarlet".to_string(),
+        source_media_id: Some("media-9".to_string()),
+        source_type: Some("Book".to_string()),
+        tagline: Some("Consulting detective".to_string()),
+        appearance: None,
+        personality: vec!["observant".to_string()],
+        mental_models: vec!["deduction first".to_string()],
+        decision_heuristics: vec![],
+        interpersonal: None,
+        boundaries: vec![],
+        background: None,
+        expression: Some(ExpressionDNA {
+            tone: Some("sharp".to_string()),
+            formality: 3,
+            catchphrases: vec!["Elementary".to_string()],
+            vocabulary: vec![],
+            sentence_style: None,
+            example_lines: vec!["When you have eliminated the impossible...".to_string()],
+        }),
+        relationships: vec![],
+        quotes: vec!["Data! Data! Data!".to_string()],
+        external_views: vec![],
+        timeline: vec![],
+        corrections: vec![CharacterCorrection {
+            scene: "greeting a client".to_string(),
+            wrong: "coldly ignores them".to_string(),
+            correct: "politely asks for details".to_string(),
+            created_at: 100.0,
+        }],
+        version: 2,
+        avatar_url: None,
+        greeting: Some("The game is afoot!".to_string()),
+        created_at: 1.0,
+        updated_at: 2.0,
+    };
+
+    let json = serde_json::to_string(&character).unwrap();
+    assert!(json.contains("\"sourceTitle\":\"A Study in Scarlet\""));
+    assert!(json.contains("\"mentalModels\":[\"deduction first\"]"));
+    assert!(json.contains("\"sentenceStyle\":null"));
+    assert!(json.contains("\"createdAt\":100.0"));
+
+    // Round-trip: missing optional/default fields must deserialize cleanly
+    // (older frontend payloads / hand-written JSON).
+    let minimal: DistilledCharacter = serde_json::from_str(
+        r#"{"id":"c2","name":"Rin","sourceTitle":"Fate","createdAt":1.0,"updatedAt":1.0}"#,
+    )
+    .unwrap();
+    assert_eq!(minimal.version, 0);
+    assert!(minimal.aliases.is_empty());
+    assert!(minimal.corrections.is_empty());
+    assert!(minimal.expression.is_none());
+}
+
+#[test]
+fn test_chat_session_serialization() {
+    use crate::models::{ChatMessage, ChatSession};
+
+    let session = ChatSession {
+        id: "s-1".to_string(),
+        character_id: "char-1".to_string(),
+        title: "First talk".to_string(),
+        summary: Some("Earlier they discussed the case.".to_string()),
+        summarized_up_to: 4,
+        messages: vec![ChatMessage {
+            id: "m-1".to_string(),
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+            created_at: 5.0,
+        }],
+        created_at: 1.0,
+        updated_at: 6.0,
+    };
+
+    let json = serde_json::to_string(&session).unwrap();
+    assert!(json.contains("\"characterId\":\"char-1\""));
+    assert!(json.contains("\"summarizedUpTo\":4"));
+
+    let parsed: ChatSession = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed.messages.len(), 1);
+    assert_eq!(parsed.summarized_up_to, 4);
+
+    // Minimal payload without optional fields (summary/messages default).
+    let minimal: ChatSession = serde_json::from_str(
+        r#"{"id":"s2","characterId":"c","title":"t","createdAt":1.0,"updatedAt":1.0}"#,
+    )
+    .unwrap();
+    assert!(minimal.messages.is_empty());
+    assert_eq!(minimal.summarized_up_to, 0);
 }

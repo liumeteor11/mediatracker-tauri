@@ -2242,7 +2242,6 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-shell",
  "tokio",
- "tower-http",
  "urlencoding",
  "winreg 0.52.0",
 ]

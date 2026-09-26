@@ -1,0 +1,256 @@
+import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { X, MessageCircle, Trash2, ShieldAlert, Plus, History } from 'lucide-react';
+import { DistilledCharacter } from '../../types/character';
+import { useCharacterStore } from '../../store/useCharacterStore';
+
+interface CharacterDetailModalProps {
+  character: DistilledCharacter;
+  onClose: () => void;
+  onChat: (characterId: string) => void;
+  onDelete: (characterId: string) => void;
+}
+
+const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <div>
+    <h4 className="text-xs font-semibold uppercase tracking-wider text-theme-subtext mb-2">{title}</h4>
+    <div className="text-sm space-y-1.5">{children}</div>
+  </div>
+);
+
+const ChipList: React.FC<{ items: string[] }> = ({ items }) => (
+  <div className="flex flex-wrap gap-1.5">
+    {items.map((item, i) => (
+      <span key={i} className="px-2 py-0.5 rounded-full bg-theme-bg border border-theme-border text-xs">
+        {item}
+      </span>
+    ))}
+  </div>
+);
+
+export const CharacterDetailModal: React.FC<CharacterDetailModalProps> = ({ character, onClose, onChat, onDelete }) => {
+  const { t } = useTranslation();
+  const addCorrection = useCharacterStore(s => s.addCorrection);
+  const [showCorrectionForm, setShowCorrectionForm] = useState(false);
+  const [scene, setScene] = useState('');
+  const [wrong, setWrong] = useState('');
+  const [correct, setCorrect] = useState('');
+
+  const e = character.expression;
+
+  const submitCorrection = () => {
+    if (!scene.trim() || !correct.trim()) return;
+    addCorrection(character.id, { scene: scene.trim(), wrong: wrong.trim() || '-', correct: correct.trim() });
+    setScene('');
+    setWrong('');
+    setCorrect('');
+    setShowCorrectionForm(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 backdrop-blur-sm p-4">
+      <div className="bg-theme-surface border border-theme-border rounded-theme max-w-2xl w-full max-h-[90vh] flex flex-col text-theme-text">
+        <div className="flex items-start justify-between p-4 border-b border-theme-border">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-11 h-11 rounded-full bg-theme-accent text-theme-bg flex items-center justify-center text-lg font-bold flex-shrink-0">
+              {character.name.slice(0, 1).toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <h3 className="font-semibold truncate">{character.name}</h3>
+              <p className="text-xs text-theme-subtext truncate">
+                {t('characters.from_work', { work: character.sourceTitle })} · v{character.version}
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-theme hover:bg-theme-bg text-theme-subtext" aria-label="close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-4 overflow-y-auto space-y-5">
+          {character.tagline && <p className="text-sm italic text-theme-subtext">“{character.tagline}”</p>}
+
+          {character.personality.length > 0 && (
+            <Section title={t('characters.section_personality')}>
+              <ChipList items={character.personality} />
+            </Section>
+          )}
+
+          {character.background && (
+            <Section title={t('characters.section_background')}>
+              <p className="leading-relaxed">{character.background}</p>
+            </Section>
+          )}
+
+          {character.appearance && (
+            <Section title={t('characters.section_appearance')}>
+              <p className="leading-relaxed">{character.appearance}</p>
+            </Section>
+          )}
+
+          {character.mentalModels.length > 0 && (
+            <Section title={t('characters.section_mental_models')}>
+              <ul className="list-disc list-inside space-y-1">
+                {character.mentalModels.map((m, i) => <li key={i}>{m}</li>)}
+              </ul>
+            </Section>
+          )}
+
+          {character.decisionHeuristics.length > 0 && (
+            <Section title={t('characters.section_decision_heuristics')}>
+              <ul className="list-disc list-inside space-y-1">
+                {character.decisionHeuristics.map((m, i) => <li key={i}>{m}</li>)}
+              </ul>
+            </Section>
+          )}
+
+          {character.interpersonal && (
+            <Section title={t('characters.section_interpersonal')}>
+              <p className="leading-relaxed">{character.interpersonal}</p>
+            </Section>
+          )}
+
+          {character.boundaries.length > 0 && (
+            <Section title={t('characters.section_boundaries')}>
+              <ul className="list-disc list-inside space-y-1">
+                {character.boundaries.map((m, i) => <li key={i}>{m}</li>)}
+              </ul>
+            </Section>
+          )}
+
+          {e && (
+            <Section title={t('characters.section_expression')}>
+              <div className="space-y-2">
+                {e.tone && <p><span className="text-theme-subtext">{t('characters.expression_tone')}: </span>{e.tone}</p>}
+                {e.sentenceStyle && <p><span className="text-theme-subtext">{t('characters.expression_sentence')}: </span>{e.sentenceStyle}</p>}
+                {e.catchphrases.length > 0 && (
+                  <div>
+                    <span className="text-theme-subtext text-xs">{t('characters.expression_catchphrases')}</span>
+                    <div className="mt-1"><ChipList items={e.catchphrases} /></div>
+                  </div>
+                )}
+                {e.exampleLines.length > 0 && (
+                  <div className="pl-3 border-l-2 border-theme-border space-y-1">
+                    {e.exampleLines.map((line, i) => <p key={i} className="italic text-theme-subtext">{line}</p>)}
+                  </div>
+                )}
+              </div>
+            </Section>
+          )}
+
+          {character.relationships.length > 0 && (
+            <Section title={t('characters.section_relationships')}>
+              <ul className="space-y-1">
+                {character.relationships.map((r, i) => (
+                  <li key={i}><span className="font-medium">{r.name}</span> — {r.relation}</li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {character.quotes.length > 0 && (
+            <Section title={t('characters.section_quotes')}>
+              <div className="space-y-1">
+                {character.quotes.map((q, i) => <p key={i} className="italic">“{q}”</p>)}
+              </div>
+            </Section>
+          )}
+
+          {character.externalViews.length > 0 && (
+            <Section title={t('characters.section_external_views')}>
+              <ul className="list-disc list-inside space-y-1">
+                {character.externalViews.map((m, i) => <li key={i}>{m}</li>)}
+              </ul>
+            </Section>
+          )}
+
+          {character.timeline.length > 0 && (
+            <Section title={t('characters.section_timeline')}>
+              <ul className="space-y-1.5">
+                {character.timeline.map((ev, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="text-theme-accent font-medium flex-shrink-0 w-20">{ev.period}</span>
+                    <span>{ev.event}</span>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          <Section title={t('characters.section_corrections')}>
+            <div className="space-y-2">
+              {character.corrections.length === 0 && (
+                <p className="text-xs text-theme-subtext">{t('characters.no_corrections')}</p>
+              )}
+              {character.corrections.map((c, i) => (
+                <div key={i} className="flex items-start gap-2 p-2 rounded-theme bg-theme-bg border border-theme-border">
+                  <ShieldAlert className="w-4 h-4 mt-0.5 text-yellow-500 flex-shrink-0" />
+                  <div className="text-xs">
+                    <p className="font-medium">{c.scene}</p>
+                    <p className="text-theme-subtext line-through">{c.wrong}</p>
+                    <p className="text-green-600 dark:text-green-400">{c.correct}</p>
+                  </div>
+                </div>
+              ))}
+              {showCorrectionForm ? (
+                <div className="p-3 rounded-theme bg-theme-bg border border-theme-border space-y-2">
+                  <input
+                    value={scene}
+                    onChange={(ev) => setScene(ev.target.value)}
+                    placeholder={t('characters.correction_scene')}
+                    className="w-full px-3 py-1.5 rounded-theme bg-theme-surface border border-theme-border text-sm focus:outline-none focus:ring-2 focus:ring-theme-accent"
+                  />
+                  <input
+                    value={wrong}
+                    onChange={(ev) => setWrong(ev.target.value)}
+                    placeholder={t('characters.correction_wrong')}
+                    className="w-full px-3 py-1.5 rounded-theme bg-theme-surface border border-theme-border text-sm focus:outline-none focus:ring-2 focus:ring-theme-accent"
+                  />
+                  <input
+                    value={correct}
+                    onChange={(ev) => setCorrect(ev.target.value)}
+                    placeholder={t('characters.correction_correct')}
+                    className="w-full px-3 py-1.5 rounded-theme bg-theme-surface border border-theme-border text-sm focus:outline-none focus:ring-2 focus:ring-theme-accent"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => setShowCorrectionForm(false)} className="px-3 py-1 text-xs rounded-theme border border-theme-border text-theme-subtext">
+                      {t('common.cancel')}
+                    </button>
+                    <button onClick={submitCorrection} className="px-3 py-1 text-xs rounded-theme bg-theme-accent text-theme-bg font-medium">
+                      {t('characters.correction_save')}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowCorrectionForm(true)}
+                  className="flex items-center gap-1 text-xs text-theme-accent hover:underline"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  {t('characters.add_correction')}
+                </button>
+              )}
+            </div>
+          </Section>
+        </div>
+
+        <div className="flex items-center justify-between p-4 border-t border-theme-border">
+          <button
+            onClick={() => onDelete(character.id)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-theme text-sm text-red-500 hover:bg-red-500/10"
+          >
+            <Trash2 className="w-4 h-4" />
+            {t('common.delete')}
+          </button>
+          <button
+            onClick={() => onChat(character.id)}
+            className="flex items-center gap-2 px-4 py-2 rounded-theme text-sm font-medium bg-theme-accent text-theme-bg hover:bg-theme-accent-hover"
+          >
+            <MessageCircle className="w-4 h-4" />
+            {t('characters.start_chat')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

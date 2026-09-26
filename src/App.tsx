@@ -5,12 +5,15 @@ import { SearchPage } from './pages/SearchPage';
 import { CollectionPage } from './pages/CollectionPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { LoginPage } from './pages/LoginPage';
+import { CharactersPage } from './pages/CharactersPage';
+import { CharacterChatPage } from './pages/CharacterChatPage';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { useAuthStore } from './store/useAuthStore';
 import { useCollectionStore } from './store/useCollectionStore';
 import { useAIStore } from './store/useAIStore';
 import { useThemeStore } from './store/useThemeStore';
+import { useCharacterStore } from './store/useCharacterStore';
 import { checkUpdates } from './services/aiService';
 import { useTranslation } from 'react-i18next';
 
@@ -25,23 +28,27 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
 const App: React.FC = () => {
   const { t } = useTranslation();
-  const { initialize } = useCollectionStore();
+  const { initialize, initialized } = useCollectionStore();
   const initAI = useAIStore(s => s.initialize);
   const initTheme = useThemeStore(s => s.initialize);
+  const initCharacters = useCharacterStore(s => s.initialize);
 
   // Initialize store on mount
   useEffect(() => {
     initialize();
     initAI();
     initTheme();
-  }, [initialize, initAI, initTheme]);
+    initCharacters();
+  }, [initialize, initAI, initTheme, initCharacters]);
 
-  // Auto-refresh logic on app mount
+  // Auto-refresh logic: run once when the collection store finishes initializing.
+  // Watching `initialized` (instead of a fixed delay) avoids the race where a
+  // slow backend load causes the startup check to be skipped entirely.
   useEffect(() => {
+    if (!initialized) return;
+
     const refreshUpdates = async () => {
-      const { collection, updateItem, initialized } = useCollectionStore.getState();
-      
-      if (!initialized) return; // Wait for store to be ready
+      const { collection, updateItem } = useCollectionStore.getState();
 
       const now = Date.now();
       
@@ -91,9 +98,7 @@ const App: React.FC = () => {
     // Small delay to ensure store is hydrated if initialize is async
     const timer = setTimeout(refreshUpdates, 1000);
     return () => clearTimeout(timer);
-  }, []); // This might run before initialize finishes if we don't watch 'initialized'. 
-  // But initialize is called in another useEffect.
-  // Better to watch 'initialized' in a separate effect or just rely on the check inside.
+  }, [initialized]); // Re-runs only when the store becomes ready.
 
   return (
     <HashRouter>
@@ -109,13 +114,29 @@ const App: React.FC = () => {
               </ProtectedRoute>
             } 
           />
-          <Route 
-            path="/dashboard" 
+          <Route
+            path="/dashboard"
             element={
               <ProtectedRoute>
                 <DashboardPage />
               </ProtectedRoute>
-            } 
+            }
+          />
+          <Route
+            path="/characters"
+            element={
+              <ProtectedRoute>
+                <CharactersPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/characters/:characterId"
+            element={
+              <ProtectedRoute>
+                <CharacterChatPage />
+              </ProtectedRoute>
+            }
           />
         </Routes>
       </Layout>

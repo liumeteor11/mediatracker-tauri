@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { useAIStore } from "../store/useAIStore";
 import i18n from '../i18n';
 import type { AIProvider } from '../store/useAIStore';
+import { buildRequestExtras, getModelCapabilities, getNativeSearchTools } from './modelCatalog';
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from 'react-toastify';
 
@@ -38,6 +39,14 @@ const isTauriEnv = typeof window !== 'undefined' && (
 );
 
 type TauriSearchProvider = 'google' | 'serper' | 'yandex' | 'duckduckgo';
+
+const isUnsupportedParamError = (e: any): boolean => {
+    const status = e?.status ?? e?.response?.status;
+    const msg = String(e?.message || e?.error?.message || '');
+    return status === 400 || status === 422 ||
+        /(^|\D)400(\D|$)/.test(msg) || /(^|\D)422(\D|$)/.test(msg) ||
+        /unsupported|not support|unknown (parameter|field|argument)|invalid (parameter|field|argument)/i.test(msg);
+};
 
 const normalizeTauriSearchProvider = (sp: any): TauriSearchProvider => {
   const v = String(sp || '').toLowerCase();
@@ -1319,13 +1328,16 @@ export const refreshTrendingCache = async (): Promise<void> => {
     } catch (e) { console.error("Refresh trending failed", e); }
 };
 
-export const callAI = async (messages: any[], temperature: number = 0.7, options: { forceSearch?: boolean; configOverride?: { baseURL?: string; apiKey?: string; model?: string; provider?: AIProvider } } = {}): Promise<string> => {
+export const callAI = async (messages: any[], temperature: number = 0.7, options: { forceSearch?: boolean; disableSearch?: boolean; configOverride?: { baseURL?: string; apiKey?: string; model?: string; provider?: AIProvider } } = {}): Promise<string> => {
     const state = useAIStore.getState();
     const { 
         provider,
         baseUrl: storeBaseURL, 
         model: storeModel, 
         enableSearch,
+        enableNetworking,
+        reasoningEffort,
+        maxTokens,
         searchProvider,
         getDecryptedGoogleKey,
         googleSearchCx,
@@ -1374,7 +1386,8 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
         const hasV1 = url.endsWith('/v1') || url.includes('/v1/');
         const isGoogleOpenAI = url.includes('/openai/');
         if (isGoogleOpenAI) return url;
-        if ((prov === 'openai' || prov === 'deepseek' || prov === 'mistral' || prov === 'moonshot') && !hasV1) {
+        if (url.includes('api.deepseek.com')) return url;
+        if ((prov === 'openai' || prov === 'mistral' || prov === 'moonshot') && !hasV1) {
             return url.endsWith('/') ? `${url}v1` : `${url}/v1`;
         }
         return url;
@@ -1390,7 +1403,7 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
     }
 
     // Abstract the "completion" call
-    const createCompletion = async (msgs: any[], tools: any[], baseURLOverride?: string, apiKeyOverride?: string) => {
+    const createCompletion = async (msgs: any[], tools: any[], baseURLOverride?: string, apiKeyOverride?: string, extraBody?: Record<string, any>) => {
         const effBaseURL = (baseURLOverride || finalBaseURL || '').trim();
         const effApiKey = apiKeyOverride || apiKey;
         
@@ -1408,6 +1421,7 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
                 messages: msgs, 
                 temperature, 
                 tools, 
+                extra_body: extraBody || {},
                 config: rustConfig 
             });
             
@@ -1428,21 +1442,23 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
             });
             
             return await client.chat.completions.create({
-                model: model || (effProvider === 'moonshot' ? "kimi-latest" : "gpt-3.5-turbo"),
+                model: model || "gpt-5.6-terra",
                 messages: msgs,
                 temperature: temperature,
                 tools: tools.length > 0 ? tools : undefined,
                 tool_choice: tools.length > 0 ? "auto" : undefined,
-            });
+                ...(extraBody || {})
+            } as any);
         }
     };
 
     try {
-        let tools: any[] = [];
-        const shouldSearch = enableSearch || options.forceSearch;
-        const supportsTools = effProvider === 'moonshot';
-        if (shouldSearch && supportsTools) {
-            tools = [
+        const shouldSearch = (enableSearch || !!options.forceSearch) && !options.disableSearch;
+        const toolCallingProviders: AIProvider[] = ['moonshot', 'deepseek', 'openai', 'qwen', 'google', 'mistral', 'mimo', 'zhipu'];
+        const supportsTools = toolCallingProviders.includes(effProvider);
+        const caps = getModelCapabilities(effProvider, model);
+        const useNativeSearch = shouldSearch && supportsTools && !!enableNetworking && caps.nativeSearch;
+        const externalTools: any[] = (shouldSearch && supportsTools) ? [
                 {
                     type: "function",
                     function: {
@@ -1460,8 +1476,9 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
                         }
                     }
                 }
-            ];
-        }
+            ] : [];
+        const nativeSearchTools = getNativeSearchTools(effProvider);
+        let nativeSearchBlocked = false;
 
         // Handle multiple API keys with retry logic
         const apiKeys = apiKey.split(/[;；]/).map(k => k.trim()).filter(k => k);
@@ -1492,12 +1509,22 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
                     let attempt = 0;
                     let webBaseURLOverride: string | undefined = undefined;
                     let switchedOffMoonshotProxy = false;
+                    let effTools: any[] = externalTools;
 
                     while (attempt < MAX_RETRIES) {
                         try {
                             await apiLimiter.acquire();
                             try {
-                                 completion = await createCompletion(currentMessages, tools, webBaseURLOverride, currentKey);
+                                 const nativeActive = useNativeSearch && !nativeSearchBlocked;
+                                 effTools = nativeActive ? nativeSearchTools : externalTools;
+                                 const extraBody = buildRequestExtras({
+                                     provider: effProvider,
+                                     model,
+                                     reasoningEffort,
+                                     maxTokens,
+                                     nativeSearch: nativeActive
+                                 });
+                                 completion = await createCompletion(currentMessages, effTools, webBaseURLOverride, currentKey, extraBody);
                             } finally {
                                 apiLimiter.release();
                             }
@@ -1514,6 +1541,13 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
                                 msg.toLowerCase().includes('failed to fetch') ||
                                 msg.toLowerCase().includes('network error');
                             const looksServiceUnavailable = msg.includes('503') || msg.toLowerCase().includes('service unavailable');
+
+                            // Native search params/tools may be rejected by some models:
+                            // fall back to the app's external search on the next attempt.
+                            if (useNativeSearch && !nativeSearchBlocked && isUnsupportedParamError(apiError)) {
+                                nativeSearchBlocked = true;
+                                continue;
+                            }
 
                             if (!isTauri && !switchedOffMoonshotProxy && (effProvider === 'moonshot') && isConnectionError) {
                                 const usingMoonshotDevProxy = (finalBaseURL || '').includes('/api/moonshot/');
@@ -1568,7 +1602,7 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
                             provider: effProvider,
                             model,
                             baseURL: finalBaseURL,
-                            request: { messages: currentMessages, temperature, tools },
+                            request: { messages: currentMessages, temperature, tools: effTools },
                             response: completion,
                             durationMs: Math.round(performance.now() - startTs)
                         });
@@ -1693,6 +1727,142 @@ const normalizeMediaItem = (item: any): any => {
         description,
         cast
     };
+};
+
+/**
+ * Streaming variant of callAI for chat use-cases: forwards each content delta
+ * to `onDelta` as it arrives and resolves with the full reply text. Search
+ * tools are never injected here — the caller decides via extraBody-free plain
+ * messages (character chat disables networking on purpose).
+ */
+export const callAIStream = async (
+    messages: any[],
+    temperature: number = 0.7,
+    options: { onDelta: (text: string) => void; configOverride?: { baseURL?: string; apiKey?: string; model?: string; provider?: AIProvider } } = { onDelta: () => {} }
+): Promise<string> => {
+    const { onDelta } = options;
+    const state = useAIStore.getState();
+    const override = options.configOverride || {};
+    const effProvider: AIProvider = (override.provider as AIProvider) ?? (state.provider as AIProvider);
+    const baseURL = override.baseURL ?? state.baseUrl;
+    const model = override.model ?? state.model;
+
+    let apiKey = override.apiKey ?? state.getDecryptedApiKey();
+    if (!apiKey) {
+        try {
+            const envKey = (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env.VITE_MOONSHOT_API_KEY) ? (import.meta as any).env.VITE_MOONSHOT_API_KEY : undefined;
+            if (envKey && envKey !== 'undefined') {
+                apiKey = String(envKey);
+            }
+        } catch {}
+    }
+    if (!apiKey) return "";
+
+    const keyList = apiKey.split(/[;；]/).map(k => k.trim()).filter(Boolean);
+
+    const isTauri = typeof window !== 'undefined' && (
+        ('__TAURI__' in window) || ('__TAURI_INTERNALS__' in window) ||
+        (typeof window.location !== 'undefined' && (
+            window.location.protocol === 'tauri:' ||
+            (typeof window.location.origin === 'string' && window.location.origin.startsWith('http://tauri.localhost'))
+        ))
+    );
+
+    let finalBaseURL = (baseURL || "https://api.moonshot.cn/v1")
+        .trim()
+        .replace(/[\s)]+$/g, "")
+        .replace(/[()]/g, "")
+        .replace(/^"+|"+$/g, "")
+        .replace(/^'+|'+$/g, "");
+
+    const ensureV1IfNeeded = (prov: AIProvider, url: string) => {
+        const hasV1 = url.endsWith('/v1') || url.includes('/v1/');
+        const isGoogleOpenAI = url.includes('/openai/');
+        if (isGoogleOpenAI) return url;
+        if (url.includes('api.deepseek.com')) return url;
+        if ((prov === 'openai' || prov === 'mistral' || prov === 'moonshot') && !hasV1) {
+            return url.endsWith('/') ? `${url}v1` : `${url}/v1`;
+        }
+        return url;
+    };
+    finalBaseURL = ensureV1IfNeeded(effProvider as AIProvider, finalBaseURL);
+
+    let lastError: any = null;
+
+    for (let keyIndex = 0; keyIndex < keyList.length; keyIndex++) {
+        const effApiKey = keyList[keyIndex];
+        let streamStarted = false;
+        let full = '';
+
+        try {
+            if (isTauri) {
+                const { useSystemProxy, getProxyUrl } = useAIStore.getState();
+                const rustConfig = {
+                    model,
+                    baseURL: finalBaseURL,
+                    apiKey: effApiKey,
+                    proxy_url: getProxyUrl(),
+                    use_system_proxy: useSystemProxy
+                };
+                const { Channel } = await import('@tauri-apps/api/core');
+                const channel = new Channel<any>();
+                let streamError: string | null = null;
+                channel.onmessage = (evt: any) => {
+                    const event = typeof evt === 'string' ? JSON.parse(evt) : evt;
+                    if (event?.type === 'delta' && event.text) {
+                        streamStarted = true;
+                        full += event.text;
+                        onDelta(event.text);
+                    } else if (event?.type === 'error') {
+                        streamError = event.message || 'stream error';
+                    }
+                };
+                await invoke('ai_chat_stream', {
+                    messages,
+                    temperature,
+                    extra_body: {},
+                    config: rustConfig,
+                    on_event: channel
+                });
+                if (!full) throw new Error(streamError || 'empty-ai-response');
+                return full;
+            } else {
+                const client = new OpenAI({
+                    apiKey: effApiKey,
+                    baseURL: finalBaseURL,
+                    dangerouslyAllowBrowser: true
+                });
+                const stream = await client.chat.completions.create({
+                    model: model || "gpt-5.6-terra",
+                    messages,
+                    temperature,
+                    stream: true
+                } as any);
+                for await (const chunk of stream as any) {
+                    const delta = chunk?.choices?.[0]?.delta?.content || '';
+                    if (delta) {
+                        streamStarted = true;
+                        full += delta;
+                        onDelta(delta);
+                    }
+                }
+                if (!full) throw new Error('empty-ai-response');
+                return full;
+            }
+        } catch (e: any) {
+            lastError = e;
+            // A key rotation is only safe before the first delta reached the UI;
+            // afterwards the consumer already rendered partial output.
+            const msg = String(e?.message || e || '');
+            const retryable = !streamStarted && (msg.includes('401') || msg.includes('429') || msg.includes('API Error'));
+            if (retryable && keyIndex < keyList.length - 1) {
+                continue;
+            }
+            throw e;
+        }
+    }
+
+    throw lastError || new Error('AI streaming failed');
 };
 
 export const searchMedia = async (query: string, type?: MediaType | 'All'): Promise<MediaItem[]> => {
@@ -2000,7 +2170,8 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
   if (shouldUseAI) {
       let userPrompt = "";
 
-      if (provider === 'moonshot') {
+      const toolCallingProviders: AIProvider[] = ['moonshot', 'deepseek', 'openai', 'qwen', 'google', 'mistral', 'mimo', 'zhipu'];
+      if (toolCallingProviders.includes(provider as AIProvider)) {
           if (isChinese) {
               userPrompt = `搜索符合以下查询的媒体作品: "${query}"。`;
               if (type && type !== 'All') {
@@ -2411,7 +2582,18 @@ export const getSearchSnippets = async (query: string): Promise<string> => {
     return "";
 };
 
+let updatesCheckInFlight = false;
+
 export const checkUpdates = async (items: MediaItem[]): Promise<{ id: string; latestUpdateInfo: string; isOngoing: boolean }[]> => {
+  // Singleton guard: update checks are triggered from several surfaces
+  // (app mount, collection page, dashboard, media card). Never run them
+  // concurrently to avoid duplicate AI calls and conflicting writes.
+  if (updatesCheckInFlight) {
+    console.warn("checkUpdates skipped: another update check is already running");
+    return [];
+  }
+  updatesCheckInFlight = true;
+  try {
   if (items.length === 0) return [];
 
   const { enableSearch } = useAIStore.getState();
@@ -2575,8 +2757,29 @@ export const checkUpdates = async (items: MediaItem[]): Promise<{ id: string; la
               }
               
               if (jsonStr.startsWith('[') || jsonStr.startsWith('{')) {
-                  const updates: any[] = JSON.parse(jsonStr);
-                  updates.forEach(u => {
+                  let parsed: any[] = [];
+                  try {
+                      const raw = JSON.parse(jsonStr);
+                      parsed = Array.isArray(raw) ? raw : [raw];
+                  } catch (parseErr) {
+                      // Try to salvage a truncated array up to the last '}'
+                      const lastBracket = jsonStr.lastIndexOf('}');
+                      if (lastBracket > 0) {
+                          try {
+                              const recovered = JSON.parse(jsonStr.substring(0, lastBracket + 1) + ']');
+                              if (Array.isArray(recovered)) parsed = recovered;
+                          } catch {}
+                      }
+                      if (parsed.length === 0) {
+                          console.warn("Failed to parse AI update-check JSON", parseErr);
+                      }
+                  }
+                  // Schema guard: only accept entries that resolve to a batch item
+                  // and carry a usable update string.
+                  for (const u of parsed) {
+                      if (!u || typeof u !== 'object') continue;
+                      const updateText = typeof u.latestUpdateInfo === 'string' ? u.latestUpdateInfo.trim() : '';
+                      if (!updateText) continue;
                       let id = titleToId.get(String(u.title || '').toLowerCase());
                       if (!id) {
                           const n = normalize(String(u.title || ''));
@@ -2591,11 +2794,11 @@ export const checkUpdates = async (items: MediaItem[]): Promise<{ id: string; la
                       if (id) {
                           allUpdates.push({
                               id,
-                              latestUpdateInfo: u.latestUpdateInfo,
-                              isOngoing: u.isOngoing
+                              latestUpdateInfo: updateText,
+                              isOngoing: u.isOngoing === true
                           });
                       }
-                  });
+                  }
               }
           }
       } catch (e) {
@@ -2609,6 +2812,9 @@ export const checkUpdates = async (items: MediaItem[]): Promise<{ id: string; la
   }
 
   return allUpdates;
+  } finally {
+    updatesCheckInFlight = false;
+  }
 };
 
 export const repairMediaItem = async (item: MediaItem): Promise<Partial<MediaItem> | null> => {

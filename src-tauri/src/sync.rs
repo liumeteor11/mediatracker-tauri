@@ -1,9 +1,8 @@
-use axum::{routing::get, Router, Json, extract::State};
+use axum::{routing::get, Router, Json, extract::State, http::{HeaderMap, StatusCode}};
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use std::collections::HashMap;
 use crate::database::Database;
-use crate::models::CollectionData;
 use mdns_sd::{ServiceDaemon, ServiceInfo, ServiceEvent};
 use local_ip_address::local_ip;
 use serde::{Deserialize, Serialize};
@@ -49,14 +48,9 @@ impl SyncService {
         }
         
         let state = SyncState { db };
-        
-        // Enable CORS
-        use tower_http::cors::CorsLayer;
-        let cors = CorsLayer::permissive();
 
         let app = Router::new()
             .route("/sync/data", get(get_data).post(receive_data))
-            .layer(cors)
             .with_state(state);
 
         let ip = local_ip().unwrap_or("0.0.0.0".parse().unwrap());
@@ -153,12 +147,36 @@ fn get_hostname() -> String {
         .unwrap_or_else(|_| "Unknown".to_string())
 }
 
-async fn get_data(State(state): State<SyncState>) -> Json<CollectionData> {
-    let data = state.db.get_full_data().unwrap_or_default();
-    Json(data)
+fn check_auth(headers: &HeaderMap, state: &SyncState) -> Result<(), StatusCode> {
+    let expected = state.db.get_sync_token();
+    if expected.is_empty() {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    match headers.get(axum::http::header::AUTHORIZATION) {
+        Some(v) if v.to_str().map(|s| s == format!("Bearer {}", expected)).unwrap_or(false) => Ok(()),
+        _ => Err(StatusCode::UNAUTHORIZED),
+    }
 }
 
-async fn receive_data(State(state): State<SyncState>, Json(payload): Json<CollectionData>) -> Json<serde_json::Value> {
-    state.db.merge_full_data(payload).unwrap();
-    Json(serde_json::json!({"ok": true}))
+async fn get_data(headers: HeaderMap, State(state): State<SyncState>, axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>) -> Result<Json<serde_json::Value>, StatusCode> {
+    check_auth(&headers, &state)?;
+    let username = params.get("user").cloned().unwrap_or_default();
+    if username.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let items = state.db.get_user_items(&username).unwrap_or_default();
+    Ok(Json(serde_json::json!({ "items": items })))
+}
+
+async fn receive_data(headers: HeaderMap, State(state): State<SyncState>, Json(payload): Json<serde_json::Value>) -> Result<Json<serde_json::Value>, StatusCode> {
+    check_auth(&headers, &state)?;
+    let username = payload.get("user").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    if username.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let items: Vec<crate::models::MediaItem> = serde_json::from_value(
+        payload.get("items").cloned().unwrap_or(serde_json::Value::Null)
+    ).map_err(|_| StatusCode::BAD_REQUEST)?;
+    state.db.merge_user_items(&username, items).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({"ok": true})))
 }

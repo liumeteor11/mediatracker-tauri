@@ -1,6 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Search, Library, User, Menu, X, LogIn, Palette, ChevronDown, Globe, Calendar } from 'lucide-react';
+import { Search, Library, User, Menu, X, LogIn, Palette, ChevronDown, Globe, Calendar, Drama } from 'lucide-react';
 import { useAuthStore } from '../store/useAuthStore';
 import { useThemeStore, Theme } from '../store/useThemeStore';
 import { useTranslation } from 'react-i18next';
@@ -26,6 +26,7 @@ export const Navbar: React.FC = () => {
   const navLinks = [
     { path: '/', label: t('nav.search'), icon: Search },
     { path: '/collection', label: t('nav.collection'), icon: Library },
+    { path: '/characters', label: t('nav.characters'), icon: Drama },
     { path: '/dashboard', label: t('nav.dashboard'), icon: User },
   ];
 

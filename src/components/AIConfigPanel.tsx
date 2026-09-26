@@ -9,40 +9,7 @@ import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { toast } from 'react-toastify';
 import { PluginManagerModal } from './PluginManagerModal';
-
-const PROVIDER_MODELS: Record<string, { name: string; version: string; releaseDate: string }[]> = {
-    moonshot: [
-      { name: 'kimi-latest', version: 'Kimi Latest', releaseDate: 'rolling' },
-      { name: 'kimi-k2-thinking-preview', version: 'Kimi K2 Thinking (Preview)', releaseDate: '2025-11' },
-      { name: 'moonshot-v1-128k', version: 'Moonshot V1 128k', releaseDate: '2024-03' }
-    ],
-    openai: [
-      { name: 'o3', version: 'o3', releaseDate: '2025-06' },
-      { name: 'o4-mini', version: 'o4-mini', releaseDate: '2025-06' },
-      { name: 'gpt-4o', version: 'GPT-4o', releaseDate: '2024-05' },
-      { name: 'gpt-4o-mini', version: 'GPT-4o mini', releaseDate: '2024-07' },
-      { name: 'gpt-4.1', version: 'GPT-4.1', releaseDate: '2025' }
-    ],
-    deepseek: [
-      { name: 'deepseek-chat', version: 'DeepSeek Chat (V3.2)', releaseDate: 'rolling' },
-      { name: 'deepseek-reasoner', version: 'DeepSeek Reasoner (V3.2)', releaseDate: 'rolling' }
-    ],
-    qwen: [
-      { name: 'qwen3-235b-a22b', version: 'Qwen3 235B', releaseDate: 'rolling' },
-      { name: 'qwen-max-latest', version: 'Qwen Max (Latest)', releaseDate: 'rolling' },
-      { name: 'qwen-plus-latest', version: 'Qwen Plus (Latest)', releaseDate: 'rolling' },
-      { name: 'qwq-32b', version: 'QwQ 32B', releaseDate: 'rolling' }
-    ],
-    google: [
-      { name: 'gemini-2.5-pro', version: 'Gemini 2.5 Pro', releaseDate: 'rolling' },
-      { name: 'gemini-2.5-flash', version: 'Gemini 2.5 Flash', releaseDate: 'rolling' },
-      { name: 'gemini-2.0-flash', version: 'Gemini 2.0 Flash', releaseDate: 'rolling' }
-    ],
-    mistral: [
-      { name: 'mistral-large-latest', version: 'Mistral Large (Latest)', releaseDate: 'rolling' },
-      { name: 'mistral-small-latest', version: 'Mistral Small (Latest)', releaseDate: 'rolling' }
-    ]
-  };
+import { MODEL_CATALOG, REASONING_LEVELS, getModelCapabilities, type ReasoningLevel } from '../services/modelCatalog';
 
 export const AIConfigPanel: React.FC = () => {
   const { t } = useTranslation();
@@ -54,6 +21,8 @@ export const AIConfigPanel: React.FC = () => {
     { value: 'qwen', label: t('ai_config.provider_qwen') },
     { value: 'google', label: t('ai_config.provider_google') },
     { value: 'mistral', label: t('ai_config.provider_mistral') },
+    { value: 'mimo', label: t('ai_config.provider_mimo') },
+    { value: 'zhipu', label: t('ai_config.provider_zhipu') },
     { value: 'custom', label: t('ai_config.provider_custom') }
   ];
 
@@ -68,7 +37,7 @@ export const AIConfigPanel: React.FC = () => {
     provider, apiKey, model, baseUrl, temperature, maxTokens, systemPrompt,
     enableSearch, searchProvider, googleSearchCx, yandexSearchLogin,
     omdbApiKey, tmdbApiKey, bangumiToken, enableTmdb, enableBangumi,
-    enableNetworking, enableDeepThinking, enableTrending,
+    enableNetworking, reasoningEffort, enableTrending,
     useSystemProxy, proxyProtocol, proxyHost, proxyPort, proxyUsername,
     setProvider, setConfig, getDecryptedApiKey, getDecryptedGoogleKey, getDecryptedSerperKey, getDecryptedYandexKey, getDecryptedOmdbKey, getDecryptedTmdbKey, getDecryptedBangumiToken, getProxyUrl
   } = useAIStore();
@@ -304,20 +273,22 @@ export const AIConfigPanel: React.FC = () => {
     }
   };
 
-  const availableModels = PROVIDER_MODELS[provider] || [];
+  const availableModels = MODEL_CATALOG[provider] || [];
   const isKnownModel = availableModels.some(m => m.name === model);
   const showInput = provider === 'custom' || !isKnownModel || isManualInput;
+  const modelCaps = getModelCapabilities(provider, model);
+  const reasoningOptions = REASONING_LEVELS.filter(l => modelCaps.reasoningLevels.includes(l));
 
   return (
-    <div className="bg-theme-surface border border-theme-border rounded-xl p-6 shadow-sm">
-      <div className="flex items-center gap-2 mb-6 border-b border-theme-border pb-4">
+    <div className="bg-theme-surface border border-theme-border rounded-xl p-5 shadow-sm">
+      <div className="flex items-center gap-2 mb-4 border-b border-theme-border pb-3">
         <Activity className="w-6 h-6 text-theme-accent" />
         <h2 className="text-xl font-bold text-theme-text">{t('ai_config.title')}</h2>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         {/* Left Column */}
-        <div className="space-y-4">
+        <div className="space-y-3">
           <div>
             <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.provider_label')}</label>
             <select 
@@ -396,7 +367,7 @@ export const AIConfigPanel: React.FC = () => {
         </div>
 
         {/* Right Column */}
-        <div className="space-y-4">
+        <div className="space-y-3">
           <div>
             <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.model_name_label')}</label>
             <div className="relative">
@@ -438,8 +409,8 @@ export const AIConfigPanel: React.FC = () => {
                    className="w-full px-4 py-2 rounded-lg border bg-theme-bg border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent outline-none"
                  >
                    {availableModels.map(m => (
-                     <option key={m.name} value={m.name}>
-                       {m.name} ({m.version} - {m.releaseDate})
+                     <option key={m.name} value={m.name} className={m.deprecated ? 'text-theme-subtext/50' : ''}>
+                       {m.name} ({m.version} - {m.releaseDate}){m.deprecated ? ' ⚠' : ''}
                      </option>
                    ))}
                    <option value="__manual__" className="text-theme-accent font-medium bg-theme-surface">
@@ -495,18 +466,21 @@ export const AIConfigPanel: React.FC = () => {
                         <div className="w-11 h-6 bg-theme-border border-2 border-theme-subtext/20 rounded-full peer peer-focus:ring-2 peer-focus:ring-theme-accent peer-checked:bg-gradient-to-r peer-checked:from-theme-accent-warm peer-checked:to-theme-accent-warm-2 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
                     </label>
                 </div>
+                <p className="text-xs text-theme-subtext/70">
+                    {modelCaps.nativeSearch ? t('ai_config.native_search_supported') : t('ai_config.native_search_unsupported')}
+                </p>
                 
                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-theme-text">{t('ai_config.enable_deep_thinking')}</span>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                        <input 
-                            type="checkbox" 
-                            checked={enableDeepThinking} 
-                            onChange={(e) => setConfig({ enableDeepThinking: e.target.checked })} 
-                            className="sr-only peer" 
-                        />
-                        <div className="w-11 h-6 bg-theme-border border-2 border-theme-subtext/20 rounded-full peer peer-focus:ring-2 peer-focus:ring-theme-accent peer-checked:bg-gradient-to-r peer-checked:from-theme-accent-warm peer-checked:to-theme-accent-warm-2 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full"></div>
-                    </label>
+                    <span className="text-sm text-theme-text">{t('ai_config.reasoning_effort')}</span>
+                    <select 
+                        value={reasoningEffort} 
+                        onChange={(e) => setConfig({ reasoningEffort: e.target.value as ReasoningLevel })}
+                        className="w-32 px-2 py-1 rounded-lg border bg-theme-bg border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent outline-none text-sm"
+                    >
+                        {reasoningOptions.map(l => (
+                            <option key={l} value={l}>{t(`ai_config.reasoning_${l}`)}</option>
+                        ))}
+                    </select>
                 </div>
 
                 <div className="flex items-center justify-between">
@@ -546,8 +520,10 @@ export const AIConfigPanel: React.FC = () => {
       </div>
 
       {/* Web Search Configuration */}
-      <div className="mt-6 border-t border-theme-border pt-6">
-        <div className="flex items-center justify-between mb-4">
+      <div className="mt-5 border-t border-theme-border pt-4">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+          <div>
+        <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
                 <Globe className="w-5 h-5 text-theme-accent" />
                 <h3 className="text-lg font-semibold text-theme-text">{t('ai_config.web_search_capabilities')}</h3>
@@ -565,7 +541,7 @@ export const AIConfigPanel: React.FC = () => {
         </div>
 
         {enableSearch && (
-          <div className="bg-theme-bg/50 p-4 rounded-lg border border-theme-border space-y-4">
+          <div className="bg-theme-bg/50 p-3 rounded-lg border border-theme-border space-y-3">
                 {/* Search Provider Selection */}
                 <div>
                     <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.search_engine')}</label>
@@ -585,7 +561,7 @@ export const AIConfigPanel: React.FC = () => {
 
                 {/* Google Configuration */}
                 {searchProvider === 'google' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.google_key_label')}</label>
                             <div className="relative">
@@ -668,7 +644,7 @@ export const AIConfigPanel: React.FC = () => {
 
                 {/* Yandex Configuration */}
                 {searchProvider === 'yandex' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.yandex_user_label')}</label>
                             <input 
@@ -731,9 +707,14 @@ export const AIConfigPanel: React.FC = () => {
 
                 
 
-                <div className="border-t border-theme-border pt-4 mt-4">
-                    <h3 className="text-sm font-bold text-theme-text mb-4 uppercase tracking-wider">{t('ai_config.metadata_sources') || 'Metadata Sources'}</h3>
-                    <div className="space-y-6">
+            </div>
+          )}
+        </div>
+
+        {/* Metadata Sources */}
+        <div className="bg-theme-bg/30 rounded-lg border border-theme-border p-3">
+            <h3 className="text-sm font-bold text-theme-text mb-3 uppercase tracking-wider">{t('ai_config.metadata_sources') || 'Metadata Sources'}</h3>
+            <div className="space-y-4">
                         {/* Bangumi Toggle */}
                         <div className="flex items-center justify-between">
                             <div>
@@ -877,13 +858,12 @@ export const AIConfigPanel: React.FC = () => {
                                 </button>
                             </div>
                         </div>
-                    </div>
-                </div>
+                  </div>
+              </div>
 
-                
-
-            {/* Proxy Settings */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Proxy Settings */}
+        <div className="xl:col-span-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-theme-text">{t('ai_config.use_system_proxy')}</label>
                 <label className="relative inline-flex items-center cursor-pointer">
@@ -907,7 +887,7 @@ export const AIConfigPanel: React.FC = () => {
                 </button>
               </div>
               {!localUseSystemProxy && (
-                <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.proxy_protocol')}</label>
                     <select 
@@ -973,7 +953,7 @@ export const AIConfigPanel: React.FC = () => {
               )}
             </div>
           </div>
-        )}
+        </div>
       </div>
 
 
