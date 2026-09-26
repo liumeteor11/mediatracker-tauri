@@ -81,6 +81,9 @@ jobs:
       - name: Install NDK
         run: |
           sdkmanager "ndk;25.0.8775105"
+          # r0adkll/sign-android-release@v1 hardcodes build-tools 29.0.3 for
+          # zipalign/apksigner; new runner images no longer preinstall it.
+          sdkmanager "build-tools;29.0.3"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.0.8775105" >> "$GITHUB_ENV"
 
       - name: Install frontend dependencies
