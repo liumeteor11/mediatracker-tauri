@@ -60,8 +60,8 @@ impl SyncService {
         
         // Announce via mDNS
         let hostname = get_hostname();
-        let service_type = "_mediatracker._tcp.local.";
-        let instance_name = format!("MediaTracker_{}", hostname);
+        let service_type = "_mediatrove._tcp.local.";
+        let instance_name = format!("MediaTrove_{}", hostname);
         let host_ipv4 = ip.to_string();
 
         let service_info = ServiceInfo::new(
@@ -96,7 +96,7 @@ impl SyncService {
     fn start_discovery(&self) {
         let mdns = self.mdns.clone();
         let peers = self.peers.clone();
-        let service_type = "_mediatracker._tcp.local.";
+        let service_type = "_mediatrove._tcp.local.";
 
         std::thread::spawn(move || {
             let receiver = mdns.browse(service_type).expect("Failed to browse");

@@ -354,7 +354,7 @@
     "user_exists": "用户已存在"
   },
   "footer": {
-    "rights_reserved": "MediaTracker AI. 版权所有。",
+    "rights_reserved": "MediaTrove AI. 版权所有。",
     "powered_by": "由 Moonshot AI 驱动 • 使用 React & Vite 构建"
   },
   "media_card": {
@@ -530,6 +530,6 @@
     "title": "分享卡片",
     "my_review": "我的评论",
     "download": "保存图片",
-    "branding": "MediaTracker"
+    "branding": "MediaTrove"
   }
 }

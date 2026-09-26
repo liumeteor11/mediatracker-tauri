@@ -214,7 +214,7 @@ const searchLimiter = new Semaphore(6);
 
 const OMDB_API_KEY = import.meta.env.VITE_OMDB_API_KEY;
 
-const FALLBACK_POSTER_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900" viewBox="0 0 600 900" data-placeholder="mediatracker-placeholder"><rect width="600" height="900" fill="#1a1a1a"/></svg>';
+const FALLBACK_POSTER_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900" viewBox="0 0 600 900" data-placeholder="mediatrove-placeholder"><rect width="600" height="900" fill="#1a1a1a"/></svg>';
 export const FALLBACK_POSTER = `data:image/svg+xml;utf8,${encodeURIComponent(FALLBACK_POSTER_SVG)}`;
 
 const getPlaceholder = (type: string = 'Media') => {
@@ -250,7 +250,7 @@ export const isPlaceholderPosterUrl = (value?: string): boolean => {
   if (lower.startsWith('x-raw-image')) return true;
   if (lower.includes('moviepostersgallery.com/wp-content/uploads/2020/08/movie-posters-gallery_social.jpg')) return true;
   if (lower.includes('placehold.co') || lower.includes('no+image') || lower.includes('image+error')) return true;
-  if (lower.includes('mediatracker-placeholder')) return true;
+  if (lower.includes('mediatrove-placeholder')) return true;
   if (lower.includes('m.media-amazon.com/')) return true;
   if (lower.includes('i.ebayimg.com/') || lower.includes('ebayimg.com/')) return true;
   return false;

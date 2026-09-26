@@ -86,7 +86,7 @@ fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) 
         if !url.is_empty() {
             let builder = Client::builder()
                 .tcp_nodelay(true)
-                .user_agent("MediaTracker/1.0")
+                .user_agent("MediaTrove/1.0")
                 .connect_timeout(Duration::from_secs(20))
                 .timeout(Duration::from_secs(120))
                 .proxy(reqwest::Proxy::all(url).ok()?);
@@ -100,7 +100,7 @@ fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) 
 
         let mut builder = Client::builder()
             .tcp_nodelay(true)
-            .user_agent("MediaTracker/1.0")
+            .user_agent("MediaTrove/1.0")
             .connect_timeout(Duration::from_secs(20))
             .timeout(Duration::from_secs(120));
         let mut any = false;
@@ -148,7 +148,7 @@ fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) 
                         }
                         let mut builder = Client::builder()
                             .tcp_nodelay(true)
-                            .user_agent("MediaTracker/1.0")
+                            .user_agent("MediaTrove/1.0")
                             .connect_timeout(Duration::from_secs(20))
                             .timeout(Duration::from_secs(120));
                         let mut have = false;
@@ -1377,7 +1377,7 @@ fn export_collection(
         let base_dir = app.path()
             .document_dir()
             .map_err(|e| e.to_string())?;
-        let out_dir = base_dir.join("MediaTracker").join(&username);
+        let out_dir = base_dir.join("MediaTrove").join(&username);
         std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
         out_dir.join("collection.json")
     };
@@ -1402,7 +1402,7 @@ async fn bangumi_search(query: String, subject_type: Option<u32>, token: Option<
     }
 
     let mut builder = state.proxy_client.get(&url)
-        .header("User-Agent", "MediaTracker-Rust/1.0 (https://github.com/yourrepo)")
+        .header("User-Agent", "MediaTrove/1.0 (https://github.com/liumeteor11/mediatrove)")
         .header("Accept", "application/json");
 
     if let Some(tok) = token {
@@ -1425,7 +1425,7 @@ async fn bangumi_search(query: String, subject_type: Option<u32>, token: Option<
 async fn bangumi_details(id: u64, token: Option<String>, state: State<'_, AppState>) -> Result<String, String> {
     let url = format!("https://api.bgm.tv/v0/subjects/{}", id);
     let mut builder = state.proxy_client.get(&url)
-        .header("User-Agent", "MediaTracker-Rust/1.0 (https://github.com/yourrepo)")
+        .header("User-Agent", "MediaTrove/1.0 (https://github.com/liumeteor11/mediatrove)")
         .header("Accept", "application/json");
 
     if let Some(tok) = token {
@@ -1562,7 +1562,7 @@ pub fn run() {
             // 1. Proxy Client (System Proxy Enabled) - For Google, Serper, etc.
             let proxy_client = Client::builder()
                 .tcp_nodelay(true)
-                .user_agent("MediaTracker/1.0")
+                .user_agent("MediaTrove/1.0")
                 .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)))
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .timeout(std::time::Duration::from_secs(120))
@@ -1572,7 +1572,7 @@ pub fn run() {
             // 2. Direct Client (NO PROXY) - For Moonshot, Aliyun, Domestic Services
             let direct_client = Client::builder()
                 .tcp_nodelay(true)
-                .user_agent("MediaTracker/1.0")
+                .user_agent("MediaTrove/1.0")
                 .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)))
                 .no_proxy() // <--- CRITICAL: Bypass system proxy
                 .connect_timeout(std::time::Duration::from_secs(5))

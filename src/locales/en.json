@@ -330,7 +330,7 @@
     "user_exists": "User already exists"
   },
   "footer": {
-    "rights_reserved": "MediaTracker AI. All rights reserved.",
+    "rights_reserved": "MediaTrove AI. All rights reserved.",
     "powered_by": "Powered by Moonshot AI • Built with React & Vite"
   },
   "media_card": {
@@ -498,6 +498,6 @@
     "title": "Share Card",
     "my_review": "My Review",
     "download": "Save Image",
-    "branding": "MediaTracker"
+    "branding": "MediaTrove"
   }
 }

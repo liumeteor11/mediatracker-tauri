@@ -51,7 +51,7 @@ export const searchBangumi = async (query: string, type?: number): Promise<Bangu
         }
         
         const headers: Record<string, string> = {
-            'User-Agent': 'MediaTracker-Rust/1.0 (https://github.com/yourrepo)',
+            'User-Agent': 'MediaTrove/1.0 (https://github.com/liumeteor11/mediatrove)',
             'Accept': 'application/json'
         };
 
@@ -81,7 +81,7 @@ export const getBangumiDetails = async (id: number): Promise<any> => {
         const url = `${BANGUMI_BASE_URL}/v0/subjects/${id}`;
         
         const headers: Record<string, string> = {
-            'User-Agent': 'MediaTracker-Rust/1.0 (https://github.com/yourrepo)',
+            'User-Agent': 'MediaTrove/1.0 (https://github.com/liumeteor11/mediatrove)',
             'Accept': 'application/json'
         };
 
@@ -97,7 +97,7 @@ export const getBangumiDetails = async (id: number): Promise<any> => {
 export const testBangumiConnection = async (token?: string): Promise<{ ok: boolean; error?: string }> => {
     try {
         const headers: Record<string, string> = {
-            'User-Agent': 'MediaTracker-Rust/1.0 (https://github.com/yourrepo)',
+            'User-Agent': 'MediaTrove/1.0 (https://github.com/liumeteor11/mediatrove)',
             'Accept': 'application/json'
         };
 

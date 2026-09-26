@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "mediatracker-rust",
+  "productName": "mediatrove",
   "version": "0.1.17",
   "identifier": "com.mediatracker.app",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "MediaTracker AI",
+        "title": "MediaTrove AI",
         "width": 1280,
         "height": 800
       }

@@ -112,7 +112,7 @@ const fetchMusicCover = async (item: MediaItem): Promise<string | undefined> => 
         // User-Agent is required by MusicBrainz
         const res = await fetch(`https://musicbrainz.org/ws/2/release?query=${query}${artist}&fmt=json&limit=1`, {
             headers: {
-                'User-Agent': 'MediaTrackerAI/1.0'
+                'User-Agent': 'MediaTrove/1.0'
             }
         });
         
