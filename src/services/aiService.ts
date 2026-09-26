@@ -1950,7 +1950,8 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
   };
 
   const langKey = i18n.language.split('-')[0];
-  const cacheKey = `media_tracker_search_${langKey}_${type || 'All'}_${q.toLowerCase()}`;
+  // v2: relevance gating changed result quality — don't serve pre-v2 cached garbage.
+  const cacheKey = `media_tracker_search_v2_${langKey}_${type || 'All'}_${q.toLowerCase()}`;
   const cacheTsKey = `${cacheKey}_ts`;
   const cacheStepT0 = performance.now();
   try {
@@ -2130,8 +2131,28 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
   }
   const normalizeKey = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '').trim();
   const qKey = normalizeKey(q);
-  const hasExactBaseMatch = Array.from(baseUnique.values()).some(it => normalizeKey(it.title) === qKey);
-  const shouldUseAI = baseUnique.size < 8 && !hasExactBaseMatch;
+  // Title relevance vs the query. Providers like Bangumi return loosely-related
+  // entries (shared genre/keywords) that would otherwise bury the real match.
+  // 100 = exact title, 90 = containment, 70/30 = token overlap, 0 = unrelated.
+  const relevanceScore = (title: string): number => {
+    const t = normalizeKey(title);
+    if (!t || !qKey) return 0;
+    if (t === qKey) return 100;
+    if (t.includes(qKey) || qKey.includes(t)) return 90;
+    const qTokens = q.toLowerCase().split(/[\s,，.。·:：]+/).map(normalizeKey).filter(w => w.length >= 2);
+    if (qTokens.length >= 2) {
+      const hits = qTokens.filter(w => t.includes(w)).length;
+      if (hits === qTokens.length) return 70;
+      if (hits > 0) return 30;
+    }
+    return 0;
+  };
+  const baseScores = Array.from(baseUnique.values()).map(it => relevanceScore(it.title));
+  const hasExactBaseMatch = baseScores.some(s => s === 100);
+  // Consult the AI unless we already have the exact work, or several
+  // title-relevant hits (previously any 8+ results suppressed the AI call,
+  // which let fuzzy matches bury the real one).
+  const shouldUseAI = !hasExactBaseMatch && !(baseScores.filter(s => s >= 90).length >= 4);
 
   let searchContext = "";
   const useSearchContext = shouldUseAI && baseUnique.size < 4;
@@ -2372,6 +2393,18 @@ export const searchMedia = async (query: string, type?: MediaType | 'All'): Prom
       const allowedTypes = new Set<string>(Object.values(MediaType).filter((t) => t !== MediaType.OTHER));
       return allowedTypes.has(r.type);
   });
+
+  // Relevance gate & ranking: when at least one result is title-relevant to the
+  // query, drop the zero-relevance noise and put the best matches first. For
+  // queries that match no title at all (director/genre searches) keep everything.
+  const bestScore = filtered.reduce((m, it) => Math.max(m, relevanceScore(it.title)), 0);
+  if (bestScore > 0) {
+      filtered = filtered.filter(it => relevanceScore(it.title) > 0);
+  }
+  filtered = filtered
+      .map((it, i) => ({ it, i, score: relevanceScore(it.title) }))
+      .sort((a, b) => (b.score - a.score) || (a.i - b.i))
+      .map(x => x.it);
 
   const enrichWithTMDB = async (items: MediaItem[]): Promise<MediaItem[]> => {
       const enrichT0 = performance.now();
@@ -2704,8 +2737,9 @@ export const checkUpdates = async (items: MediaItem[]): Promise<{ id: string; la
       }
 
       let userPrompt = "";
+      const today = new Date().toISOString().split('T')[0];
       if (isChinese) {
-          userPrompt = `请根据以下信息检查作品的最新更新状态: ${queryList}。
+          userPrompt = `今天是 ${today}。请以此日期为基准检查作品的最新更新状态: ${queryList}。
           
           ${enableSearch ? `参考搜索结果:\n${context}\n` : ''}
           
@@ -2720,9 +2754,10 @@ export const checkUpdates = async (items: MediaItem[]): Promise<{ id: string; la
           2. 如果搜索结果显示已完结，isOngoing 应为 false。
           3. 如果没有搜索结果，请利用你的内部知识库。
           4. 保持 JSON 格式合法。
+          5. 宁可保守，不要编造：无法确认的集数/章节请返回你确信的最近一条信息，不要臆造比已知更新的进度。
           `;
       } else {
-          userPrompt = `Check the latest status for: ${queryList}.
+          userPrompt = `Today is ${today}. Check the latest status as of this date for: ${queryList}.
           
           ${enableSearch ? `Reference Search Results:\n${context}\n` : ''}
           
@@ -2737,6 +2772,7 @@ export const checkUpdates = async (items: MediaItem[]): Promise<{ id: string; la
           2. If results indicate ended, set isOngoing to false.
           3. If no search results, use internal knowledge.
           4. Return strict JSON.
+          5. Be conservative: when you cannot verify the latest number, return the most recent entry you are confident about — never fabricate a newer episode/chapter than you know of.
           `;
       }
 
@@ -3770,7 +3806,18 @@ export const getTrendingMedia = async (excludeItems: MediaItem[] = []): Promise<
   const monthStr = `${currentYear}年${currentMonth}月`;
   
   const isChinese = i18n.language.startsWith('zh');
-  
+
+  // Reliability: the prompts below demand a web_search tool call. When the
+  // provider has no tool support (e.g. custom/OpenAI-compatible endpoints) or
+  // search is disabled, instruct the model to fall back to its own knowledge
+  // instead of fabricating "trending" data.
+  const { enableSearch: trendingEnableSearch, enableNetworking: trendingEnableNetworking } = useAIStore.getState();
+  const toolCallingProviders: AIProvider[] = ['moonshot', 'deepseek', 'openai', 'qwen', 'google', 'mistral', 'mimo', 'zhipu'];
+  const webSearchAvailable = trendingEnableSearch && trendingEnableNetworking && toolCallingProviders.includes(provider as AIProvider);
+  const searchUnavailableNote = webSearchAvailable ? '' : (isChinese
+      ? `\n\n[重要] 当前环境没有可用的联网搜索工具：请直接基于你的已有知识完成推荐，只推荐你确信真实存在的具体作品；不要虚构确切的上映日期（不确定时 releaseDate 返回年份），不要臆造 latestUpdateInfo。仍须返回严格合法的 JSON 数组。`
+      : `\n\n[IMPORTANT] No web search tool is available in this environment: base your recommendations on your own knowledge and only recommend specific works you are confident actually exist. Do NOT fabricate exact release dates (return the year when unsure) or latestUpdateInfo. Still return a strictly valid JSON array.`);
+
   // We no longer perform a manual pre-search. We let the AI decide what to search based on the prompt.
   const searchContext = "";
 
@@ -3845,6 +3892,7 @@ export const getTrendingMedia = async (excludeItems: MediaItem[] = []): Promise<
   }
 
   // Fallback instructions if search fails
+  userPrompt += searchUnavailableNote;
   userPrompt += `\n\nIMPORTANT: ALWAYS return a valid JSON array, even if empty or with fewer items. Do NOT return markdown text or explanations outside the JSON.`;
 
   const messages = [
@@ -3892,8 +3940,19 @@ export const getTrendingMedia = async (excludeItems: MediaItem[] = []): Promise<
       }
   };
 
-  const text = await callAI(messages, 0.3, { forceSearch: true }); 
+  const text = await callAI(messages, 0.3, { forceSearch: true });
   let rawData = await parseTrending(text || "");
+  // Drop empty titles and duplicates before anything else — the model
+  // occasionally repeats an entry or returns blank placeholders.
+  const seenTrendingTitles = new Set<string>();
+  rawData = rawData.filter(item => {
+      const t = String(item?.title || '').trim();
+      if (!t) return false;
+      const k = t.toLowerCase();
+      if (seenTrendingTitles.has(k)) return false;
+      seenTrendingTitles.add(k);
+      return true;
+  });
   if (rawData.length > 4) rawData = rawData.slice(0, 4);
 
   // Filter out generic titles
