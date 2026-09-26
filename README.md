@@ -15,14 +15,20 @@ v0.1.19
 ## ✨ Key Features
 
 ### 🔍 AI-Powered Search & Discovery
-- **Smart Search**: Find movies, books, and more using natural language queries (e.g., "Cyberpunk novels from the 90s").
+- **Smart Search**: Find movies, books, and more using natural language queries (e.g., "Cyberpunk novels from the 90s"). Results are aggregated from TMDB, Bangumi, plugins and AI, ranked by relevance so fuzzy matches never bury the real work.
 - **Trending Recommendations**: Get personalized "Hot Recommendations" based on current trends, with auto-refresh logic that avoids repeating recently seen items.
 - **Fast First-Screen**: Instant results return from AI context, followed by asynchronous metadata enrichment.
 
 ### 📚 Comprehensive Collection Management
 - **Multi-Type Support**: Manage Movies, TV Series, Books, Comics, Short Dramas, and Music albums in one place.
 - **Status Tracking**: Organize items into "To Watch", "Watched", and "Favorites".
-- **Ongoing Updates**: Track ongoing series (TV shows, comics) with automatic update checks for new episodes/chapters.
+- **Ongoing Updates**: Track ongoing series (TV shows, comics) with automatic update checks for new episodes/chapters — TV series use authoritative TMDB episode data, other types fall back to AI with web-search context when available.
+
+### 🎭 Character Distillation & Roleplay Chat
+- **Distill Characters**: Turn characters from your collection (or any work by title) into structured persona profiles — personality traits, mental models, decision heuristics, boundaries, timeline and "expression DNA".
+- **In-Character Chat**: Roleplay conversations that stay in character at all times, with streaming replies and per-character session history.
+- **Persona Tuning**: Teach characters with corrections (scene → what not to do → what to do instead); they take effect from the next reply and override the distilled persona.
+- **Incremental Re-distillation**: Re-distilling the same work merges new details into existing profiles, keeps your corrections, and bumps the profile version.
 
 ### 🛠️ Advanced Editing & Customization
 - **Manual Entry**: Create custom media cards directly without searching.
@@ -32,6 +38,10 @@ v0.1.19
 ### 📊 Insights & Analytics
 - **Yearly Report**: Visualize your activity with annual statistics, including total items added, most active month, and favorite categories.
 - **Search Diagnostics**: View detailed logs of AI interactions and search provider performance (Token usage, latency, API calls).
+
+### 🤖 Flexible AI Integration
+- **Bring Your Own AI**: Works with Moonshot/Kimi, OpenAI, DeepSeek, Qwen, Google, Mistral, MiMo, Zhipu (GLM), or any OpenAI-compatible custom endpoint.
+- **Optional Search Providers**: Plug in Google CSE, Serper or Yandex keys to sharpen update tracking, trending freshness and search context; AI-native web search is used automatically when the provider supports it.
 
 ## 🚀 Technical Highlights
 
