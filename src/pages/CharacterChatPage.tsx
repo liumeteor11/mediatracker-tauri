@@ -20,7 +20,13 @@ export const CharacterChatPage: React.FC = () => {
   const { t } = useTranslation();
 
   const character = useCharacterStore(s => s.characters.find(c => c.id === characterId));
-  const sessions = useCharacterStore(s => s.sessions.filter(x => x.characterId === characterId));
+  const allSessions = useCharacterStore(s => s.sessions);
+  // zustand v5 selectors must return stable references; filtering here would
+  // return a fresh array every render and loop React into "max update depth".
+  const sessions = useMemo(
+    () => allSessions.filter(x => x.characterId === characterId),
+    [allSessions, characterId]
+  );
   const updateSession = useCharacterStore(s => s.updateSession);
   const createSession = useCharacterStore(s => s.createSession);
   const removeSession = useCharacterStore(s => s.removeSession);
@@ -213,7 +219,7 @@ export const CharacterChatPage: React.FC = () => {
                     />
                     <button
                       onClick={(e) => { e.stopPropagation(); renameSession(session.id, renameText); setRenamingId(null); }}
-                      className="p-0.5 text-green-500"
+                      className="p-0.5 text-theme-accent"
                     >
                       <Check className="w-3.5 h-3.5" />
                     </button>
@@ -234,7 +240,7 @@ export const CharacterChatPage: React.FC = () => {
                     </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); removeSession(session.id); if (activeSession?.id === session.id) setActiveId(null); }}
-                      className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-red-500"
+                      className="p-0.5 opacity-0 group-hover:opacity-100 hover:text-theme-accent-warm"
                       title={t('character_chat.delete_session')}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -331,7 +337,7 @@ export const CharacterChatPage: React.FC = () => {
 
       {/* Persona correction dialog */}
       {showCorrection && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm p-4">
           <div className="bg-theme-surface border border-theme-border rounded-theme max-w-md w-full p-5 text-theme-text">
             <h3 className="font-semibold mb-1">{t('character_chat.adjust_persona')}</h3>
             <p className="text-xs text-theme-subtext mb-4">{t('character_chat.adjust_persona_desc')}</p>

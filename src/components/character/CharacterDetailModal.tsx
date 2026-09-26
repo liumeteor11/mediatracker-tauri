@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { X, MessageCircle, Trash2, ShieldAlert, Plus, History } from 'lucide-react';
+import { X, MessageCircle, Trash2, ShieldAlert, Plus, History, ChevronDown } from 'lucide-react';
 import { DistilledCharacter } from '../../types/character';
 import { useCharacterStore } from '../../store/useCharacterStore';
 
@@ -11,10 +11,30 @@ interface CharacterDetailModalProps {
   onDelete: (characterId: string) => void;
 }
 
-const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+const SECTION_IDS = [
+  'personality', 'background', 'appearance', 'mentalModels', 'decisionHeuristics',
+  'interpersonal', 'boundaries', 'expression', 'relationships', 'quotes',
+  'externalViews', 'timeline', 'corrections',
+] as const;
+
+type SectionId = (typeof SECTION_IDS)[number];
+
+const Section: React.FC<{
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}> = ({ title, open, onToggle, children }) => (
   <div>
-    <h4 className="text-xs font-semibold uppercase tracking-wider text-theme-subtext mb-2">{title}</h4>
-    <div className="text-sm space-y-1.5">{children}</div>
+    <button
+      onClick={onToggle}
+      aria-expanded={open}
+      className="w-full flex items-center justify-between gap-2 text-left"
+    >
+      <h4 className="text-xs font-semibold uppercase tracking-wider text-theme-subtext">{title}</h4>
+      <ChevronDown className={`w-4 h-4 flex-shrink-0 text-theme-subtext transition-transform ${open ? 'rotate-180' : ''}`} />
+    </button>
+    {open && <div className="mt-2 text-sm space-y-1.5">{children}</div>}
   </div>
 );
 
@@ -35,6 +55,13 @@ export const CharacterDetailModal: React.FC<CharacterDetailModalProps> = ({ char
   const [scene, setScene] = useState('');
   const [wrong, setWrong] = useState('');
   const [correct, setCorrect] = useState('');
+  // Persona sections are hidden by default; clicking a section title reveals it.
+  const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
+
+  const toggle = (id: SectionId) => setOpenMap(m => ({ ...m, [id]: !m[id] }));
+  const anyOpen = SECTION_IDS.some(id => openMap[id]);
+  const toggleAll = () =>
+    setOpenMap(anyOpen ? {} : Object.fromEntries(SECTION_IDS.map(id => [id, true])));
 
   const e = character.expression;
 
@@ -48,7 +75,7 @@ export const CharacterDetailModal: React.FC<CharacterDetailModalProps> = ({ char
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm p-4">
       <div className="bg-theme-surface border border-theme-border rounded-theme max-w-2xl w-full max-h-[90vh] flex flex-col text-theme-text">
         <div className="flex items-start justify-between p-4 border-b border-theme-border">
           <div className="flex items-center gap-3 min-w-0">
@@ -67,29 +94,40 @@ export const CharacterDetailModal: React.FC<CharacterDetailModalProps> = ({ char
           </button>
         </div>
 
-        <div className="p-4 overflow-y-auto space-y-5">
+        <div className="p-4 overflow-y-auto space-y-4">
           {character.tagline && <p className="text-sm italic text-theme-subtext">“{character.tagline}”</p>}
 
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-theme-subtext">{t('characters.profile_hint')}</p>
+            <button
+              onClick={toggleAll}
+              className="flex-shrink-0 ml-3 flex items-center gap-1 text-xs text-theme-accent hover:underline"
+            >
+              <History className="w-3.5 h-3.5" />
+              {anyOpen ? t('characters.collapse_all') : t('characters.expand_all')}
+            </button>
+          </div>
+
           {character.personality.length > 0 && (
-            <Section title={t('characters.section_personality')}>
+            <Section title={t('characters.section_personality')} open={!!openMap.personality} onToggle={() => toggle('personality')}>
               <ChipList items={character.personality} />
             </Section>
           )}
 
           {character.background && (
-            <Section title={t('characters.section_background')}>
+            <Section title={t('characters.section_background')} open={!!openMap.background} onToggle={() => toggle('background')}>
               <p className="leading-relaxed">{character.background}</p>
             </Section>
           )}
 
           {character.appearance && (
-            <Section title={t('characters.section_appearance')}>
+            <Section title={t('characters.section_appearance')} open={!!openMap.appearance} onToggle={() => toggle('appearance')}>
               <p className="leading-relaxed">{character.appearance}</p>
             </Section>
           )}
 
           {character.mentalModels.length > 0 && (
-            <Section title={t('characters.section_mental_models')}>
+            <Section title={t('characters.section_mental_models')} open={!!openMap.mentalModels} onToggle={() => toggle('mentalModels')}>
               <ul className="list-disc list-inside space-y-1">
                 {character.mentalModels.map((m, i) => <li key={i}>{m}</li>)}
               </ul>
@@ -97,7 +135,7 @@ export const CharacterDetailModal: React.FC<CharacterDetailModalProps> = ({ char
           )}
 
           {character.decisionHeuristics.length > 0 && (
-            <Section title={t('characters.section_decision_heuristics')}>
+            <Section title={t('characters.section_decision_heuristics')} open={!!openMap.decisionHeuristics} onToggle={() => toggle('decisionHeuristics')}>
               <ul className="list-disc list-inside space-y-1">
                 {character.decisionHeuristics.map((m, i) => <li key={i}>{m}</li>)}
               </ul>
@@ -105,13 +143,13 @@ export const CharacterDetailModal: React.FC<CharacterDetailModalProps> = ({ char
           )}
 
           {character.interpersonal && (
-            <Section title={t('characters.section_interpersonal')}>
+            <Section title={t('characters.section_interpersonal')} open={!!openMap.interpersonal} onToggle={() => toggle('interpersonal')}>
               <p className="leading-relaxed">{character.interpersonal}</p>
             </Section>
           )}
 
           {character.boundaries.length > 0 && (
-            <Section title={t('characters.section_boundaries')}>
+            <Section title={t('characters.section_boundaries')} open={!!openMap.boundaries} onToggle={() => toggle('boundaries')}>
               <ul className="list-disc list-inside space-y-1">
                 {character.boundaries.map((m, i) => <li key={i}>{m}</li>)}
               </ul>
@@ -119,7 +157,7 @@ export const CharacterDetailModal: React.FC<CharacterDetailModalProps> = ({ char
           )}
 
           {e && (
-            <Section title={t('characters.section_expression')}>
+            <Section title={t('characters.section_expression')} open={!!openMap.expression} onToggle={() => toggle('expression')}>
               <div className="space-y-2">
                 {e.tone && <p><span className="text-theme-subtext">{t('characters.expression_tone')}: </span>{e.tone}</p>}
                 {e.sentenceStyle && <p><span className="text-theme-subtext">{t('characters.expression_sentence')}: </span>{e.sentenceStyle}</p>}
@@ -139,7 +177,7 @@ export const CharacterDetailModal: React.FC<CharacterDetailModalProps> = ({ char
           )}
 
           {character.relationships.length > 0 && (
-            <Section title={t('characters.section_relationships')}>
+            <Section title={t('characters.section_relationships')} open={!!openMap.relationships} onToggle={() => toggle('relationships')}>
               <ul className="space-y-1">
                 {character.relationships.map((r, i) => (
                   <li key={i}><span className="font-medium">{r.name}</span> — {r.relation}</li>
@@ -149,7 +187,7 @@ export const CharacterDetailModal: React.FC<CharacterDetailModalProps> = ({ char
           )}
 
           {character.quotes.length > 0 && (
-            <Section title={t('characters.section_quotes')}>
+            <Section title={t('characters.section_quotes')} open={!!openMap.quotes} onToggle={() => toggle('quotes')}>
               <div className="space-y-1">
                 {character.quotes.map((q, i) => <p key={i} className="italic">“{q}”</p>)}
               </div>
@@ -157,7 +195,7 @@ export const CharacterDetailModal: React.FC<CharacterDetailModalProps> = ({ char
           )}
 
           {character.externalViews.length > 0 && (
-            <Section title={t('characters.section_external_views')}>
+            <Section title={t('characters.section_external_views')} open={!!openMap.externalViews} onToggle={() => toggle('externalViews')}>
               <ul className="list-disc list-inside space-y-1">
                 {character.externalViews.map((m, i) => <li key={i}>{m}</li>)}
               </ul>
@@ -165,7 +203,7 @@ export const CharacterDetailModal: React.FC<CharacterDetailModalProps> = ({ char
           )}
 
           {character.timeline.length > 0 && (
-            <Section title={t('characters.section_timeline')}>
+            <Section title={t('characters.section_timeline')} open={!!openMap.timeline} onToggle={() => toggle('timeline')}>
               <ul className="space-y-1.5">
                 {character.timeline.map((ev, i) => (
                   <li key={i} className="flex gap-2">
@@ -177,7 +215,7 @@ export const CharacterDetailModal: React.FC<CharacterDetailModalProps> = ({ char
             </Section>
           )}
 
-          <Section title={t('characters.section_corrections')}>
+          <Section title={t('characters.section_corrections')} open={!!openMap.corrections} onToggle={() => toggle('corrections')}>
             <div className="space-y-2">
               {character.corrections.length === 0 && (
                 <p className="text-xs text-theme-subtext">{t('characters.no_corrections')}</p>
@@ -237,7 +275,7 @@ export const CharacterDetailModal: React.FC<CharacterDetailModalProps> = ({ char
         <div className="flex items-center justify-between p-4 border-t border-theme-border">
           <button
             onClick={() => onDelete(character.id)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-theme text-sm text-red-500 hover:bg-red-500/10"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-theme text-sm text-theme-accent-warm hover:bg-theme-accent-warm/10"
           >
             <Trash2 className="w-4 h-4" />
             {t('common.delete')}

@@ -5,12 +5,27 @@ import { useCollectionStore } from '../../store/useCollectionStore';
 import { useCharacterStore } from '../../store/useCharacterStore';
 import { useAIStore } from '../../store/useAIStore';
 import { distillCharacters } from '../../services/characterService';
+import { MediaItem, MediaType } from '../../types/types';
 
 interface DistillModalProps {
   isOpen: boolean;
   onClose: () => void;
   onDone?: (created: number, updated: number) => void;
 }
+
+const MANUAL_WORK = '__manual__';
+
+/** Build a synthetic source item for a manually typed work title. */
+const buildManualItem = (title: string): MediaItem => ({
+  id: `manual-${title.trim().toLowerCase().replace(/\s+/g, '-')}`,
+  title: title.trim(),
+  directorOrAuthor: '',
+  description: '',
+  releaseDate: '',
+  type: MediaType.OTHER,
+  isOngoing: false,
+  cast: [],
+});
 
 export const DistillModal: React.FC<DistillModalProps> = ({ isOpen, onClose, onDone }) => {
   const { t, i18n } = useTranslation();
@@ -19,10 +34,10 @@ export const DistillModal: React.FC<DistillModalProps> = ({ isOpen, onClose, onD
   const characters = useCharacterStore(s => s.characters);
   const apiKey = useAIStore(s => s.apiKey);
 
-  const [itemId, setItemId] = useState<string>('');
+  const [workSelection, setWorkSelection] = useState<string>('');
+  const [manualTitle, setManualTitle] = useState('');
+  const [characterName, setCharacterName] = useState('');
   const [extraMaterial, setExtraMaterial] = useState('');
-  const [focus, setFocus] = useState('');
-  const [count, setCount] = useState(3);
   const [isDistilling, setIsDistilling] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,14 +51,27 @@ export const DistillModal: React.FC<DistillModalProps> = ({ isOpen, onClose, onD
     [collection]
   );
 
+  // No collection works to pick from -> manual entry is the only option.
+  const isManual = workSelection === MANUAL_WORK || sortedCollection.length === 0;
+
   const hasKey = !!apiKey;
 
   if (!isOpen) return null;
 
   const handleDistill = async () => {
-    const item = collection.find(i => i.id === itemId);
+    const name = characterName.trim();
+    let item: MediaItem | undefined;
+    if (!isManual) {
+      item = collection.find(i => i.id === workSelection);
+    } else if (manualTitle.trim()) {
+      item = buildManualItem(manualTitle);
+    }
     if (!item) {
-      setError(t('characters.error_select_work'));
+      setError(t(isManual ? 'characters.error_enter_work' : 'characters.error_select_work'));
+      return;
+    }
+    if (!name) {
+      setError(t('characters.error_character_name'));
       return;
     }
     setIsDistilling(true);
@@ -51,9 +79,9 @@ export const DistillModal: React.FC<DistillModalProps> = ({ isOpen, onClose, onD
     try {
       const language = (i18n.language || 'en').startsWith('zh') ? 'zh' : 'en';
       const result = await distillCharacters(item, characters, {
+        characterName: name,
         extraMaterial,
-        focus,
-        maxCharacters: count,
+        maxCharacters: 1,
         language,
       });
       upsertCharacters(result.characters);
@@ -69,8 +97,11 @@ export const DistillModal: React.FC<DistillModalProps> = ({ isOpen, onClose, onD
     }
   };
 
+  const inputClass =
+    'w-full px-3 py-2 rounded-theme bg-theme-bg border border-theme-border focus:outline-none focus:ring-2 focus:ring-theme-accent text-sm';
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm p-4">
       <div className="bg-theme-surface border border-theme-border rounded-theme max-w-lg w-full max-h-[90vh] overflow-y-auto text-theme-text">
         <div className="flex items-center justify-between p-4 border-b border-theme-border sticky top-0 bg-theme-surface">
           <div className="flex items-center gap-2">
@@ -86,7 +117,7 @@ export const DistillModal: React.FC<DistillModalProps> = ({ isOpen, onClose, onD
           <p className="text-sm text-theme-subtext">{t('characters.distill_desc')}</p>
 
           {!hasKey && (
-            <div className="flex items-start gap-2 p-3 rounded-theme bg-yellow-500/10 text-yellow-600 text-sm">
+            <div className="flex items-start gap-2 p-3 rounded-theme bg-yellow-500/10 text-yellow-600 dark:text-yellow-500 text-sm">
               <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
               <span>{t('characters.error_no_key')}</span>
             </div>
@@ -94,48 +125,42 @@ export const DistillModal: React.FC<DistillModalProps> = ({ isOpen, onClose, onD
 
           <div>
             <label className="block text-sm font-medium mb-1">{t('characters.select_work')}</label>
-            <select
-              value={itemId}
-              onChange={(e) => setItemId(e.target.value)}
-              className="w-full px-3 py-2 rounded-theme bg-theme-bg border border-theme-border focus:outline-none focus:ring-2 focus:ring-theme-accent text-sm"
-            >
-              <option value="">{t('characters.select_work_placeholder')}</option>
-              {sortedCollection.map(item => (
-                <option key={item.id} value={item.id}>
-                  {item.title} · {t(`media_type.${item.type}`, { defaultValue: item.type })}
-                </option>
-              ))}
-            </select>
-            {sortedCollection.length === 0 && (
-              <p className="text-xs text-theme-subtext mt-1">{t('characters.empty_collection')}</p>
+            {sortedCollection.length > 0 && (
+              <select
+                value={isManual ? MANUAL_WORK : workSelection}
+                onChange={(e) => setWorkSelection(e.target.value)}
+                className={`${inputClass} mb-2`}
+              >
+                <option value="">{t('characters.select_work_placeholder')}</option>
+                {sortedCollection.map(item => (
+                  <option key={item.id} value={item.id}>
+                    {item.title} · {t(`media_type.${item.type}`, { defaultValue: item.type })}
+                  </option>
+                ))}
+                <option value={MANUAL_WORK}>{t('characters.select_work_manual')}</option>
+              </select>
+            )}
+            {isManual && (
+              <input
+                type="text"
+                value={manualTitle}
+                onChange={(e) => setManualTitle(e.target.value)}
+                placeholder={t('characters.work_name_placeholder')}
+                className={inputClass}
+              />
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-medium mb-1">{t('characters.focus')}</label>
-              <input
-                type="text"
-                value={focus}
-                onChange={(e) => setFocus(e.target.value)}
-                placeholder={t('characters.focus_placeholder')}
-                className="w-full px-3 py-2 rounded-theme bg-theme-bg border border-theme-border focus:outline-none focus:ring-2 focus:ring-theme-accent text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">{t('characters.count')}</label>
-              <select
-                value={count}
-                onChange={(e) => setCount(Number(e.target.value))}
-                className="w-full px-3 py-2 rounded-theme bg-theme-bg border border-theme-border focus:outline-none focus:ring-2 focus:ring-theme-accent text-sm"
-              >
-                {[1, 2, 3, 4, 5].map(n => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-            </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">{t('characters.character_name')}</label>
+            <input
+              type="text"
+              value={characterName}
+              onChange={(e) => setCharacterName(e.target.value)}
+              placeholder={t('characters.character_name_placeholder')}
+              className={inputClass}
+            />
           </div>
-
           <div>
             <label className="block text-sm font-medium mb-1">{t('characters.extra_material')}</label>
             <textarea
@@ -143,13 +168,13 @@ export const DistillModal: React.FC<DistillModalProps> = ({ isOpen, onClose, onD
               onChange={(e) => setExtraMaterial(e.target.value)}
               rows={4}
               placeholder={t('characters.extra_material_hint')}
-              className="w-full px-3 py-2 rounded-theme bg-theme-bg border border-theme-border focus:outline-none focus:ring-2 focus:ring-theme-accent text-sm resize-y"
+              className={`${inputClass} resize-y`}
             />
             <p className="text-xs text-theme-subtext mt-1">{t('characters.extra_material_note')}</p>
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 p-3 rounded-theme bg-red-500/10 text-red-500 text-sm">
+            <div className="flex items-start gap-2 p-3 rounded-theme bg-theme-accent-warm/10 text-theme-accent-warm text-sm">
               <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
               <span>{error}</span>
             </div>
@@ -166,7 +191,7 @@ export const DistillModal: React.FC<DistillModalProps> = ({ isOpen, onClose, onD
           </button>
           <button
             onClick={handleDistill}
-            disabled={isDistilling || !itemId || !hasKey}
+            disabled={isDistilling || (isManual ? !manualTitle.trim() : !workSelection) || !characterName.trim() || !hasKey}
             className="flex items-center gap-2 px-4 py-2 rounded-theme text-sm font-medium bg-theme-accent text-theme-bg hover:bg-theme-accent-hover disabled:opacity-50"
           >
             {isDistilling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}

@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
-import { Sparkles, MessageCircle, BookOpen, Trash2, ChevronRight, Search } from 'lucide-react';
+import { Sparkles, MessageCircle, BookOpen, Trash2, ChevronRight, Search, Plus } from 'lucide-react';
 import { useCharacterStore } from '../store/useCharacterStore';
 import { DistillModal } from '../components/character/DistillModal';
 import { CharacterDetailModal } from '../components/character/CharacterDetailModal';
@@ -62,15 +63,15 @@ export const CharactersPage: React.FC = () => {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={t('characters.search_placeholder')}
-              className="pl-9 pr-3 py-2 rounded-theme bg-theme-surface border border-theme-border text-sm text-theme-text focus:outline-none focus:ring-2 focus:ring-theme-accent w-44"
+              className="pl-9 pr-3 py-2 rounded-lg bg-theme-surface border border-theme-border text-sm text-theme-text focus:outline-none focus:ring-2 focus:ring-theme-accent w-44"
             />
           </div>
           <button
             onClick={() => setShowDistill(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-theme text-sm font-medium bg-theme-accent text-theme-bg hover:bg-theme-accent-hover whitespace-nowrap"
+            className="p-2 rounded-lg border bg-theme-surface border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent transition-colors flex items-center justify-center"
+            title={t('characters.add_character')}
           >
-            <Sparkles className="w-4 h-4" />
-            {t('characters.distill')}
+            <Plus className="w-5 h-5" />
           </button>
         </div>
       </div>
@@ -90,69 +91,65 @@ export const CharactersPage: React.FC = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {filtered.map(character => (
-            <div
-              key={character.id}
-              className="group bg-theme-surface border border-theme-border rounded-theme p-4 flex flex-col hover:border-theme-accent transition-colors"
-            >
-              <div className="flex items-start gap-3">
-                <div className="w-12 h-12 rounded-full bg-theme-accent text-theme-bg flex items-center justify-center text-xl font-bold flex-shrink-0">
-                  {character.name.slice(0, 1).toUpperCase()}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <h3 className="font-semibold text-theme-text truncate">{character.name}</h3>
-                  <p className="text-xs text-theme-subtext flex items-center gap-1 truncate">
-                    <BookOpen className="w-3 h-3 flex-shrink-0" />
-                    {character.sourceTitle}
-                  </p>
-                </div>
-              </div>
-
-              {character.tagline && (
-                <p className="text-sm text-theme-subtext mt-3 line-clamp-2">{character.tagline}</p>
-              )}
-
-              {character.personality.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-3">
-                  {character.personality.slice(0, 3).map((p, i) => (
-                    <span key={i} className="px-2 py-0.5 rounded-full bg-theme-bg border border-theme-border text-xs text-theme-subtext">
-                      {p}
+          {filtered.map((character, index) => {
+            return (
+              <motion.div
+                key={character.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: Math.min(index * 0.05, 0.4), duration: 0.4 }}
+                className="group bg-theme-surface border-2 border-theme-border rounded-theme shadow-theme p-4 flex flex-col transition-all duration-300 hover:border-theme-accent md:hover:scale-[1.02] md:hover:shadow-2xl"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-12 h-12 rounded-full bg-theme-accent text-theme-bg flex items-center justify-center text-xl font-bold flex-shrink-0">
+                    {character.name.slice(0, 1).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-semibold text-theme-text truncate">{character.name}</h3>
+                    <p className="text-xs text-theme-subtext flex items-center gap-1 truncate">
+                      <BookOpen className="w-3 h-3 flex-shrink-0" />
+                      {character.sourceTitle}
+                    </p>
+                  </div>
+                  {character.sourceType && (
+                    <span className="flex-shrink-0 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-theme-accent text-theme-bg rounded-sm ring-1 ring-theme-accent/50 shadow-md">
+                      {t(`media_type.${character.sourceType}`, { defaultValue: character.sourceType })}
                     </span>
-                  ))}
+                  )}
                 </div>
-              )}
 
-              <div className="mt-auto pt-4 flex items-center justify-between gap-2">
-                <span className="text-xs text-theme-subtext">
-                  {t('characters.session_count', { count: sessionCount(character.id) })}
-                  {character.corrections.length > 0 && ` · ${t('characters.correction_count', { count: character.corrections.length })}`}
-                </span>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => navigate(`/characters/${character.id}`)}
-                    className="p-2 rounded-theme text-theme-accent hover:bg-theme-bg"
-                    title={t('characters.start_chat')}
-                  >
-                    <MessageCircle className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => setConfirmDeleteId(character.id)}
-                    className="p-2 rounded-theme text-theme-subtext hover:text-red-500 hover:bg-theme-bg"
-                    title={t('common.delete')}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => setDetailId(character.id)}
-                    className="p-2 rounded-theme text-theme-subtext hover:text-theme-text hover:bg-theme-bg"
-                    title={t('characters.view_profile')}
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
+                <div className="mt-auto pt-4 flex items-center justify-between gap-2">
+                  <span className="text-xs text-theme-subtext">
+                    {t('characters.session_count', { count: sessionCount(character.id) })}
+                    {character.corrections.length > 0 && ` · ${t('characters.correction_count', { count: character.corrections.length })}`}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => navigate(`/characters/${character.id}`)}
+                      className="p-2 rounded-theme text-theme-accent hover:bg-theme-bg"
+                      title={t('characters.start_chat')}
+                    >
+                      <MessageCircle className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setConfirmDeleteId(character.id)}
+                      className="p-2 rounded-theme text-theme-subtext hover:text-theme-accent-warm hover:bg-theme-bg"
+                      title={t('common.delete')}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setDetailId(character.id)}
+                      className="p-2 rounded-theme text-theme-subtext hover:text-theme-text hover:bg-theme-bg"
+                      title={t('characters.view_profile')}
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </div>
-          ))}
+              </motion.div>
+            );
+          })}
         </div>
       )}
 
@@ -175,7 +172,7 @@ export const CharactersPage: React.FC = () => {
       )}
 
       {confirmDeleteId && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm p-4">
           <div className="bg-theme-surface border border-theme-border rounded-theme max-w-sm w-full p-5 text-theme-text">
             <h3 className="font-semibold mb-2">{t('characters.delete_confirm_title')}</h3>
             <p className="text-sm text-theme-subtext mb-4">{t('characters.delete_confirm_desc')}</p>
@@ -188,7 +185,7 @@ export const CharactersPage: React.FC = () => {
               </button>
               <button
                 onClick={() => handleDelete(confirmDeleteId)}
-                className="px-4 py-2 rounded-theme text-sm font-medium bg-red-500 text-white hover:bg-red-600"
+                className="px-4 py-2 rounded-theme text-sm font-medium bg-theme-accent-warm text-theme-bg hover:bg-theme-accent-warm-2"
               >
                 {t('common.delete')}
               </button>

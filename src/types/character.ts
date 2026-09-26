@@ -88,6 +88,8 @@ export interface DistillOptions {
   extraMaterial?: string;
   /** e.g. "主角" or specific character names. */
   focus?: string;
+  /** Distill only this named character (forces a single-character result). */
+  characterName?: string;
   maxCharacters?: number;
   /** Output language for the generated profile, derived from the UI locale. */
   language?: 'zh' | 'en';

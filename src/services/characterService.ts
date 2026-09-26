@@ -195,6 +195,9 @@ const buildDistillUserPrompt = (item: MediaItem, opts: DistillOptions, creditLin
   else if (item.cast && item.cast.length > 0) parts.push(`[Cast & characters]\n${item.cast.join(', ')}`);
   if (item.userReview) parts.push(`[Owner's notes] ${item.userReview}`);
   if (opts.extraMaterial && opts.extraMaterial.trim()) parts.push(`[Extra material]\n${opts.extraMaterial.trim()}`);
+  if (opts.characterName && opts.characterName.trim()) {
+    parts.push(`[Target character] ${opts.characterName.trim()}\nDistill ONLY this character and output a single-element array. If the material barely covers them, still build the best-supported profile for them instead of picking someone else.`);
+  }
   if (opts.focus && opts.focus.trim()) parts.push(`[Focus] ${opts.focus.trim()}`);
   parts.push(`[Limit] Distill at most ${opts.maxCharacters || 3} characters, main characters first.`);
   parts.push(`[Existing profiles] ${existingNames.length > 0 ? existingNames.join(', ') : 'none'}`);
@@ -260,7 +263,9 @@ export const distillCharacters = async (
   opts: DistillOptions = {}
 ): Promise<DistillResult> => {
   const language: 'zh' | 'en' = opts.language || 'zh';
-  const maxCharacters = Math.min(8, Math.max(1, opts.maxCharacters || 3));
+  const maxCharacters = opts.characterName?.trim()
+    ? 1
+    : Math.min(8, Math.max(1, opts.maxCharacters || 3));
 
   const creditLines = await gatherCreditLines(item);
   const sameSource = existing.filter(

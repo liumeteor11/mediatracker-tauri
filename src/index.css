@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Tailwind v4 does not auto-load the legacy JS config — without this line every
+   theme-* utility (bg-theme-surface, rounded-theme, ...) silently no-ops. */
+@config "../tailwind.config.js";
+
+
 @layer base {
   /* Theme Definitions */
   :root {
