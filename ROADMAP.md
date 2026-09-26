@@ -72,6 +72,20 @@
 - [x] 角色对话流式输出：Rust `ai_chat_stream`（reqwest SSE 解析 + Tauri Channel 增量推送 `{type:"delta"/"done"/"error"}`，provider 忽略 stream 时整体回退；重试仅发生在首个 delta 之前），前端 `callAIStream`（Tauri Channel / OpenAI SDK 流式双通道，多 Key 仅在未出首字前轮换），对话页渐进渲染 + 光标动画。
 - [x] 验证：`npm run build`（tsc + vite）通过；`cargo test` 4 个测试通过（新增 distilled_character / chat_session 序列化与缺省字段反序列化测试）。
 
+## 阶段 2.8：蒸馏链路可靠性与服务商适配（2026-09-27 完成）
+
+> 修复「桌面版已配置 API Key，蒸馏仍报配置错误」：排查出服务商/Key 错配、Kimi 温度限制、思考模型 token 预算三个叠加问题；蒸馏恢复联网检索。
+
+- [x] 服务商与 Key 匹配：`useAIStore` 持久化 v7→v8 增加 `apiKeyProvider`（记录 Key 是为哪个服务商保存的），配置面板在切换服务商导致不匹配时给出黄色警告并要求重新测试连接；API Key 输入框失焦即保存（此前仅"测试连接"成功才落盘，输入后离开面板会丢失），显式清空则同时清除记录。
+- [x] 错误可定位：`aiService.describeAIError` 区分「Key 被服务商拒绝（401/403）」「服务商原始报错」「输出无法解析」「空响应」四类，蒸馏弹窗与角色对话 toast 针对 401 给出"检查服务商与密钥是否匹配"的指引（i18n en/zh 补齐）。
+- [x] 模型适配（全厂商）：`modelCatalog` 新增 `fixedTemperature`；Moonshot 现行 Kimi 模型统一只接受 `temperature=1`（实测 kimi-k3 / k2.6 / k2.7-code / k2.7-code-highspeed 均返回 400 `invalid temperature: only 1 is allowed`）。除目录中已确认的模型外，`aiService` 还会在运行时向服务商学习：从报错中识别"只接受某个温度"（含 OpenAI 的 `only the default (N) value is supported`）、"不支持 temperature 字段"与"不支持工具定义"三类情况，记住后本会话后续调用直接按可接受的方式发（`learnedTemperaturePolicy` / `learnedNoTools`）；Rust `ai_chat` / `ai_chat_stream` 的 temperature 改为可选（`Option<f32>`），不支持该字段的模型整段省略。未收录模型、自定义端点同样生效。
+- [x] 思考模型 token 兜底：回答被截断（`finish_reason=length` 且内容为空，推理吃掉整个额度）时自动提高 `max_tokens` 再问一次——首次跳到 ≥8000，仍截断再翻倍，上限 32000；非流式（`callAI`）与流式（`callAIStream`）两条路径共用同一套温度策略与学习结果。
+- [x] 蒸馏联网检索：蒸馏以 `forceSearch` 启用 web_search 工具轮次，user prompt 增加 `[Research]` 指令（先检索作品与目标角色，台词/时间线以检索结果为据、禁止编造）；工具执行不再受全局"联网搜索"开关阻断；工具轮次用尽后再发一次无工具请求，避免以空响应收尾。
+- [x] 检索后空回答兜底：思考模型常在检索轮后返回 `finish_reason=stop` 但 content 为空（它还想继续检索），`callAI` 此时追加一条"直接输出最终答案、不得调用工具"的 user 消息再问一次（`toolsDisabled` + 单次上限），实测 kimi-k3 由此产出完整 16 字段画像并成功解析。
+- [x] 检索密钥轮询：Rust `web_search` 统一拆分 `;` / `；` 分隔的搜索密钥并逐个轮换（此前拼接后的整串被直接当作单个 key 发给 Google，返回 400 `API key not valid`，而"测试连接"因已拆分而显示正常）；新增 `split_search_keys` / `search_with_key_rotation` 及 2 个单元测试。
+- [x] Token 预算：蒸馏固定请求 8000 `max_tokens`（思考模型会把默认 2000 全部用于推理并返回空内容、`finish_reason=length`），空响应文案改为提示 token 预算/模型方向。
+- [x] 验证：`npm run build`（tsc + vite）通过；对 Moonshot 实测——kimi-k3 在 8000 预算下输出可解析的 16 字段画像（推理 ≈5351 token），检索轮 + 最终答案的多轮链路端到端跑通。
+
 ## 阶段 3：搜索与元数据质量
 
 - [ ] 为豆瓣、TMDB、Bangumi 等数据源增加响应校验与缓存过期策略，降低 429/超时导致的空结果。

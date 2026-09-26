@@ -29,6 +29,7 @@ v0.1.19
 - **In-Character Chat**: Roleplay conversations that stay in character at all times, with streaming replies and per-character session history.
 - **Persona Tuning**: Teach characters with corrections (scene → what not to do → what to do instead); they take effect from the next reply and override the distilled persona.
 - **Incremental Re-distillation**: Re-distilling the same work merges new details into existing profiles, keeps your corrections, and bumps the profile version.
+- **Search-Grounded Research**: Distillation researches the work and the character with the AI's web-search tool before writing the profile; your extra material, the work metadata and TMDb credits still take priority over search results.
 
 ### 🛠️ Advanced Editing & Customization
 - **Manual Entry**: Create custom media cards directly without searching.
@@ -41,6 +42,7 @@ v0.1.19
 
 ### 🤖 Flexible AI Integration
 - **Bring Your Own AI**: Works with Moonshot/Kimi, OpenAI, DeepSeek, Qwen, Google, Mistral, MiMo, Zhipu (GLM), or any OpenAI-compatible custom endpoint.
+- **Per-Model Adaptation**: Model quirks are handled automatically — models that fix the sampling temperature, reject the parameter or tool calling, or spend their whole output budget on reasoning are detected from the provider's own response and adapted (re-tested per session, so unknown/new models work too).
 - **Optional Search Providers**: Plug in Google CSE, Serper or Yandex keys to sharpen update tracking, trending freshness and search context; AI-native web search is used automatically when the provider supports it.
 
 ## 🚀 Technical Highlights
