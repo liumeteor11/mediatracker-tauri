@@ -5,6 +5,7 @@ import { useCollectionStore } from '../../store/useCollectionStore';
 import { useCharacterStore } from '../../store/useCharacterStore';
 import { useAIStore } from '../../store/useAIStore';
 import { distillCharacters } from '../../services/characterService';
+import { describeAIError } from '../../services/aiService';
 import { MediaItem, MediaType } from '../../types/types';
 
 interface DistillModalProps {
@@ -90,7 +91,11 @@ export const DistillModal: React.FC<DistillModalProps> = ({ isOpen, onClose, onD
     } catch (e: any) {
       console.error('Distillation failed', e);
       const msg = String(e?.message || e || '');
+      const { auth, detail } = describeAIError(e);
       if (msg.includes('empty-ai-response')) setError(t('characters.error_no_ai'));
+      else if (auth) setError(t('characters.error_key_rejected'));
+      else if (msg.includes('no-json-array') || msg.includes('no-characters')) setError(t('characters.error_bad_output'));
+      else if (detail) setError(t('characters.distill_failed_detail', { detail: detail.slice(0, 180) }));
       else setError(t('characters.distill_failed'));
     } finally {
       setIsDistilling(false);

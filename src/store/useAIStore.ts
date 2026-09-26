@@ -16,6 +16,8 @@ export type SearchProvider = 'google' | 'serper' | 'yandex' | 'duckduckgo';
 interface AIConfigState {
   provider: AIProvider;
   apiKey: string;
+  /** Provider the stored key was last saved with; used to flag provider switches that invalidate it. */
+  apiKeyProvider: AIProvider | '';
   model: string;
   baseUrl: string;
   temperature: number;
@@ -102,6 +104,7 @@ export const useAIStore = create<AIConfigState>()(
     (set, get) => ({
       provider: 'moonshot',
       apiKey: '', // Stores encrypted key
+      apiKeyProvider: '',
       model: 'kimi-k3',
       baseUrl: 'https://api.moonshot.cn/v1',
       temperature: 0.7,
@@ -255,8 +258,13 @@ Ensure data is accurate.`,
           return url.trim().replace(/[\s)]+$/g, '').replace(/^"+|"+$/g, '').replace(/^'+|'+$/g, '');
         };
         
-        // Encrypt keys if they are being updated
-        if (config.apiKey) updates.apiKey = encrypt(config.apiKey);
+        // Encrypt keys if they are being updated. An explicitly empty key clears
+        // it (and the provider it was saved for); keys are per provider, so a
+        // provider switch does not silently re-use the previous one.
+        if (typeof config.apiKey !== 'undefined') {
+          updates.apiKey = config.apiKey ? encrypt(config.apiKey) : '';
+          updates.apiKeyProvider = config.apiKey ? (config.provider ?? state.provider) : '';
+        }
         if (config.googleSearchApiKey) updates.googleSearchApiKey = encrypt(config.googleSearchApiKey);
         if (config.serperApiKey) updates.serperApiKey = encrypt(config.serperApiKey);
         if (config.yandexSearchApiKey) updates.yandexSearchApiKey = encrypt(config.yandexSearchApiKey);
@@ -320,7 +328,7 @@ Ensure data is accurate.`,
     }),
     {
       name: 'ai-config-storage',
-      version: 7,
+      version: 8,
       storage: createJSONStorage(() => {
         try {
           if (typeof window !== 'undefined' && window.localStorage) {
@@ -413,6 +421,12 @@ Ensure data is accurate.`,
             if (typeof persistedState.enableSearchDiagnostics !== 'boolean') {
               persistedState.enableSearchDiagnostics = true;
             }
+            // v8: remember which provider the key belongs to. Legacy states keep
+            // '' = unknown, so the panel asks for a connection test instead of
+            // assuming the key matches the currently selected provider.
+            if (typeof persistedState.apiKeyProvider !== 'string') {
+              persistedState.apiKeyProvider = '';
+            }
             if (!('lastSearchDiagnostics' in persistedState)) {
               persistedState.lastSearchDiagnostics = null;
             }
@@ -428,6 +442,7 @@ Ensure data is accurate.`,
       partialize: (state) => ({ 
         provider: state.provider,
         apiKey: state.apiKey, 
+        apiKeyProvider: state.apiKeyProvider,
         model: state.model,
         baseUrl: state.baseUrl,
         temperature: state.temperature,

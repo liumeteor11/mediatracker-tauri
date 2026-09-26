@@ -10,6 +10,7 @@ import { toast } from 'react-toastify';
 import { useCharacterStore } from '../store/useCharacterStore';
 import { ChatMessage, ChatSession } from '../types/character';
 import { compactSession, sendCharacterMessage } from '../services/characterService';
+import { describeAIError } from '../services/aiService';
 import { v4 as uuidv4 } from 'uuid';
 
 const deriveTitle = (text: string): string => text.trim().replace(/\s+/g, ' ').slice(0, 24);
@@ -104,7 +105,11 @@ export const CharacterChatPage: React.FC = () => {
       updateSession({ ...working, messages: [...working.messages, assistantMessage] });
     } catch (e) {
       console.error('Character chat failed', e);
-      toast.error(t('character_chat.reply_failed'));
+      const { auth, detail } = describeAIError(e);
+      const messageKey = auth ? 'character_chat.reply_failed_auth'
+        : detail.includes('empty-ai-response') ? 'character_chat.reply_empty'
+        : 'character_chat.reply_failed';
+      toast.error(t(messageKey));
     } finally {
       setStreamText('');
       setPending(false);

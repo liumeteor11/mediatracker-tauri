@@ -34,13 +34,18 @@ export const AIConfigPanel: React.FC = () => {
   ];
 
   const { 
-    provider, apiKey, model, baseUrl, temperature, maxTokens, systemPrompt,
+    provider, apiKey, apiKeyProvider, model, baseUrl, temperature, maxTokens, systemPrompt,
     enableSearch, searchProvider, googleSearchCx, yandexSearchLogin,
     omdbApiKey, tmdbApiKey, bangumiToken, enableTmdb, enableBangumi,
     enableNetworking, reasoningEffort, enableTrending,
     useSystemProxy, proxyProtocol, proxyHost, proxyPort, proxyUsername,
     setProvider, setConfig, getDecryptedApiKey, getDecryptedGoogleKey, getDecryptedSerperKey, getDecryptedYandexKey, getDecryptedOmdbKey, getDecryptedTmdbKey, getDecryptedBangumiToken, getProxyUrl
   } = useAIStore();
+
+  const providerLabel = (value: string) => PROVIDER_OPTIONS.find(opt => opt.value === value)?.label || value;
+  // Keys are issued per provider: a key saved under another provider (or left
+  // over from a provider switch) is the usual reason calls start failing with 401.
+  const keyProviderMismatch = !!apiKey && apiKeyProvider !== provider;
 
   const [localKey, setLocalKey] = useState(getDecryptedApiKey());
   const [localGoogleKey, setLocalGoogleKey] = useState(getDecryptedGoogleKey());
@@ -320,6 +325,10 @@ export const AIConfigPanel: React.FC = () => {
                 type={showKey ? "text" : "password"} 
                 value={localKey}
                 onChange={(e) => setLocalKey(e.target.value)}
+                onBlur={() => {
+                  const next = localKey.trim();
+                  if (next !== getDecryptedApiKey()) setConfig({ apiKey: next });
+                }}
                 className="w-full px-4 py-2 pr-10 rounded-lg border bg-theme-bg border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent outline-none"
                 placeholder={t('ai_config.api_key_placeholder') || "sk-..."}
               />
@@ -363,6 +372,16 @@ export const AIConfigPanel: React.FC = () => {
                 </button>
               </div>
             </div>
+            {keyProviderMismatch && (
+              <div className="mt-2 flex items-start gap-2 p-2 rounded-lg bg-yellow-500/10 text-yellow-600 dark:text-yellow-500 text-xs">
+                <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                <span>
+                  {apiKeyProvider
+                    ? t('ai_config.key_provider_mismatch', { saved: providerLabel(apiKeyProvider), current: providerLabel(provider) })
+                    : t('ai_config.key_provider_unverified', { current: providerLabel(provider) })}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
