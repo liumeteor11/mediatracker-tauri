@@ -88,4 +88,12 @@ Push a tag starting with `v` (e.g., `v0.1.16`) to automatically trigger the buil
 - **No Tracking**: We do not track your search history or collection data.
 
 ## 📄 License
-This project is for personal learning and usage. Please add an appropriate license if you plan to distribute it publicly.
+Licensed under the [GNU Affero General Public License v3.0 only](LICENSE) (AGPL-3.0-only): free to use, study, share and modify — including commercially — as long as derivative works and network services built on it are released under the same license.
+
+**Need to ship it closed-source or offer it as a paid service?** A separate [commercial license](COMMERCIAL.md) is available: open an issue on the repository to request one.
+
+Third-party dependencies keep their own licenses (mostly MIT / Apache-2.0).
+
+**Commercial use is not permitted without a separate license** — open an issue on the repository to request one.
+
+Third-party dependencies keep their own licenses (mostly MIT / Apache-2.0).
