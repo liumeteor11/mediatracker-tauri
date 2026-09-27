@@ -1967,11 +1967,23 @@ export const callAIStream = async (
     let lastError: any = null;
     let temperatureAdjusted = false;
 
+    /** Transient failures worth another try before giving up on the reply. */
+    const isTransientStreamError = (e: any): boolean => {
+        const status = Number(e?.status || e?.response?.status || 0);
+        const msg = String(e?.message || e || '');
+        if (status === 429 || (status >= 500 && status < 600)) return true;
+        if (e?.name === 'APIConnectionError' || e?.name === 'APIConnectionTimeoutError') return true;
+        return /429|rate limit|too many requests|5\d\d|service unavailable|overloaded|timeout|timed out|fetch failed|failed to fetch|connection (error|reset|closed)|network error|econnreset|socket hang up|stream interrupted|error decoding|incomplete message|unexpected eof|broken pipe|aborted/i.test(msg);
+    };
+
     for (let keyIndex = 0; keyIndex < keyList.length; keyIndex++) {
         const effApiKey = keyList[keyIndex];
-        // The same key may be retried once after the temperature policy is learned.
+        // The same key may be retried after the temperature policy is learned or
+        // after a transient provider failure (a single-key setup used to fail the
+        // whole reply on the first 429/network blip).
         let keyExhausted = false;
-        for (let attempt = 0; attempt < 2 && !keyExhausted; attempt++) {
+        let streamRetries = 0;
+        for (let attempt = 0; attempt < 4 && !keyExhausted; attempt++) {
             let streamStarted = false;
             let full = '';
 
@@ -2041,9 +2053,31 @@ export const callAIStream = async (
                     effTemperature = temperatureRequirement.kind === 'value' ? temperatureRequirement.value : undefined;
                     continue;
                 }
+                // Transient provider trouble (429 / 5xx / network) gets the same
+                // backoff treatment the non-streaming path already had.
+                if (!streamStarted && streamRetries < 2 && isTransientStreamError(e)) {
+                    streamRetries++;
+                    const delay = 1000 * Math.pow(2, streamRetries - 1);
+                    console.warn(`AI stream failed (${String(e?.message || e).slice(0, 120)}), retrying in ${delay}ms`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    continue;
+                }
                 // A key rotation is only safe before the first delta reached the UI;
                 // afterwards the consumer already rendered partial output.
                 const msg = String(e?.message || e || '');
+                try {
+                    useAIStore.getState().appendLog({
+                        id: uuidv4(),
+                        ts: Date.now(),
+                        channel: 'ai',
+                        provider: effProvider,
+                        model,
+                        baseURL: finalBaseURL,
+                        request: { messages, temperature: effTemperature, stream: true },
+                        response: { error: msg.slice(0, 400) },
+                        durationMs: 0,
+                    });
+                } catch {}
                 const retryable = !streamStarted && (msg.includes('401') || msg.includes('429') || msg.includes('API Error'));
                 if (retryable && keyIndex < keyList.length - 1) {
                     keyExhausted = true;
@@ -2755,16 +2789,22 @@ export const getSearchSnippets = async (query: string): Promise<string> => {
                         const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${googleSearchCx}&q=${encodeURIComponent(query)}&num=3`;
                         try {
                             await apiLimiter.acquire();
-                            const res = await fetchWithTimeout(url, { timeoutMs: 8000 });
-                            apiLimiter.release();
-                            if (res.ok) {
-                                const data = await res.json();
-                                if (data.items) {
-                                    return data.items.map((i: any) => i.snippet || i.title).join('\n');
+                            try {
+                                const res = await fetchWithTimeout(url, { timeoutMs: 8000 });
+                                if (res.ok) {
+                                    const data = await res.json();
+                                    if (data.items) {
+                                        return data.items.map((i: any) => i.snippet || i.title).join('\n');
+                                    }
                                 }
+                            } finally {
+                                // Release exactly once: the old code released here *and*
+                                // in the catch, leaking permits and quietly raising the
+                                // concurrency limit on every failure.
+                                apiLimiter.release();
                             }
-                        } catch (e) { 
-                            apiLimiter.release();
+                        } catch (e) {
+                            console.warn('Search snippet lookup failed', e);
                         }
                     }
                 }

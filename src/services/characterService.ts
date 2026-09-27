@@ -645,9 +645,18 @@ export const sendCharacterMessage = async (
   onDelta?: (text: string) => void
 ): Promise<string> => {
   const messages = buildChatRequestMessages(character, session);
-  const reply = await callAIStream(messages, CHAT_TEMPERATURE, {
-    onDelta: onDelta || (() => {}),
-  });
+  let reply = '';
+  try {
+    reply = await callAIStream(messages, CHAT_TEMPERATURE, {
+      onDelta: onDelta || (() => {}),
+    });
+  } catch (e) {
+    // Streaming is the nicer path, not the only one: a provider that does not
+    // speak SSE (or a mid-flight hiccup) should still produce a reply. Search
+    // stays disabled — roleplay runs on the persona, not on the web.
+    console.warn('Streaming reply failed, retrying without streaming', e);
+    reply = await callAI(messages, CHAT_TEMPERATURE, { disableSearch: true });
+  }
   if (!reply || !reply.trim()) throw new Error('empty-ai-response');
   return reply.trim();
 };

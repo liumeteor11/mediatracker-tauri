@@ -108,8 +108,9 @@ export const CharacterChatPage: React.FC = () => {
       const { auth, detail } = describeAIError(e);
       const messageKey = auth ? 'character_chat.reply_failed_auth'
         : detail.includes('empty-ai-response') ? 'character_chat.reply_empty'
+        : detail ? 'character_chat.reply_failed_detail'
         : 'character_chat.reply_failed';
-      toast.error(t(messageKey));
+      toast.error(t(messageKey, { detail: detail.slice(0, 180) }));
     } finally {
       setStreamText('');
       setPending(false);
