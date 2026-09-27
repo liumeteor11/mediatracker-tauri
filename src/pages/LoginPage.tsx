@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -11,9 +11,15 @@ import { useTranslation } from 'react-i18next';
 export const LoginPage: React.FC = () => {
   const { t } = useTranslation();
   const { login, register } = useAuthStore();
+  const user = useAuthStore(s => s.user);
   const navigate = useNavigate();
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [serverError, setServerError] = useState<string | null>(null);
+
+  // Already signed in (including the web preview's local guest) -> go home.
+  useEffect(() => {
+    if (user) navigate('/', { replace: true });
+  }, [user, navigate]);
 
   const loginSchema = z.object({
     username: z.string().trim().min(3, t('login.username_error')),
