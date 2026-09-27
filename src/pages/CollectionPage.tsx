@@ -184,7 +184,7 @@ export const CollectionPage: React.FC = () => {
           );
           
           if (itemsToRepair.length > 0) {
-              toast.info(t('collection.repairing_metadata', { count: itemsToRepair.length }) || `Updating metadata for ${itemsToRepair.length} items...`);
+              toast.info(t('collection.repairing_metadata', { count: itemsToRepair.length , defaultValue: `Updating metadata for ${itemsToRepair.length} items...` }));
               
               // Process sequentially or in small batches
               for (const item of itemsToRepair) {
@@ -220,14 +220,14 @@ export const CollectionPage: React.FC = () => {
           }
 
           if (updatedCount > 0 || repairedCount > 0) {
-              toast.success(t('collection.refresh_success', { updated: updatedCount, repaired: repairedCount }) || `Updated ${updatedCount} items, repaired ${repairedCount} items`);
+              toast.success(t('collection.refresh_success', { updated: updatedCount, repaired: repairedCount , defaultValue: `Updated ${updatedCount} items, repaired ${repairedCount} items` }));
           } else {
-              toast.info(t('collection.refresh_no_changes') || "No new updates found");
+              toast.info(t('collection.refresh_no_changes', { defaultValue: "No new updates found" }));
           }
 
       } catch (error) {
           console.error(error);
-          toast.error(t('collection.refresh_error') || "Failed to refresh collection");
+          toast.error(t('collection.refresh_error', { defaultValue: "Failed to refresh collection" }));
       } finally {
           setIsRefreshing(false);
       }
@@ -296,7 +296,7 @@ export const CollectionPage: React.FC = () => {
       const selected = collection.filter(i => selectedIds.includes(i.id) && i.id !== collectionInitiatorId);
       
       createCollection(initiator, selected);
-      toast.success(t('collection.created_success') || "Collection created!");
+      toast.success(t('collection.created_success', { defaultValue: "Collection created!" }));
       
       setSelectionMode(false);
       setCollectionInitiatorId(null);
@@ -327,7 +327,7 @@ export const CollectionPage: React.FC = () => {
   const handleConfirmEditCollection = () => {
       if (!editCollectionId) return;
       updateCollectionMembers(editCollectionId, editSelectedIds);
-      toast.success(t('collection.edit_saved') || "Collection updated");
+      toast.success(t('collection.edit_saved', { defaultValue: "Collection updated" }));
       handleCancelEditCollection();
   };
 
@@ -364,7 +364,7 @@ export const CollectionPage: React.FC = () => {
                 if (result) {
                     toast.success(t('collection.export_success'));
                 } else {
-                    toast.error(t('collection.export_error') || 'Export failed');
+                    toast.error(t('collection.export_error', { defaultValue: 'Export failed' }));
                 }
             }
         } catch (e) {
@@ -439,20 +439,20 @@ export const CollectionPage: React.FC = () => {
             <div>
                 {selectionMode ? (
                      <>
-                        <h1 className="text-3xl font-bold text-theme-accent">{t('collection.selection_mode') || "Selection Mode"}</h1>
-                        <p className="mt-1 text-theme-subtext">{t('collection.selection_hint') || "Select items to add to collection"}</p>
+                        <h1 className="text-3xl font-bold text-theme-accent">{t('collection.selection_mode', { defaultValue: "Selection Mode" })}</h1>
+                        <p className="mt-1 text-theme-subtext">{t('collection.selection_hint', { defaultValue: "Select items to add to collection" })}</p>
                      </>
                 ) : editMode ? (
                      <>
-                        <h1 className="text-3xl font-bold text-theme-accent">{t('collection.edit_mode') || "Edit Collection"}</h1>
-                        <p className="mt-1 text-theme-subtext">{t('collection.edit_hint') || "Select items to keep in this collection"}</p>
+                        <h1 className="text-3xl font-bold text-theme-accent">{t('collection.edit_mode', { defaultValue: "Edit Collection" })}</h1>
+                        <p className="mt-1 text-theme-subtext">{t('collection.edit_hint', { defaultValue: "Select items to keep in this collection" })}</p>
                      </>
                 ) : viewingCollectionId ? (
                      <>
                         <h1 className="text-3xl font-bold text-theme-accent">
                             {collection.find(i => i.id === viewingCollectionId)?.title || t('collection.collection_view')}
                         </h1>
-                        <p className="mt-1 text-theme-subtext">{t('collection.collection_view') || "Collection View"}</p>
+                        <p className="mt-1 text-theme-subtext">{t('collection.collection_view', { defaultValue: "Collection View" })}</p>
                      </>
                 ) : (
                      <>
@@ -502,7 +502,7 @@ export const CollectionPage: React.FC = () => {
                             ? "bg-theme-surface border-theme-border text-theme-subtext cursor-wait"
                             : "bg-theme-surface border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent"
                     )}
-                    title={t('collection.refresh_tooltip') || "Refresh collection & Fix metadata"}
+                    title={t('collection.refresh_tooltip', { defaultValue: "Refresh collection & Fix metadata" })}
                 >
                     <RefreshCw className={clsx("w-5 h-5", isRefreshing && "animate-spin")} />
                 </button>
@@ -511,7 +511,7 @@ export const CollectionPage: React.FC = () => {
                     <button
                         onClick={handleStartEditCollection}
                         className="p-2 rounded-lg border bg-theme-surface border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent transition-colors flex items-center justify-center"
-                        title={t('collection.edit_collection') || "Edit Collection"}
+                        title={t('collection.edit_collection', { defaultValue: "Edit Collection" })}
                     >
                         <Edit3 className="w-5 h-5" />
                     </button>
@@ -520,7 +520,7 @@ export const CollectionPage: React.FC = () => {
                 <button
                     onClick={() => setIsAddModalOpen(true)}
                     className="p-2 rounded-lg border bg-theme-surface border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent transition-colors flex items-center justify-center"
-                    title={t('collection.add_manual_tooltip') || "Add Manually"}
+                    title={t('collection.add_manual_tooltip', { defaultValue: "Add Manually" })}
                 >
                     <Plus className="w-5 h-5" />
                 </button>

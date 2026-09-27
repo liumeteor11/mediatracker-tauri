@@ -224,7 +224,7 @@ export const EditMediaModal: React.FC<EditMediaModalProps> = ({ item, onClose, o
             )}
           >
             <Info className="w-4 h-4" />
-            {t('edit_modal.tab_info') || 'Info'}
+            {t('edit_modal.tab_info', { defaultValue: 'Info' })}
           </button>
           <button
             onClick={() => setActiveTab('review')}
@@ -257,46 +257,46 @@ export const EditMediaModal: React.FC<EditMediaModalProps> = ({ item, onClose, o
           {activeTab === 'info' && (
              <div className="flex flex-col gap-4 h-full">
                 <div className="space-y-2">
-                    <label className="text-sm font-medium text-theme-subtext">{t('media_card.director_author') || 'Director / Author'}</label>
+                    <label className="text-sm font-medium text-theme-subtext">{t('media_card.director_author', { defaultValue: 'Director / Author' })}</label>
                     <input
                         type="text"
                         value={editDirector}
                         onChange={(e) => setEditDirector(e.target.value)}
                         className="w-full p-3 rounded-xl border bg-theme-surface border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent focus:border-transparent outline-none transition-all"
-                        placeholder={t('media_card.director_placeholder') || 'Enter director or author name...'}
+                        placeholder={t('media_card.director_placeholder', { defaultValue: 'Enter director or author name...' })}
                     />
                 </div>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                        <label className="text-sm font-medium text-theme-subtext">{t('media_card.release_date') || 'Release Date'}</label>
+                        <label className="text-sm font-medium text-theme-subtext">{t('media_card.release_date', { defaultValue: 'Release Date' })}</label>
                         <input
                             type="text"
                             value={editReleaseDate}
                             onChange={(e) => setEditReleaseDate(e.target.value)}
                             className="w-full p-3 rounded-xl border bg-theme-surface border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent focus:border-transparent outline-none transition-all"
-                            placeholder={t('media_card.release_date_placeholder') || 'e.g. 2023-07-21'}
+                            placeholder={t('media_card.release_date_placeholder', { defaultValue: 'e.g. 2023-07-21' })}
                         />
                     </div>
                     <div className="space-y-2">
-                        <label className="text-sm font-medium text-theme-subtext">{t('media_card.cast') || 'Cast & Crew'}</label>
+                        <label className="text-sm font-medium text-theme-subtext">{t('media_card.cast', { defaultValue: 'Cast & Crew' })}</label>
                         <input
                             type="text"
                             value={editCast}
                             onChange={(e) => setEditCast(e.target.value)}
                             className="w-full p-3 rounded-xl border bg-theme-surface border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent focus:border-transparent outline-none transition-all"
-                            placeholder={t('media_card.cast_placeholder') || 'Enter cast members, separated by commas...'}
+                            placeholder={t('media_card.cast_placeholder', { defaultValue: 'Enter cast members, separated by commas...' })}
                         />
                     </div>
                 </div>
 
                 <div className="space-y-2 flex-1 flex flex-col">
-                    <label className="text-sm font-medium text-theme-subtext">{t('media_card.description') || 'Description'}</label>
+                    <label className="text-sm font-medium text-theme-subtext">{t('media_card.description', { defaultValue: 'Description' })}</label>
                     <textarea
                         value={editDescription}
                         onChange={(e) => setEditDescription(e.target.value)}
                         className="w-full flex-1 p-4 rounded-xl border bg-theme-surface border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent focus:border-transparent outline-none resize-none leading-relaxed"
-                        placeholder={t('media_card.description_placeholder') || 'Enter plot summary or description...'}
+                        placeholder={t('media_card.description_placeholder', { defaultValue: 'Enter plot summary or description...' })}
                     />
                 </div>
              </div>

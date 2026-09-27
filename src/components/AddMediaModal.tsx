@@ -27,7 +27,7 @@ export const AddMediaModal: React.FC<AddMediaModalProps> = ({ onClose }) => {
         e.preventDefault();
         
         if (!title.trim()) {
-            toast.error(t('add_modal.title_required') || 'Title is required');
+            toast.error(t('add_modal.title_required', { defaultValue: 'Title is required' }));
             return;
         }
 
@@ -49,7 +49,7 @@ export const AddMediaModal: React.FC<AddMediaModalProps> = ({ onClose }) => {
         };
 
         addToCollection(newItem, CollectionCategory.TO_WATCH);
-        toast.success(t('add_modal.success') || 'Added successfully');
+        toast.success(t('add_modal.success', { defaultValue: 'Added successfully' }));
         onClose();
     };
 
@@ -59,7 +59,7 @@ export const AddMediaModal: React.FC<AddMediaModalProps> = ({ onClose }) => {
                 {/* Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-theme-border bg-theme-bg">
                     <h2 className="text-xl font-bold text-theme-accent">
-                        {t('add_modal.title') || 'Add New Item'}
+                        {t('add_modal.title', { defaultValue: 'Add New Item' })}
                     </h2>
                     <button onClick={onClose} className="p-2 rounded-full hover:bg-theme-surface transition-colors">
                         <X className="w-6 h-6 text-theme-subtext" />
@@ -73,21 +73,21 @@ export const AddMediaModal: React.FC<AddMediaModalProps> = ({ onClose }) => {
                         <div className="md:col-span-2 space-y-2">
                             <label className="text-sm font-medium text-theme-subtext flex items-center gap-2">
                                 <Type className="w-4 h-4" />
-                                {t('media_card.title') || 'Title'} <span className="text-red-500">*</span>
+                                {t('media_card.title', { defaultValue: 'Title' })} <span className="text-red-500">*</span>
                             </label>
                             <input
                                 type="text"
                                 value={title}
                                 onChange={(e) => setTitle(e.target.value)}
                                 className="w-full p-3 rounded-xl border bg-theme-surface border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent focus:border-transparent outline-none transition-all"
-                                placeholder={t('add_modal.title_placeholder') || 'Enter title...'}
+                                placeholder={t('add_modal.title_placeholder', { defaultValue: 'Enter title...' })}
                                 autoFocus
                             />
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium text-theme-subtext flex items-center gap-2">
                                 <Tag className="w-4 h-4" />
-                                {t('media_card.type') || 'Type'}
+                                {t('media_card.type', { defaultValue: 'Type' })}
                             </label>
                             <select
                                 value={type}
@@ -106,20 +106,20 @@ export const AddMediaModal: React.FC<AddMediaModalProps> = ({ onClose }) => {
                         <div className="space-y-2">
                             <label className="text-sm font-medium text-theme-subtext flex items-center gap-2">
                                 <User className="w-4 h-4" />
-                                {t('add_modal.director_label') || 'Director / Author'}
+                                {t('add_modal.director_label', { defaultValue: 'Director / Author' })}
                             </label>
                             <input
                                 type="text"
                                 value={director}
                                 onChange={(e) => setDirector(e.target.value)}
                                 className="w-full p-3 rounded-xl border bg-theme-surface border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent focus:border-transparent outline-none transition-all"
-                                placeholder={t('add_modal.director_placeholder') || 'e.g. Christopher Nolan'}
+                                placeholder={t('add_modal.director_placeholder', { defaultValue: 'e.g. Christopher Nolan' })}
                             />
                         </div>
                         <div className="space-y-2">
                             <label className="text-sm font-medium text-theme-subtext flex items-center gap-2">
                                 <Calendar className="w-4 h-4" />
-                                {t('add_modal.year_label') || 'Year'}
+                                {t('add_modal.year_label', { defaultValue: 'Year' })}
                             </label>
                             <input
                                 type="text"
@@ -135,7 +135,7 @@ export const AddMediaModal: React.FC<AddMediaModalProps> = ({ onClose }) => {
                     <div className="space-y-2">
                         <label className="text-sm font-medium text-theme-subtext flex items-center gap-2">
                             <LinkIcon className="w-4 h-4" />
-                            {t('add_modal.poster_url_label') || 'Poster URL'}
+                            {t('add_modal.poster_url_label', { defaultValue: 'Poster URL' })}
                         </label>
                         <input
                             type="url"
@@ -145,7 +145,7 @@ export const AddMediaModal: React.FC<AddMediaModalProps> = ({ onClose }) => {
                             placeholder="https://..."
                         />
                         <p className="text-xs text-theme-subtext opacity-70">
-                            {t('add_modal.poster_hint') || 'Leave empty to use a generated placeholder.'}
+                            {t('add_modal.poster_hint', { defaultValue: 'Leave empty to use a generated placeholder.' })}
                         </p>
                     </div>
 
@@ -153,14 +153,14 @@ export const AddMediaModal: React.FC<AddMediaModalProps> = ({ onClose }) => {
                     <div className="space-y-2">
                         <label className="text-sm font-medium text-theme-subtext flex items-center gap-2">
                             <Info className="w-4 h-4" />
-                            {t('add_modal.description_label') || 'Description'}
+                            {t('add_modal.description_label', { defaultValue: 'Description' })}
                         </label>
                         <textarea
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
                             rows={4}
                             className="w-full p-3 rounded-xl border bg-theme-surface border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent focus:border-transparent outline-none resize-none"
-                            placeholder={t('add_modal.description_placeholder') || 'Enter a brief summary...'}
+                            placeholder={t('add_modal.description_placeholder', { defaultValue: 'Enter a brief summary...' })}
                         />
                     </div>
                 </form>
@@ -178,7 +178,7 @@ export const AddMediaModal: React.FC<AddMediaModalProps> = ({ onClose }) => {
                         className="px-6 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors bg-theme-accent text-theme-bg hover:bg-theme-accent-hover"
                     >
                         <Save className="w-4 h-4" />
-                        {t('common.add') || 'Add Item'}
+                        {t('common.add', { defaultValue: 'Add Item' })}
                     </button>
                 </div>
             </div>

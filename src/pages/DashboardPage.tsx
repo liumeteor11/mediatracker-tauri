@@ -450,7 +450,7 @@ export const DashboardPage: React.FC = () => {
                 <button 
                     onClick={() => setShowLogs(false)} 
                     className="absolute top-4 right-4 p-1 rounded-md text-theme-subtext hover:bg-theme-bg hover:text-theme-text transition-colors"
-                    title={t('common.close') || '关闭'}
+                    title={t('common.close', { defaultValue: '关闭' })}
                 >
                     <X className="w-5 h-5" />
                 </button>

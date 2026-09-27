@@ -254,7 +254,7 @@ export const SearchPage: React.FC = () => {
     const timeoutId = setTimeout(() => {
         // Check if this operation is still the active one and still loading
         if (isOpActive(opId) && useSearchStore.getState().searchLoading) {
-            toast.warn(t('search_page.search_taking_long') || "Search is taking longer than expected, please wait...");
+            toast.warn(t('search_page.search_taking_long', { defaultValue: "Search is taking longer than expected, please wait..." }));
         }
     }, 10000); // 10 seconds
 
@@ -499,7 +499,7 @@ export const SearchPage: React.FC = () => {
       // Removed translation logic as requested
       setConfig({ trendingPrompt: finalPrompt });
       setIsPromptModalOpen(false);
-      toast.success(t('common.save_success') || "Saved");
+      toast.success(t('common.save_success', { defaultValue: "Saved" }));
       // Reload trending with new prompt
       loadTrending(true);
   };

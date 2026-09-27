@@ -451,7 +451,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
                                 onStartCollection();
                             }}
                             className="p-2 rounded-lg bg-theme-bg border border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent transition-colors"
-                            title={t('collection.create_collection') || "Create Collection"}
+                            title={t('collection.create_collection', { defaultValue: "Create Collection" })}
                         >
                             <FolderPlus className="w-4 h-4" />
                         </button>

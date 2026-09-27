@@ -330,7 +330,7 @@ export const AIConfigPanel: React.FC = () => {
                   if (next !== getDecryptedApiKey()) setConfig({ apiKey: next });
                 }}
                 className="w-full px-4 py-2 pr-10 rounded-lg border bg-theme-bg border-theme-border text-theme-text focus:ring-2 focus:ring-theme-accent outline-none"
-                placeholder={t('ai_config.api_key_placeholder') || "sk-..."}
+                placeholder={t('ai_config.api_key_placeholder', { defaultValue: "sk-..." })}
               />
               <button 
                 type="button"
@@ -347,7 +347,7 @@ export const AIConfigPanel: React.FC = () => {
                   {t('ai_config.stored_locally')}
                 </p>
                 <p className="text-xs text-theme-subtext/70 italic">
-                  {t('ai_config.multi_key_hint') || "Support multiple keys separated by semicolons (;). Auto-switch on error."}
+                  {t('ai_config.multi_key_hint', { defaultValue: "Support multiple keys separated by semicolons (;). Auto-switch on error." })}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -712,7 +712,7 @@ export const AIConfigPanel: React.FC = () => {
                     <div>
                         <div className="text-sm text-theme-subtext mb-2 bg-theme-bg/30 p-3 rounded border border-theme-border flex items-start gap-2">
                             <Info className="w-4 h-4 mt-0.5 text-theme-accent" />
-                            <span>{t('ai_config.ddg_info') || "DuckDuckGo search does not require an API key."}</span>
+                            <span>{t('ai_config.ddg_info', { defaultValue: "DuckDuckGo search does not require an API key." })}</span>
                         </div>
                         <div className="flex justify-end">
                             <button onClick={handleTestSearch} disabled={isSearchTesting} className="text-xs px-3 py-1.5 rounded border border-theme-accent text-theme-accent hover:bg-theme-accent hover:text-white transition-colors disabled:opacity-50">
@@ -732,7 +732,7 @@ export const AIConfigPanel: React.FC = () => {
 
         {/* Metadata Sources */}
         <div className="bg-theme-bg/30 rounded-lg border border-theme-border p-3">
-            <h3 className="text-sm font-bold text-theme-text mb-3 uppercase tracking-wider">{t('ai_config.metadata_sources') || 'Metadata Sources'}</h3>
+            <h3 className="text-sm font-bold text-theme-text mb-3 uppercase tracking-wider">{t('ai_config.metadata_sources', { defaultValue: 'Metadata Sources' })}</h3>
             <div className="space-y-4">
                         {/* Bangumi Toggle */}
                         <div className="flex items-center justify-between">
@@ -755,7 +755,7 @@ export const AIConfigPanel: React.FC = () => {
                         </div>
                         {enableBangumi && (
                             <div className="pl-4 border-l-2 border-theme-border/50">
-                                <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.bangumi_token_label') || "Bangumi Access Token (Optional)"}</label>
+                                <label className="block text-sm font-medium text-theme-text mb-1">{t('ai_config.bangumi_token_label', { defaultValue: "Bangumi Access Token (Optional)" })}</label>
                                 <div className="relative">
                                     <input 
                                         type={showBangumiToken ? "text" : "password"} 
@@ -776,7 +776,7 @@ export const AIConfigPanel: React.FC = () => {
                                     <div className="flex flex-col gap-1">
                                         <p className="text-xs text-theme-subtext flex items-center gap-1">
                                             <Info className="w-3 h-3" />
-                                            {t('ai_config.bangumi_token_note') || "Required for higher rate limits"}
+                                            {t('ai_config.bangumi_token_note', { defaultValue: "Required for higher rate limits" })}
                                         </p>
                                         <a href="https://bangumi.tv/dev/app" target="_blank" rel="noreferrer" className="text-xs text-theme-accent hover:underline">
                                             {t('ai_config.get_bangumi_token')}
@@ -869,7 +869,7 @@ export const AIConfigPanel: React.FC = () => {
                                         {t('ai_config.omdb_key_optional_note')}
                                     </p>
                                     <a href="http://www.omdbapi.com/apikey.aspx" target="_blank" rel="noreferrer" className="text-xs text-theme-accent hover:underline">
-                                        {t('ai_config.get_omdb_key') || "Get OMDB API Key"}
+                                        {t('ai_config.get_omdb_key', { defaultValue: "Get OMDB API Key" })}
                                     </a>
                                 </div>
                                 <button onClick={handleTestOmdb} disabled={isOmdbTesting} className="text-xs px-3 py-1.5 rounded border border-theme-accent text-theme-accent hover:bg-theme-accent hover:text-white transition-colors disabled:opacity-50 flex-shrink-0 ml-2">

@@ -24,7 +24,7 @@ const showQuotaError = (msg: string) => {
     if (msg.includes("Quota Exceeded") || msg.includes("429")) {
         const now = Date.now();
         if (now - lastQuotaErrorTs > 60000) {
-            toast.error(i18n.t('ai_config.search_quota_exceeded') || "Google Search Quota Exceeded. Please check your API key billing/quota.");
+            toast.error(i18n.t('ai_config.search_quota_exceeded', { defaultValue: "Google Search Quota Exceeded. Please check your API key billing/quota." }));
             lastQuotaErrorTs = now;
         }
     }
