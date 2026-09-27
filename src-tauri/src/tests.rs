@@ -243,3 +243,21 @@ async fn test_search_with_key_rotation() {
     .expect("accepted key wins");
     assert!(items.is_empty());
 }
+
+#[test]
+fn test_ai_timeouts_allow_reasoning_models() {
+    // Reasoning models can think for minutes before the first byte, so the AI
+    // request budget must stay well above the old 120 s that killed desktop
+    // replies (and distillations) while the browser build succeeded.
+    assert!(
+        crate::AI_TOTAL_TIMEOUT_SECS >= 300,
+        "AI total timeout is {}s — reasoning-model replies need several minutes",
+        crate::AI_TOTAL_TIMEOUT_SECS
+    );
+    assert!(crate::AI_READ_TIMEOUT_SECS >= 60, "per-read guard must still catch stalls");
+    assert!(
+        crate::AI_READ_TIMEOUT_SECS <= crate::AI_TOTAL_TIMEOUT_SECS,
+        "the per-read guard cannot exceed the total budget"
+    );
+    assert!(crate::AI_CONNECT_TIMEOUT_SECS <= 60, "connects should fail fast");
+}

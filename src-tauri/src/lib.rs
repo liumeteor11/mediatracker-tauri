@@ -81,14 +81,24 @@ struct FetchPageConfig {
     use_system_proxy: Option<bool>,
 }
 
+/// AI request budget. Reasoning models (MiMo, Kimi K3, DeepSeek V4 …) can think
+/// for minutes before the first token, and a reply or a character distillation
+/// used to be killed at 120 s on the desktop while the browser build (OpenAI
+/// SDK, 10 min default) succeeded — hence "获取回复失败" only in the app.
+/// Connect and per-read stalls still fail fast; the total cap matches the SDK.
+const AI_CONNECT_TIMEOUT_SECS: u64 = 20;
+const AI_READ_TIMEOUT_SECS: u64 = 120;
+const AI_TOTAL_TIMEOUT_SECS: u64 = 600;
+
 fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) -> Option<Client> {
     if let Some(url) = proxy_url {
         if !url.is_empty() {
             let builder = Client::builder()
                 .tcp_nodelay(true)
                 .user_agent("MediaTrove/1.0")
-                .connect_timeout(Duration::from_secs(20))
-                .timeout(Duration::from_secs(120))
+                .connect_timeout(Duration::from_secs(AI_CONNECT_TIMEOUT_SECS))
+                .read_timeout(Duration::from_secs(AI_READ_TIMEOUT_SECS))
+                .timeout(Duration::from_secs(AI_TOTAL_TIMEOUT_SECS))
                 .proxy(reqwest::Proxy::all(url).ok()?);
             return builder.build().ok();
         }
@@ -101,8 +111,9 @@ fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) 
         let mut builder = Client::builder()
             .tcp_nodelay(true)
             .user_agent("MediaTrove/1.0")
-            .connect_timeout(Duration::from_secs(20))
-            .timeout(Duration::from_secs(120));
+            .connect_timeout(Duration::from_secs(AI_CONNECT_TIMEOUT_SECS))
+            .read_timeout(Duration::from_secs(AI_READ_TIMEOUT_SECS))
+            .timeout(Duration::from_secs(AI_TOTAL_TIMEOUT_SECS));
         let mut any = false;
         if let Some(a) = all {
             if !a.is_empty() {
@@ -149,8 +160,9 @@ fn client_with_proxy(proxy_url: Option<String>, use_system_proxy: Option<bool>) 
                         let mut builder = Client::builder()
                             .tcp_nodelay(true)
                             .user_agent("MediaTrove/1.0")
-                            .connect_timeout(Duration::from_secs(20))
-                            .timeout(Duration::from_secs(120));
+                            .connect_timeout(Duration::from_secs(AI_CONNECT_TIMEOUT_SECS))
+                            .read_timeout(Duration::from_secs(AI_READ_TIMEOUT_SECS))
+                            .timeout(Duration::from_secs(AI_TOTAL_TIMEOUT_SECS));
                         let mut have = false;
                         if let Some(s) = socks_u { if let Ok(p) = reqwest::Proxy::all(s) { builder = builder.proxy(p); have = true; } }
                         else {
@@ -1633,8 +1645,9 @@ pub fn run() {
                 .tcp_nodelay(true)
                 .user_agent("MediaTrove/1.0")
                 .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .timeout(std::time::Duration::from_secs(120))
+                .connect_timeout(std::time::Duration::from_secs(AI_CONNECT_TIMEOUT_SECS))
+                .read_timeout(std::time::Duration::from_secs(AI_READ_TIMEOUT_SECS))
+                .timeout(std::time::Duration::from_secs(AI_TOTAL_TIMEOUT_SECS))
                 .build()
                 .unwrap_or_else(|_| Client::new());
 
@@ -1644,8 +1657,9 @@ pub fn run() {
                 .user_agent("MediaTrove/1.0")
                 .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)))
                 .no_proxy() // <--- CRITICAL: Bypass system proxy
-                .connect_timeout(std::time::Duration::from_secs(5))
-                .timeout(std::time::Duration::from_secs(120))
+                .connect_timeout(std::time::Duration::from_secs(AI_CONNECT_TIMEOUT_SECS))
+                .read_timeout(std::time::Duration::from_secs(AI_READ_TIMEOUT_SECS))
+                .timeout(std::time::Duration::from_secs(AI_TOTAL_TIMEOUT_SECS))
                 .build()
                 .unwrap_or_else(|_| Client::new());
             
