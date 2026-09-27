@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { callAI, callAIStream, providerSupportsTools } from './aiService';
+import { callAI, callAIStream, describeAIError, providerSupportsTools } from './aiService';
 import { getTMDBDetails } from './tmdbService';
 import { MediaItem } from '../types/types';
 import {
@@ -32,12 +32,18 @@ import { useAIStore } from '../store/useAIStore';
 
 // Roleplay reads better a bit above the media-analysis default temperature.
 const CHAT_TEMPERATURE = 0.8;
+// Character-name suggestions: a short list, but thinking models still need
+// room for reasoning, hence an explicit budget plus the shared retry ladder.
+const SUGGEST_MAX_TOKENS = 4000;
 // A persona profile is a large JSON document, and thinking-only models spend
 // most of their completion budget on reasoning before emitting it — at the
 // default 2000 tokens Kimi K3 returns empty content with finish_reason=length.
+// Distillation therefore imposes no cap of its own (`maxTokens: 'auto'`) and
+// lets the provider's maximum apply; callAI still raises the budget if the
+// provider truncates and lowers it if the provider rejects the value.
 // Search stays on: profiles are grounded in web research about the work and the
 // character (plus TMDb credits and the user's extra material).
-const DISTILL_MAX_TOKENS = 8000;
+const DISTILL_MAX_TOKENS = 'auto' as const;
 // History window: nanobot-style newest-first budget (messages + chars).
 const HISTORY_MAX_MESSAGES = 40;
 const HISTORY_MAX_CHARS = 24000;
@@ -49,6 +55,22 @@ const MAX_CORRECTIONS = 50;
 
 const asStringArray = (v: any): string[] =>
   Array.isArray(v) ? v.map(x => String(x)).filter(s => s.trim().length > 0) : [];
+
+/**
+ * Models without tool definitions in scope sometimes answer with the tool call
+ * as text ("[{\"name\":\"web_search\",\"arguments\":{...}}]"). Those entries must
+ * never be mistaken for a character name.
+ */
+const TOOL_ECHO_NAMES = new Set(['web_search', 'websearch', 'search', 'websearchtool', 'tool', 'functions']);
+const looksLikeToolEcho = (name: string, raw?: any): boolean => {
+  const bare = String(name || '').trim().toLowerCase().replace(/^functions\./, '');
+  if (!bare) return true;
+  if (TOOL_ECHO_NAMES.has(bare)) return true;
+  // snake_case / dotted identifiers are tool names, not characters
+  if (/^[a-z][a-z0-9]*(_[a-z0-9]+)+$/.test(bare)) return true;
+  if (raw && typeof raw === 'object' && ('arguments' in raw || 'function' in raw || 'parameters' in raw)) return true;
+  return false;
+};
 
 const normalizeRelation = (v: any): CharacterRelation[] =>
   Array.isArray(v)
@@ -84,6 +106,8 @@ export const normalizeCharacterDraft = (raw: any, source: { title: string; media
   if (!raw || typeof raw !== 'object') return null;
   const name = String(raw.name || '').trim();
   if (!name) return null;
+  // A leaked tool call is not a character ("web_search" once became a profile).
+  if (looksLikeToolEcho(name, raw)) return null;
   const now = Date.now();
   return {
     id: uuidv4(),
@@ -216,6 +240,25 @@ const buildDistillUserPrompt = (item: MediaItem, opts: DistillOptions, creditLin
   return parts.join('\n\n');
 };
 
+/**
+ * Whether a search provider is usable right now: forcing a tool round with no
+ * credentials wastes a request and makes models echo the tool call back as text.
+ */
+const searchBackendConfigured = (): boolean => {
+  const {
+    searchProvider,
+    getDecryptedGoogleKey,
+    googleSearchCx,
+    getDecryptedSerperKey,
+    getDecryptedYandexKey,
+    yandexSearchLogin,
+  } = useAIStore.getState();
+  if (searchProvider === 'google') return !!(getDecryptedGoogleKey() && googleSearchCx);
+  if (searchProvider === 'serper') return !!getDecryptedSerperKey();
+  if (searchProvider === 'yandex') return !!(getDecryptedYandexKey() && yandexSearchLogin);
+  return true; // duckduckgo needs no credentials
+};
+
 /** Best-effort cast/character lines from TMDb credits when the item is linked. */
 const gatherCreditLines = async (item: MediaItem): Promise<string[]> => {
   if (!item.tmdbId || !item.tmdbMediaType) return [];
@@ -241,16 +284,25 @@ const gatherCreditLines = async (item: MediaItem): Promise<string[]> => {
 const extractJsonArray = (text: string): any[] | null => {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   const candidate = fenced ? fenced[1] : text;
+  const collect = (parsed: any): any[] | null => {
+    if (!Array.isArray(parsed)) return null;
+    // Drop leaked tool calls ("[{\"name\":\"web_search\",\"arguments\":…}]") so they
+    // can never become a character profile.
+    const kept = parsed.filter(item => item && typeof item === 'object' && !looksLikeToolEcho(String(item.name || ''), item));
+    return kept.length > 0 ? kept : null;
+  };
   const match = candidate.match(/\[\s*\{[\s\S]*\}\s*\]/);
   if (match) {
     try {
-      return JSON.parse(match[0]);
+      const parsed = collect(JSON.parse(match[0]));
+      if (parsed) return parsed;
     } catch {}
   }
   const single = candidate.match(/\{\s*"name"[\s\S]*\}/);
   if (single) {
     try {
-      return [JSON.parse(single[0])];
+      const parsed = collect([JSON.parse(single[0])]);
+      if (parsed) return parsed;
     } catch {}
   }
   return null;
@@ -286,13 +338,33 @@ export const distillCharacters = async (
   const messages = [
     { role: 'system', content: buildDistillSystemPrompt(language) },
     // The [Research] directive is only honest for providers that actually get
-    // the web_search tool injected (see providerSupportsTools).
-    { role: 'user', content: buildDistillUserPrompt(item, { ...opts, maxCharacters }, creditLines, sameSource.map(c => c.name), providerSupportsTools(useAIStore.getState().provider)) },
+    // the web_search tool injected (see providerSupportsTools) and only useful
+    // when a search provider is configured.
+    { role: 'user', content: buildDistillUserPrompt(item, { ...opts, maxCharacters }, creditLines, sameSource.map(c => c.name), providerSupportsTools(useAIStore.getState().provider) && searchBackendConfigured()) },
   ];
 
-  const text = await callAI(messages, 0.3, { maxTokens: DISTILL_MAX_TOKENS, forceSearch: true });
-  if (!text) throw new Error('empty-ai-response');
-  const rawList = extractJsonArray(text);
+  // Attempt 1 searches when possible; if the model answers with something we
+  // cannot read (typically a leaked tool call), retry once with no tools in
+  // scope and an explicit format nudge before giving up.
+  const attempt = async (withSearch: boolean): Promise<any[] | null> => {
+    const search = withSearch && searchBackendConfigured();
+    const text = await callAI(messages, 0.3, {
+      maxTokens: DISTILL_MAX_TOKENS,
+      forceSearch: search,
+      disableSearch: !search,
+    });
+    if (!text) throw new Error('empty-ai-response');
+    return extractJsonArray(text);
+  };
+
+  let rawList = await attempt(true);
+  if (!rawList) {
+    messages.push({
+      role: 'user',
+      content: 'Output only the JSON array of character profiles now, using exactly the fields listed above. Do not call or name any tool, and do not add commentary.',
+    });
+    rawList = await attempt(false);
+  }
   if (!rawList || rawList.length === 0) throw new Error('no-json-array');
 
   const source = { title: item.title, mediaId: item.id, type: String(item.type) };
@@ -324,6 +396,114 @@ export const distillCharacters = async (
 
   if (affected.length === 0) throw new Error('no-characters');
   return { characters: affected, created, updated };
+};
+
+export interface CharacterNameSuggestions {
+  /** Character names already known from the work's credits (no AI call needed). */
+  fromCredits: string[];
+  /** Names the model found for this work; empty when it returned nothing usable. */
+  fromAI: string[];
+}
+
+/** Lookups already paid for, keyed by work title + language + limit. */
+const nameSuggestionCache = new Map<string, CharacterNameSuggestions>();
+
+/** Tolerant read of a name list from model output (JSON array, fenced or not). */
+const extractNameList = (text: string): string[] => {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const candidate = fenced ? fenced[1] : text;
+  const arrayMatch = candidate.match(/\[[\s\S]*\]/);
+  if (arrayMatch) {
+    try {
+      const parsed = JSON.parse(arrayMatch[0]);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map(x => (typeof x === 'string' ? x : String(x?.name || x?.character || '')))
+          .map(s => s.trim())
+          .filter(s => s.length > 0 && s.length <= 40 && !looksLikeToolEcho(s));
+      }
+    } catch {}
+  }
+  // Fallback: one name per line, stripped of bullets and numbering.
+  return candidate
+    .split(/\r?\n|[、,；;]/)
+    .map(s => s.replace(/^[\s\-*•\d.)、]+/, '').trim())
+    .filter(s => s.length > 0 && s.length <= 40);
+};
+
+/** Character names we already know from the work's TMDb credits ("Actor as Character"). */
+const creditCharacterNames = async (item: MediaItem): Promise<string[]> => {
+  const lines = await gatherCreditLines(item);
+  return lines
+    .map(line => line.split(/\s+as\s+/i)[1] || '')
+    .map(name => name.trim())
+    .filter(name => name.length > 0);
+};
+
+/**
+ * Suggest characters for a work: TMDb credits when the item is linked, plus the
+ * model's own list (with web search available for works it may not know).
+ * Results are cached per work/language so reopening the dialog is free; pass
+ * `refresh: true` (the "search again" button) to force a fresh lookup.
+ * Throws when the AI call fails so the caller can surface the real reason.
+ */
+export const suggestCharacterNames = async (
+  item: MediaItem,
+  opts: { language?: 'zh' | 'en'; limit?: number; refresh?: boolean } = {}
+): Promise<CharacterNameSuggestions> => {
+  const language: 'zh' | 'en' = opts.language || 'zh';
+  const limit = Math.min(20, Math.max(3, opts.limit || 12));
+  const cacheKey = `${item.title.trim().toLowerCase()}|${language}|${limit}`;
+  if (!opts.refresh) {
+    const cached = nameSuggestionCache.get(cacheKey);
+    if (cached) return cached;
+  }
+  const fromCredits = await creditCharacterNames(item);
+
+  const hasSearchBackend = searchBackendConfigured();
+
+  const parts: string[] = [];
+  parts.push(`[Work] ${item.title} (${item.type}${item.releaseDate ? `, ${item.releaseDate}` : ''}${item.directorOrAuthor ? `, by ${item.directorOrAuthor}` : ''})`);
+  if (item.description) parts.push(`[Synopsis] ${item.description}`);
+  if (fromCredits.length > 0) parts.push(`[Known characters] ${fromCredits.join(', ')}`);
+  parts.push(`[Task] List the main characters of this work — named people/roles only, protagonists first, then important supporting characters, at most ${limit}. Exclude objects, gadgets, places, organizations, one-off extras, and anything you are not confident actually appears in the work.${hasSearchBackend ? ' Use the web_search tool when you are not certain about this work.' : ''}`);
+  parts.push('Reply with a JSON array of character-name strings only — no markdown, no commentary, no descriptions, and never a tool call, function name or object.');
+  parts.push(language === 'en'
+    ? 'Keep the names as they appear in the original work (non-English names stay in their original script).'
+    : '角色名保留原文写法（中文作品用中文名）。');
+
+  const systemPrompt = 'You are a media encyclopedia. You answer only with a JSON array of character names.';
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: parts.join('\n\n') },
+  ];
+
+  const title = item.title.trim().toLowerCase();
+  const cleanNames = (raw: string): string[] => {
+    const seen = new Set<string>();
+    return extractNameList(raw).filter(name => {
+      const key = name.toLowerCase();
+      if (key === title || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, limit);
+  };
+
+  let fromAI = cleanNames(await callAI(messages, 0.2, { maxTokens: SUGGEST_MAX_TOKENS, forceSearch: hasSearchBackend, disableSearch: !hasSearchBackend }));
+  if (fromAI.length === 0) {
+    // Nothing usable — typically the model answered with a leaked tool call.
+    // Ask once more with no tools in scope and an explicit format nudge.
+    messages.push({ role: 'user', content: 'Output only the JSON array of character-name strings now. Do not call or name any tool.' });
+    fromAI = cleanNames(await callAI(messages, 0.2, { maxTokens: SUGGEST_MAX_TOKENS, disableSearch: true }));
+  }
+
+  const result: CharacterNameSuggestions = { fromCredits: fromCredits.slice(0, limit), fromAI };
+  if (nameSuggestionCache.size >= 50) {
+    const oldest = nameSuggestionCache.keys().next().value;
+    if (oldest) nameSuggestionCache.delete(oldest);
+  }
+  nameSuggestionCache.set(cacheKey, result);
+  return result;
 };
 
 /** Layered character chat system prompt (nanobot-style sections joined by ---). */
@@ -470,6 +650,17 @@ export const sendCharacterMessage = async (
   });
   if (!reply || !reply.trim()) throw new Error('empty-ai-response');
   return reply.trim();
+};
+
+/** i18n key (+ params) describing why a distillation failed, for toasts/UI. */
+export const distillErrorKey = (e: unknown): { key: string; params?: Record<string, unknown> } => {
+  const msg = String((e as any)?.message || e || '');
+  const { auth, detail } = describeAIError(e);
+  if (msg.includes('empty-ai-response')) return { key: 'characters.error_no_ai' };
+  if (auth) return { key: 'characters.error_key_rejected' };
+  if (msg.includes('no-json-array') || msg.includes('no-characters')) return { key: 'characters.error_bad_output' };
+  if (detail) return { key: 'characters.distill_failed_detail', params: { detail: detail.slice(0, 180) } };
+  return { key: 'characters.distill_failed' };
 };
 
 /** Add a correction (distilly correction layer), capped and merged by newest-first preference. */

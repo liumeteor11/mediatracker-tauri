@@ -1394,6 +1394,23 @@ const isToolsUnsupportedError = (e: any): boolean => {
     return /unsupported|not supported|does not support|unknown (parameter|field|argument)|invalid (parameter|field|argument)/i.test(msg);
 };
 
+/**
+ * Read a provider's complaint about the token budget: either its own output
+ * limit ("max_tokens must be <= 16384") or the total context window, which the
+ * prompt already consumes.
+ */
+const parseTokenLimitRequirement = (e: any): { limit?: number; shrink?: boolean } | null => {
+    const msg = String(e?.message || e?.error?.message || '');
+    if (!/max_?tokens|max_?completion_?tokens|context length|output (?:limit|length)/i.test(msg)) return null;
+    if (/context length|too many tokens|prompt is too long/i.test(msg)) return { shrink: true };
+    const m = msg.match(/(?:must be|should be|less than or equal to|<=|≤)\s*(\d+)/i)
+        || msg.match(/maximum (?:output|completion|max_?tokens)[^\d]{0,24}(\d+)/i)
+        || msg.match(/(\d+)\s*(?:is the maximum|max(?:imum)? (?:allowed|supported|output))/i);
+    if (!m) return null;
+    const limit = Number(m[1]);
+    return Number.isFinite(limit) && limit > 0 ? { limit } : null;
+};
+
 /** Room a thinking model needs before it can write anything: it reasons first, then answers. */
 const REASONING_TOKEN_FLOOR = 8000;
 const MAX_TOKEN_CEILING = 32000;
@@ -1403,7 +1420,7 @@ const TOOL_CALLING_PROVIDERS: AIProvider[] = ['moonshot', 'deepseek', 'openai', 
 
 export const providerSupportsTools = (provider: AIProvider): boolean => TOOL_CALLING_PROVIDERS.includes(provider);
 
-export const callAI = async (messages: any[], temperature: number = 0.7, options: { forceSearch?: boolean; disableSearch?: boolean; maxTokens?: number; configOverride?: { baseURL?: string; apiKey?: string; model?: string; provider?: AIProvider } } = {}): Promise<string> => {
+export const callAI = async (messages: any[], temperature: number = 0.7, options: { forceSearch?: boolean; disableSearch?: boolean; maxTokens?: number | 'auto'; configOverride?: { baseURL?: string; apiKey?: string; model?: string; provider?: AIProvider } } = {}): Promise<string> => {
     const state = useAIStore.getState();
     const { 
         provider,
@@ -1473,7 +1490,11 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
     // entirely (see modelCatalog + the runtime-learned policy above).
     const caps = getModelCapabilities(effProvider, model);
     let effTemperature = resolveTemperature(effProvider, model, temperature);
-    let effMaxTokens = options.maxTokens ?? maxTokens;
+    // `'auto'` sends no cap at all (the provider's own maximum applies) — used by
+    // callers like distillation that must not be cut short by our setting.
+    let effMaxTokens: number | undefined = options.maxTokens === 'auto'
+        ? undefined
+        : (options.maxTokens ?? maxTokens);
 
     // Proxy handling for Web Mode to avoid CORS (only in local dev)
     const isLocalDev = typeof window !== 'undefined' && /^https?:\/\/(localhost|127\.|0\.0\.0\.0)/.test(window.location.origin || '');
@@ -1582,6 +1603,8 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
                 let emptyAnswerNudged = false;
                 // Truncated answers (reasoning ate the whole budget) get a bigger one.
                 let budgetRaises = 0;
+                // Providers may cap the budget themselves ("max_tokens must be <= N").
+                let tokenLimitAdjusted = false;
                 let currentMessages = [...messages]; // Clone for each key retry to start fresh conversation state if needed? 
                                                      // Actually we probably want to resume conversation, but if a key fails mid-way, 
                                                      // the conversation state in 'currentMessages' might be dirty if we mutated it?
@@ -1646,6 +1669,17 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
                             if (toolsAllowed && !toolsDisabled && isToolsUnsupportedError(apiError)) {
                                 toolsAllowed = false;
                                 learnedNoTools.add(modelPolicyKey(effProvider, model));
+                                continue;
+                            }
+
+                            // The provider may cap the budget we asked for (or the
+                            // prompt left no room); retry with a value it accepts.
+                            const tokenLimit = parseTokenLimitRequirement(apiError);
+                            if (tokenLimit && !tokenLimitAdjusted) {
+                                tokenLimitAdjusted = true;
+                                effMaxTokens = tokenLimit.shrink
+                                    ? Math.max(4000, Math.floor((effMaxTokens ?? MAX_TOKEN_CEILING) / 2))
+                                    : Math.min(tokenLimit.limit as number, MAX_TOKEN_CEILING);
                                 continue;
                             }
 
@@ -1779,8 +1813,8 @@ export const callAI = async (messages: any[], temperature: number = 0.7, options
                         if (finishReason === 'length' && budgetRaises < 2) {
                             budgetRaises++;
                             effMaxTokens = budgetRaises === 1
-                                ? Math.min(Math.max(effMaxTokens * 4, REASONING_TOKEN_FLOOR), MAX_TOKEN_CEILING)
-                                : Math.min(effMaxTokens * 2, MAX_TOKEN_CEILING);
+                                ? Math.min(Math.max((effMaxTokens ?? 0) * 4, REASONING_TOKEN_FLOOR), MAX_TOKEN_CEILING)
+                                : Math.min((effMaxTokens ?? REASONING_TOKEN_FLOOR) * 2, MAX_TOKEN_CEILING);
                             toolsDisabled = true;
                             currentMessages.push({
                                 role: "user",
