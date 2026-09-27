@@ -27,8 +27,9 @@ v0.1.20
 ### 🎭 Character Distillation & Roleplay Chat
 - **Distill Characters**: Turn characters from your collection (or any work by title) into structured persona profiles — personality traits, mental models, decision heuristics, boundaries, timeline and "expression DNA".
 - **In-Character Chat**: Roleplay conversations that stay in character at all times, with streaming replies and per-character session history.
-- **Persona Tuning**: Teach characters with corrections (scene → what not to do → what to do instead); they take effect from the next reply and override the distilled persona.
+- **Persona Tuning**: Teach characters with corrections (scene → what not to do → what to do instead); they take effect from the next reply, override the distilled persona, and can be deleted again from the profile.
 - **Incremental Re-distillation**: Re-distilling the same work merges new details into existing profiles, keeps your corrections, and bumps the profile version.
+- **Background Distillation**: Distilling runs in the background — the dialog closes immediately, a progress badge tracks the run in the corner, and the finished profile appears on the page by itself.
 - **Search-Grounded Research**: Distillation researches the work and the character with the AI's web-search tool before writing the profile; your extra material, the work metadata and TMDb credits still take priority over search results.
 
 ### 🛠️ Advanced Editing & Customization
