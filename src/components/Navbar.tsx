@@ -93,7 +93,7 @@ export const Navbar: React.FC = () => {
                   key={path}
                   to={path}
                   className={clsx(
-                    "flex items-center gap-2 px-3 py-2 rounded-theme text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-theme-accent",
+                    "flex items-center gap-2 px-3 py-2 rounded-theme text-sm font-medium whitespace-nowrap flex-shrink-0 transition-colors focus:outline-none focus:ring-2 focus:ring-theme-accent",
                     location.pathname === path
                       ? "bg-theme-accent text-theme-bg border-2 border-theme-accent"
                       : "text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50"
@@ -110,9 +110,9 @@ export const Navbar: React.FC = () => {
               <div className="relative" ref={langDropdownRef}>
                 <button
                   onClick={() => setIsLangOpen(!isLangOpen)}
-                  className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50 focus:outline-none focus:ring-2 focus:ring-theme-accent"
+                  className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium whitespace-nowrap flex-shrink-0 transition-colors text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50 focus:outline-none focus:ring-2 focus:ring-theme-accent"
                 >
-                  <Globe className="w-4 h-4" />
+                  <Globe className="w-4 h-4 flex-shrink-0" />
                   <span className="capitalize">{languages.find(l => l.code === i18n.language.split('-')[0])?.name || t('common.language')}</span>
                   <ChevronDown className="w-3 h-3" />
                 </button>
@@ -141,9 +141,9 @@ export const Navbar: React.FC = () => {
               <div className="relative" ref={themeDropdownRef}>
                 <button
                   onClick={() => setIsThemeOpen(!isThemeOpen)}
-                  className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50 focus:outline-none focus:ring-2 focus:ring-theme-accent"
+                  className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium whitespace-nowrap flex-shrink-0 transition-colors text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50 focus:outline-none focus:ring-2 focus:ring-theme-accent"
                 >
-                  <Palette className="w-4 h-4" />
+                  <Palette className="w-4 h-4 flex-shrink-0" />
                   <span className="capitalize">{themes.find(t => t.id === theme)?.name || t('common.theme')}</span>
                   <ChevronDown className="w-3 h-3" />
                 </button>
@@ -174,16 +174,16 @@ export const Navbar: React.FC = () => {
               {user ? (
                  <button
                   onClick={logout}
-                  className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-red-500 hover:bg-red-500/10 transition-colors"
+                  className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium whitespace-nowrap flex-shrink-0 text-red-500 hover:bg-red-500/10 transition-colors"
                 >
                   {t('nav.sign_out')}
                 </button>
               ) : (
                 <Link
                   to="/login"
-                  className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all shadow-sm bg-theme-accent text-theme-bg hover:bg-theme-accent-hover border-2 border-theme-accent focus:outline-none focus:ring-2 focus:ring-theme-accent"
+                  className="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium whitespace-nowrap flex-shrink-0 transition-all shadow-sm bg-theme-accent text-theme-bg hover:bg-theme-accent-hover border-2 border-theme-accent focus:outline-none focus:ring-2 focus:ring-theme-accent"
                 >
-                  <LogIn className="w-4 h-4" />
+                  <LogIn className="w-4 h-4 flex-shrink-0" />
                   {t('nav.sign_in')}
                 </Link>
               )}
@@ -210,13 +210,13 @@ export const Navbar: React.FC = () => {
                   to={path}
                   onClick={() => setIsOpen(false)}
                   className={clsx(
-                    "flex items-center gap-2 px-3 py-2 rounded-md text-base font-medium focus:outline-none focus:ring-2 focus:ring-theme-accent",
+                    "flex items-center gap-2 px-3 py-2 rounded-md text-base font-medium whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-theme-accent",
                     location.pathname === path
                       ? "bg-theme-accent text-theme-bg border-2 border-theme-accent"
                       : "text-theme-subtext hover:text-theme-text hover:bg-theme-surface/50"
                   )}
                 >
-                  <Icon className="w-4 h-4" />
+                  <Icon className="w-4 h-4 flex-shrink-0" />
                   {label}
                 </Link>
               ))}
