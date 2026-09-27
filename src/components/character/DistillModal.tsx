@@ -1,17 +1,16 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Sparkles, X, Loader2, AlertTriangle } from 'lucide-react';
+import { Sparkles, X, Loader2, AlertTriangle, Users, RefreshCw } from 'lucide-react';
 import { useCollectionStore } from '../../store/useCollectionStore';
 import { useCharacterStore } from '../../store/useCharacterStore';
 import { useAIStore } from '../../store/useAIStore';
-import { distillCharacters } from '../../services/characterService';
+import { suggestCharacterNames } from '../../services/characterService';
 import { describeAIError } from '../../services/aiService';
 import { MediaItem, MediaType } from '../../types/types';
 
 interface DistillModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onDone?: (created: number, updated: number) => void;
 }
 
 const MANUAL_WORK = '__manual__';
@@ -28,18 +27,16 @@ const buildManualItem = (title: string): MediaItem => ({
   cast: [],
 });
 
-export const DistillModal: React.FC<DistillModalProps> = ({ isOpen, onClose, onDone }) => {
+export const DistillModal: React.FC<DistillModalProps> = ({ isOpen, onClose }) => {
   const { t, i18n } = useTranslation();
   const collection = useCollectionStore(s => s.collection);
-  const upsertCharacters = useCharacterStore(s => s.upsertCharacters);
-  const characters = useCharacterStore(s => s.characters);
+  const startDistill = useCharacterStore(s => s.startDistill);
   const apiKey = useAIStore(s => s.apiKey);
 
   const [workSelection, setWorkSelection] = useState<string>('');
   const [manualTitle, setManualTitle] = useState('');
   const [characterName, setCharacterName] = useState('');
   const [extraMaterial, setExtraMaterial] = useState('');
-  const [isDistilling, setIsDistilling] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const sortedCollection = useMemo(
@@ -56,10 +53,68 @@ export const DistillModal: React.FC<DistillModalProps> = ({ isOpen, onClose, onD
   const isManual = workSelection === MANUAL_WORK || sortedCollection.length === 0;
 
   const hasKey = !!apiKey;
+  const language: 'zh' | 'en' = (i18n.language || 'en').startsWith('zh') ? 'zh' : 'en';
+
+  const currentItem = useMemo<MediaItem | undefined>(() => {
+    if (!isManual) return collection.find(i => i.id === workSelection);
+    const title = manualTitle.trim();
+    return title ? buildManualItem(title) : undefined;
+  }, [isManual, manualTitle, collection, workSelection]);
+
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [isSuggesting, setIsSuggesting] = useState(false);
+  const [suggestError, setSuggestError] = useState<string | null>(null);
+  const [suggestNonce, setSuggestNonce] = useState(0);
+  const forceRefreshRef = useRef(false);
+
+  // Look the cast up as soon as a work is known: TMDb credits are instant, the
+  // model's own list follows (with web search for works it may not know).
+  useEffect(() => {
+    if (!isOpen || !hasKey || !currentItem) {
+      setSuggestions([]);
+      setSuggestError(null);
+      setIsSuggesting(false);
+      return;
+    }
+    let cancelled = false;
+    setIsSuggesting(true);
+    setSuggestError(null);
+    const timer = setTimeout(async () => {
+      const refresh = forceRefreshRef.current;
+      forceRefreshRef.current = false;
+      try {
+        const { fromCredits, fromAI } = await suggestCharacterNames(currentItem, { language, refresh });
+        if (cancelled) return;
+        const seen = new Set<string>();
+        setSuggestions(
+          [...fromCredits, ...fromAI].filter(name => {
+            const key = name.toLowerCase();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          })
+        );
+      } catch (e) {
+        if (cancelled) return;
+        console.error('Character suggestions failed', e);
+        setSuggestions([]);
+        const { auth, detail } = describeAIError(e);
+        setSuggestError(auth
+          ? t('characters.error_key_rejected')
+          : t('characters.suggest_failed', { detail: detail.slice(0, 120) }));
+      } finally {
+        if (!cancelled) setIsSuggesting(false);
+      }
+    }, 700);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [isOpen, hasKey, currentItem, language, suggestNonce, t]);
 
   if (!isOpen) return null;
 
-  const handleDistill = async () => {
+  const handleDistill = () => {
     const name = characterName.trim();
     let item: MediaItem | undefined;
     if (!isManual) {
@@ -75,31 +130,11 @@ export const DistillModal: React.FC<DistillModalProps> = ({ isOpen, onClose, onD
       setError(t('characters.error_character_name'));
       return;
     }
-    setIsDistilling(true);
     setError(null);
-    try {
-      const language = (i18n.language || 'en').startsWith('zh') ? 'zh' : 'en';
-      const result = await distillCharacters(item, characters, {
-        characterName: name,
-        extraMaterial,
-        maxCharacters: 1,
-        language,
-      });
-      upsertCharacters(result.characters);
-      onDone?.(result.created, result.updated);
-      onClose();
-    } catch (e: any) {
-      console.error('Distillation failed', e);
-      const msg = String(e?.message || e || '');
-      const { auth, detail } = describeAIError(e);
-      if (msg.includes('empty-ai-response')) setError(t('characters.error_no_ai'));
-      else if (auth) setError(t('characters.error_key_rejected'));
-      else if (msg.includes('no-json-array') || msg.includes('no-characters')) setError(t('characters.error_bad_output'));
-      else if (detail) setError(t('characters.distill_failed_detail', { detail: detail.slice(0, 180) }));
-      else setError(t('characters.distill_failed'));
-    } finally {
-      setIsDistilling(false);
-    }
+    // Runs in the background: the dialog closes right away and the characters
+    // page keeps a progress badge until the profile lands (or fails).
+    startDistill(item, { characterName: name, extraMaterial, maxCharacters: 1, language });
+    onClose();
   };
 
   const inputClass =
@@ -107,7 +142,12 @@ export const DistillModal: React.FC<DistillModalProps> = ({ isOpen, onClose, onD
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm p-4">
-      <div className="bg-theme-surface border border-theme-border rounded-theme max-w-lg w-full max-h-[90vh] overflow-y-auto text-theme-text">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('characters.distill_title')}
+        className="bg-theme-surface border border-theme-border rounded-theme max-w-lg w-full max-h-[90vh] overflow-y-auto text-theme-text"
+      >
         <div className="flex items-center justify-between p-4 border-b border-theme-border sticky top-0 bg-theme-surface">
           <div className="flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-theme-accent" />
@@ -165,6 +205,56 @@ export const DistillModal: React.FC<DistillModalProps> = ({ isOpen, onClose, onD
               placeholder={t('characters.character_name_placeholder')}
               className={inputClass}
             />
+            {(isSuggesting || suggestions.length > 0 || suggestError || (currentItem && !hasKey)) && (
+              <div className="mt-2 rounded-theme border border-theme-border bg-theme-bg/40 p-2.5">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs text-theme-subtext flex items-center gap-1">
+                    {isSuggesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Users className="w-3 h-3" />}
+                    {isSuggesting ? t('characters.suggest_loading') : t('characters.suggest_label')}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      forceRefreshRef.current = true;
+                      setSuggestNonce(n => n + 1);
+                    }}
+                    disabled={isSuggesting || !hasKey}
+                    className="text-xs text-theme-subtext hover:text-theme-accent flex items-center gap-1 disabled:opacity-50"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    {t('characters.suggest_retry')}
+                  </button>
+                </div>
+                {!hasKey ? (
+                  <p className="text-xs text-theme-subtext">{t('characters.suggest_need_key')}</p>
+                ) : suggestError ? (
+                  <p className="text-xs text-theme-accent-warm">{suggestError}</p>
+                ) : suggestions.length === 0 && !isSuggesting ? (
+                  <p className="text-xs text-theme-subtext">{t('characters.suggest_empty')}</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {suggestions.map(name => {
+                      const active = characterName.trim() === name;
+                      return (
+                        <button
+                          key={name}
+                          type="button"
+                          onClick={() => setCharacterName(active ? '' : name)}
+                          className={`px-3 py-1 rounded-full border text-xs transition-colors ${
+                            active
+                              ? 'bg-theme-accent text-theme-bg border-theme-accent'
+                              : 'bg-theme-surface border-theme-border text-theme-subtext hover:text-theme-accent hover:border-theme-accent'
+                          }`}
+                        >
+                          {name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="text-xs text-theme-subtext/70 mt-1.5">{t('characters.suggest_hint')}</p>
+              </div>
+            )}
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">{t('characters.extra_material')}</label>
@@ -189,18 +279,17 @@ export const DistillModal: React.FC<DistillModalProps> = ({ isOpen, onClose, onD
         <div className="flex justify-end gap-2 p-4 border-t border-theme-border">
           <button
             onClick={onClose}
-            disabled={isDistilling}
             className="px-4 py-2 rounded-theme text-sm border border-theme-border text-theme-subtext hover:bg-theme-bg disabled:opacity-50"
           >
             {t('common.cancel')}
           </button>
           <button
             onClick={handleDistill}
-            disabled={isDistilling || (isManual ? !manualTitle.trim() : !workSelection) || !characterName.trim() || !hasKey}
+            disabled={(isManual ? !manualTitle.trim() : !workSelection) || !characterName.trim() || !hasKey}
             className="flex items-center gap-2 px-4 py-2 rounded-theme text-sm font-medium bg-theme-accent text-theme-bg hover:bg-theme-accent-hover disabled:opacity-50"
           >
-            {isDistilling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-            {isDistilling ? t('characters.distilling') : t('characters.distill')}
+            <Sparkles className="w-4 h-4" />
+            {t('characters.distill')}
           </button>
         </div>
       </div>

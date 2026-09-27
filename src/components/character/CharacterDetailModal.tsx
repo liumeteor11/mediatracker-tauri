@@ -51,6 +51,7 @@ const ChipList: React.FC<{ items: string[] }> = ({ items }) => (
 export const CharacterDetailModal: React.FC<CharacterDetailModalProps> = ({ character, onClose, onChat, onDelete }) => {
   const { t } = useTranslation();
   const addCorrection = useCharacterStore(s => s.addCorrection);
+  const removeCorrection = useCharacterStore(s => s.removeCorrection);
   const [showCorrectionForm, setShowCorrectionForm] = useState(false);
   const [scene, setScene] = useState('');
   const [wrong, setWrong] = useState('');
@@ -223,11 +224,19 @@ export const CharacterDetailModal: React.FC<CharacterDetailModalProps> = ({ char
               {character.corrections.map((c, i) => (
                 <div key={i} className="flex items-start gap-2 p-2 rounded-theme bg-theme-bg border border-theme-border">
                   <ShieldAlert className="w-4 h-4 mt-0.5 text-yellow-500 flex-shrink-0" />
-                  <div className="text-xs">
+                  <div className="text-xs flex-1 min-w-0">
                     <p className="font-medium">{c.scene}</p>
                     <p className="text-theme-subtext line-through">{c.wrong}</p>
                     <p className="text-green-600 dark:text-green-400">{c.correct}</p>
                   </div>
+                  <button
+                    onClick={() => removeCorrection(character.id, i)}
+                    title={t('characters.correction_delete')}
+                    aria-label={t('characters.correction_delete')}
+                    className="p-1.5 rounded-theme text-theme-subtext hover:text-theme-accent-warm hover:bg-theme-surface flex-shrink-0"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               ))}
               {showCorrectionForm ? (

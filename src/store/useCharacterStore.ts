@@ -1,20 +1,37 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
+import { v4 as uuidv4 } from 'uuid';
+import { toast } from 'react-toastify';
+import i18n from '../i18n';
 import { useAuthStore } from './useAuthStore';
 import { ChatSession, CharacterCorrection, DistilledCharacter } from '../types/character';
+import { MediaItem } from '../types/types';
 import {
   addCorrectionToCharacter,
   createCharacterSession as buildSession,
+  distillCharacters,
+  distillErrorKey,
 } from '../services/characterService';
+import type { DistillOptions } from '../types/character';
 
 const isTauri = typeof window !== 'undefined' && (('__TAURI__' in window) || ('__TAURI_INTERNALS__' in window));
 const STORAGE_KEY = 'media-tracker-characters';
+
+/** A distillation running in the background, shown until it finishes. */
+export interface DistillTask {
+  id: string;
+  /** Display label: "character · work" (or just the work when unnamed). */
+  label: string;
+  startedAt: number;
+}
 
 interface CharacterState {
   characters: DistilledCharacter[];
   sessions: ChatSession[];
   isLoading: boolean;
   initialized: boolean;
+  /** Distillations currently running; the dialog closes and these keep going. */
+  distillTasks: DistillTask[];
   initialize: () => Promise<void>;
   refreshForUser: () => Promise<void>;
   clear: () => void;
@@ -24,7 +41,11 @@ interface CharacterState {
   upsertCharacters: (items: DistilledCharacter[]) => void;
   updateCharacter: (character: DistilledCharacter) => void;
   removeCharacter: (id: string) => void;
+  /** Run a distillation in the background; reports the outcome through toasts. */
+  startDistill: (item: MediaItem, opts: DistillOptions) => void;
   addCorrection: (characterId: string, correction: { scene: string; wrong: string; correct: string }) => DistilledCharacter | undefined;
+  /** Drop one correction layer entry (index into `character.corrections`). */
+  removeCorrection: (characterId: string, index: number) => DistilledCharacter | undefined;
   createSession: (characterId: string, title?: string) => ChatSession;
   updateSession: (session: ChatSession) => void;
   removeSession: (id: string) => void;
@@ -59,6 +80,7 @@ export const useCharacterStore = create<CharacterState>((set, get) => ({
   sessions: [],
   isLoading: false,
   initialized: false,
+  distillTasks: [],
 
   initialize: async () => {
     if (get().initialized) return;
@@ -119,6 +141,31 @@ export const useCharacterStore = create<CharacterState>((set, get) => ({
     return { characters };
   }),
 
+  startDistill: (item, opts) => {
+    const characterName = (opts.characterName || '').trim();
+    const label = characterName ? `${characterName} · ${item.title}` : item.title;
+    // Starting the same distillation twice would spend tokens on a duplicate run.
+    if (get().distillTasks.some(task => task.label === label)) {
+      toast.info(String(i18n.t('characters.distill_running', { name: label })));
+      return;
+    }
+    const id = uuidv4();
+    set(state => ({ distillTasks: [...state.distillTasks, { id, label, startedAt: Date.now() }] }));
+    void (async () => {
+      try {
+        const result = await distillCharacters(item, get().characters, opts);
+        get().upsertCharacters(result.characters);
+        toast.success(String(i18n.t('characters.distill_success', { created: result.created, updated: result.updated })));
+      } catch (e) {
+        console.error('Distillation failed', e);
+        const { key, params } = distillErrorKey(e);
+        toast.error(String(i18n.t(key, params as any)));
+      } finally {
+        set(state => ({ distillTasks: state.distillTasks.filter(task => task.id !== id) }));
+      }
+    })();
+  },
+
   updateCharacter: (character) => set((state) => {
     const characters = sortByUpdated([character, ...state.characters.filter(c => c.id !== character.id)]);
     if (isTauri) persistCharacter(character);
@@ -142,6 +189,19 @@ export const useCharacterStore = create<CharacterState>((set, get) => ({
     const character = get().characters.find(c => c.id === characterId);
     if (!character) return undefined;
     const updated = addCorrectionToCharacter(character, correction as Omit<CharacterCorrection, 'createdAt'>);
+    get().updateCharacter(updated);
+    return updated;
+  },
+
+  removeCorrection: (characterId, index) => {
+    const character = get().characters.find(c => c.id === characterId);
+    if (!character || index < 0 || index >= character.corrections.length) return undefined;
+    const updated: DistilledCharacter = {
+      ...character,
+      corrections: character.corrections.filter((_, i) => i !== index),
+      version: character.version + 1,
+      updatedAt: Date.now(),
+    };
     get().updateCharacter(updated);
     return updated;
   },

@@ -2,11 +2,17 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
-import { Sparkles, MessageCircle, BookOpen, Trash2, ChevronRight, Search, Plus } from 'lucide-react';
+import { Sparkles, MessageCircle, BookOpen, Trash2, ChevronRight, Search, Plus, Loader2 } from 'lucide-react';
 import { useCharacterStore } from '../store/useCharacterStore';
 import { DistillModal } from '../components/character/DistillModal';
 import { CharacterDetailModal } from '../components/character/CharacterDetailModal';
 import { toast } from 'react-toastify';
+
+/** mm:ss for the background-distillation badge. */
+const formatElapsed = (ms: number): string => {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+};
 
 export const CharactersPage: React.FC = () => {
   const { t } = useTranslation();
@@ -14,11 +20,20 @@ export const CharactersPage: React.FC = () => {
   const characters = useCharacterStore(s => s.characters);
   const sessions = useCharacterStore(s => s.sessions);
   const removeCharacter = useCharacterStore(s => s.removeCharacter);
+  const distillTasks = useCharacterStore(s => s.distillTasks);
 
   const [showDistill, setShowDistill] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  // Ticks while a background distillation runs so the badge can show its age.
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (distillTasks.length === 0) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [distillTasks.length]);
 
   useEffect(() => {
     useCharacterStore.getState().initialize();
@@ -128,6 +143,7 @@ export const CharactersPage: React.FC = () => {
                       onClick={() => navigate(`/characters/${character.id}`)}
                       className="p-2 rounded-theme text-theme-accent hover:bg-theme-bg"
                       title={t('characters.start_chat')}
+                      aria-label={`${t('characters.start_chat')}: ${character.name}`}
                     >
                       <MessageCircle className="w-4 h-4" />
                     </button>
@@ -135,6 +151,7 @@ export const CharactersPage: React.FC = () => {
                       onClick={() => setConfirmDeleteId(character.id)}
                       className="p-2 rounded-theme text-theme-subtext hover:text-theme-accent-warm hover:bg-theme-bg"
                       title={t('common.delete')}
+                      aria-label={`${t('common.delete')}: ${character.name}`}
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -142,6 +159,7 @@ export const CharactersPage: React.FC = () => {
                       onClick={() => setDetailId(character.id)}
                       className="p-2 rounded-theme text-theme-subtext hover:text-theme-text hover:bg-theme-bg"
                       title={t('characters.view_profile')}
+                      aria-label={`${t('characters.view_profile')}: ${character.name}`}
                     >
                       <ChevronRight className="w-4 h-4" />
                     </button>
@@ -153,11 +171,23 @@ export const CharactersPage: React.FC = () => {
         </div>
       )}
 
-      <DistillModal
-        isOpen={showDistill}
-        onClose={() => setShowDistill(false)}
-        onDone={(created, updated) => toast.success(t('characters.distill_success', { created, updated }))}
-      />
+      <DistillModal isOpen={showDistill} onClose={() => setShowDistill(false)} />
+
+      {/* Background distillations: the dialog is already closed, these stay until done */}
+      {distillTasks.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-40 flex flex-col gap-2 items-end pointer-events-none">
+          {distillTasks.map(task => (
+            <div
+              key={task.id}
+              className="pointer-events-auto flex items-center gap-2 px-3.5 py-2.5 rounded-theme border border-theme-border bg-theme-surface shadow-theme text-sm text-theme-text"
+            >
+              <Loader2 className="w-4 h-4 animate-spin text-theme-accent flex-shrink-0" />
+              <span>{t('characters.distilling_named', { name: task.label })}</span>
+              <span className="text-xs text-theme-subtext tabular-nums">{formatElapsed(now - task.startedAt)}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {detailCharacter && (
         <CharacterDetailModal
@@ -174,7 +204,9 @@ export const CharactersPage: React.FC = () => {
       {confirmDeleteId && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-sm p-4">
           <div className="bg-theme-surface border border-theme-border rounded-theme max-w-sm w-full p-5 text-theme-text">
-            <h3 className="font-semibold mb-2">{t('characters.delete_confirm_title')}</h3>
+            <h3 className="font-semibold mb-2">
+              {t('characters.delete_confirm_title', { name: characters.find(c => c.id === confirmDeleteId)?.name || '' })}
+            </h3>
             <p className="text-sm text-theme-subtext mb-4">{t('characters.delete_confirm_desc')}</p>
             <div className="flex justify-end gap-2">
               <button
