@@ -17,3 +17,6 @@ src-tauri/.tauri/
 # Env
 .env
 .env.*
+
+# Local collection exports (personal library data)
+/media-collection-*.json
